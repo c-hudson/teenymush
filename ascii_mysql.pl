@@ -36,23 +36,26 @@ sub sql
    my (@result,$sth);
 
    delete @$con{rows};
-   # reconnect if we've been idle for an hour
-   if(time() - $$db{last} > 3600) {
-      eval {
-         @$con{db}->disconnect;
-      };
-      delete @$con{db};
-   }
-   $$db{last} = time();
+#   # reconnect if we've been idle for an hour. Shouldn't be needed?
+#   if(time() - $$db{last} > 3600) {
+#      eval {
+#         @$con{db}->disconnect;
+#      };
+#      delete @$con{db};
+#   }
+#   $$db{last} = time();
 
-   # connected to DB if needed
+   #
+   # clean up the sql a little
+   #  keep track of last sql that was run for debug purposes.
+   #
    $sql =~ s/\s{2,999}/ /g;
    @info{sql_last} = $sql;
    @info{sql_last_args} = join(',',@args);
-#   printf("SqL: '$sql' -> '%s'\n",join(',',@args));
+
+   # connected/reconnect to DB if needed
    if(!defined $$con{db} || !$$con{db}->ping) {
       $$con{host} = "localhost" if(!defined $$con{host});
-#      printf("@#@ %s",print_var($con));
       $$con{db} = DBI->connect("DBI:mysql:database=$$con{database}:" .
                              "host=$$con{host}",
                              $$con{user},
@@ -67,12 +70,10 @@ sub sql
       die("Could not prepair sql: $sql");
 
    for my $i (0 .. $#args) {
-#      printf("Binding $i -> '%s'\n",@args[$i]);
       $sth->bind_param($i+1,@args[$i]);
    }
 
    $sth->execute( ) || die("Could not execute sql");
-#   printf("#SITH# = '%s'\n",$sth->rows);
    @$con{rows} = $sth->rows;
 
    # produce an error if expectations are not met
@@ -88,17 +89,12 @@ sub sql
  
    # do not fetch results from inserts / deletes 
    if($sql !~ /^\s*(insert|delete|update) /i) {
-#      printf("^^Adding results\n");
       while(my $ref = $sth->fetchrow_hashref()) {
-#         printf("##> %s",print_var($ref));
          push(@result,$ref);
       }
-#      printf("^^--------------^^\n");
    }
 
    # clean up and return the results
-#   printf("ERROR? '%s' -> '%s' -> '%s' [%s] (%s)\n",$sql,$DBI::errstr,
-#       $sth->rows,join(',',@args),join(',',@result));
    $sth->finish();
    return \@result;
 }

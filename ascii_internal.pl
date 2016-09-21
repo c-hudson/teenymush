@@ -1,0 +1,1032 @@
+#!/usr/bin/perl
+
+
+
+ 
+use strict;
+use IO::Select;
+use IO::Socket;
+use Time::Local;
+
+my %months = (
+   jan => 1, feb => 2, mar => 3, apr => 4, may => 5, jun => 6,
+   jul => 7, aug => 8, sep => 9, oct => 10, nov => 11, dec => 12,
+);
+
+my %days = (
+   mon => 1, tue => 2, wed => 3, thu => 4, fri => 5, sat => 6, sun => 7,
+);
+
+sub err
+{
+   my ($txt,@fmt) = @_;
+
+   echo($user,$txt,@fmt) if($txt ne undef);
+   rollback;
+
+   # insert log entry? 
+}
+
+sub evaluate
+{
+    my $txt = shift;
+
+    $txt =~ s/%r/\n/g;
+    $txt =~ s/%b/ /g;
+    if($enactor ne undef) {
+       $txt =~ s/%n/$$enactor{obj_name}/g;
+       $txt =~ s/%#/#$$enactor{obj_id}/g;
+    } else {
+       $txt =~ s/%#/#$$user{obj_id}/g;
+       $txt =~ s/%n/$$user{obj_name}/g;
+    }
+    $txt =~ s/(?<!(?<!\\)\\)%1/$$user{1}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%2/$$user{2}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%3/$$user{3}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%4/$$user{4}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%5/$$user{5}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%6/$$user{6}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%7/$$user{7}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%8/$$user{8}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%9/$$user{9}/g;
+    my $result = evaluate_string($txt);
+    $result =~ s/\\(.)/\1/g;
+    return $result;
+}
+
+sub table
+{
+   my $sql = shift;
+   my ($out, @data, @line, @header, @keys, %max);
+   echo($user,"SQL: %s",$sql);
+
+   for my $hash (@{sql($db,$sql)}) {                         # determine max
+      push(@data,$hash);
+      for my $key (sort keys %$hash) {
+         if(length($$hash{$key}) > @max{$key}) {
+             @max{$key} = length($$hash{$key});
+         }
+         @max{$key} = length($key) if(length($key) > @max{$key});
+      }
+   }
+
+   return "No data found" if($#data == -1);
+
+   for my $i (0 .. $#data) {
+      my $hash = @data[$i];
+      delete @line[0 .. $#line];
+      for my $key (sort keys %$hash) {
+         if($i == 0) {
+            push(@header,"-" x @max{$key});
+            push(@keys,sprintf("%-*s",@max{$key},$key));
+         }
+         push(@line,sprintf("%-*s",@max{$key},$$hash{$key}));
+      }
+      if($i == 0) {
+         $out .= "  " . join(" | ",@keys) . "\n";
+         $out .= " -" . join("-|-",@header) . "- \n";
+      }
+      $out .= "| " . join(" | ",@line) . " |\n";
+   }
+   $out .= " -" . join("- -",@header) . "- \n";
+   return $out;
+}
+
+#
+# force
+#    Use the Force, Luke.
+#
+sub force
+{
+   my ($target,$cmd,$force) = @_;
+   my $temp;
+
+#   printf("CONTROLS: '%s'\n",controls($user,$target));
+#   my $result = controls($user,$target) ||
+#      return -1;
+
+   if($cmd =~ /^\s*([^ ]+)(\s*)/) {                          # lookup command
+      my ($cmd,$arg) = lookup_command(\%command,$1,"$2$'",1);
+      return -3 if $cmd eq 'huh';
+
+      $enactor = $user;
+      $user = $target;                                # run command as user
+
+      for my $i (1 .. 9) {                               # copy over %1 - %9
+          $$temp{$i} = $$user{$i};
+          $$user{$i} = $$enactor{$i};
+      }
+      if(hasflag($user,"PLAYER") &&
+         !defined $$user{sock} && defined @connected_user{$$user{obj_id}}) {
+         my $hash = @connected_user{$$user{obj_id}};
+         my $key = (keys %$hash)[0];            # find socket / if connected
+         $$user{sock} = $$hash{$key};                          # any will do
+      }
+
+      &{@{@command{$cmd}}{fun}}($arg);                        # run command
+      for my $i (1 .. 9) {                                # restore $1 - $9
+          $$user{$i} = $$temp{$i};
+      }
+      $user = $enactor;                             # revert to actual user
+      $enactor = undef;
+
+      return 1;                                                  # success
+   } else {
+      return -4;                                              # parse error
+   }
+}
+
+
+#
+# controls
+#    Does the $enactor control the $target?
+#
+sub controls
+{
+   my ($enactor,$target) = @_;
+ 
+   $enactor = { obj_id=>$enactor } if(ref($enactor) ne "HASH");
+   $target = { obj_id=>$target } if(ref($target) ne "HASH");
+
+   if($$enactor{obj_id} eq $$target{obj_id}) {                    # is object
+      return 1;
+   } elsif($$target{obj_owner} eq $$enactor{obj_id}) {   # is owned by object
+      return 1;
+   } elsif(hasflag($enactor,"WIZARD")) {                   # i have the power
+      return 1;                                                      # He-man
+   } else {
+      return 0;                                                    # skeletor
+   }
+}
+
+sub echo
+{
+   my ($target,$fmt,@args) = @_;
+   my $match = 0;
+
+   my $out = sprintf($fmt,@args);
+   $out .= "\n" if($out !~ /\n$/);
+   $out =~ s/\n/\r\n/g if($out !~ /\r/);
+
+#   if(hasflag($target,"PLAYER")) {
+      for my $key (keys %connected) {
+         if($$target{obj_id} eq @{@connected{$key}}{obj_id}) {
+            my $sock = @{@connected{$key}}{sock};
+            printf($sock "%s",$out);
+         }
+      }
+#   }
+}
+
+#
+# e
+#    set the number of rows the sql should return, so that sql()
+#    can error out if the wrong amount of data is returned. This
+#    may be a silly way of doing this.
+#
+sub e
+{
+   my ($db,$expect) = @_;
+
+   $$db{expect} = $expect;
+   return $db;
+}
+
+
+sub name
+{
+   my $target = shift;
+
+   if(ref($target) ne "HASH") {
+      printf("###   OOOps\n%s\n",Carp::shortmess);
+   } elsif(!defined $$target{obj_name}) {
+      $$target{obj_name} = one_val("select obj_name value " .
+                                   "  from object "  .
+                                   " where obj_id = ?",
+                                   $$target{obj_id}); 
+      $$target{obj_name} = "[<UNKNOWN>]" if $$target{obj_name} eq undef;
+   }
+   return $$target{obj_name};
+}
+
+sub echo_room
+{
+   my ($target,$fmt,@args) = @_;
+   my $all;
+
+   if(hasflag($target,"PLAYER")) {
+      $all = @connected_user{$$target{obj_id}};
+   } else {
+      $all = {};
+   }
+
+   my $loc = loc($target,1);
+   for my $key (keys %connected) {
+      my $who = @connected{$key};
+      if(loggedin($who) && !defined $$all{$$who{sock}} && loc($who) eq $loc) {
+         echo($who,$fmt,@args);
+      }
+   }
+}
+
+sub connected_socket
+{
+   my $target = shift;
+   my @result;
+
+   if(!defined @connected_user{$$target{obj_id}}) {
+      return undef;
+   }
+   return keys %{@connected_user{$$target{obj_id}}};
+}
+
+sub connected_user
+{
+   my $target = shift;
+
+   if(!defined @connected_user{$$target{obj_id}}) {
+      return undef;
+   }
+   my $hash = @connected_user{$$target{obj_id}};
+   for my $key (keys %$hash) {
+      if($key eq $$target{sock}) {
+         return $key;
+      }
+   }
+   return undef;
+}
+
+sub loggedin
+{
+   my $target = shift;
+
+   if(ref($target) eq "HASH") {
+      if(defined $$target{connected_time} ||
+         defined @connected_user{$$target{obj_id}}) {
+         return 1;
+      } else {
+         return 0;
+      }
+   } elsif(defined @connected_user{$target}) {
+      return 1;
+   } else {
+      return 0;
+   }
+}
+
+sub flag_list
+{
+   my ($obj,$flag) = @_;
+   my (@list,$array);
+   $flag = 0 if !$flag;
+ 
+   $obj = { obj_id => $obj } if(ref($obj) ne "HASH");
+   if(defined @connected_user{$$obj{obj_id}}) {
+      push(@list,$flag ? "CONNECTED" : 'c');
+   }
+
+   for my $hash (@{sql($db,"select fde_name, fde_letter" .
+                           "  from flag flg, flag_definition fde " . 
+                           " where flg.fde_flag_id = fde.fde_flag_id " .
+                           "   and obj_id = ?",
+                           $$obj{obj_id}
+                          )}) {
+      push(@list,$$hash{$flag ? "fde_name" : "fde_letter"});
+   }
+   return join($flag ? " " : '',sort @list);
+}
+
+sub valid_dbref 
+{
+   my $id = obj(shift);
+
+   return one_val("select if(count(*) = 0,0,1) value " . 
+                  "  from object " . 
+                  " where obj_id = ?",
+                  $$id{obj_id}) || return 0;
+}
+
+sub locate_player
+{
+   my ($name,$type) = @_;
+   my @part;
+
+   if($name =~ /^\s*#(\d+)\s*$/) {      # specified dbref, verify is player
+      my $target=one("select * ".
+                     " from object obj, flag flg, flag_definition fde ".
+                     "where obj.obj_id = flg.obj_id " .
+                     "  and fde.fde_flag_id = flg.fde_flag_id " .
+                     "  and fde_name = 'PLAYER' " .
+                     "  and obj.obj_id = ? ") ||
+          return undef;
+      return $target;
+   } elsif($name =~ /^\s*me\s*$/) {              # use current object/player
+      return $user;
+   } elsif($name =~ /^\s*\*([^ ]+)\s*$/) {
+      $name = $1;
+   }
+
+   if($type eq "online") {                                  # online player
+      for my $i (keys %connected) {
+         if(uc(@{@connected{$i}}{obj_name}) eq uc($name)) {
+            return @connected{$i};
+         } elsif(@{@connected{$i}}{obj_name}=~/^\s*$name/i) {
+            return undef if($#part == 0);
+            push(@part,@connected{$i});
+         }
+      }
+      return @part[0];
+   } else {
+      my $target = one($db,
+                       "select * " .
+                       "  from object obj, flag flg, flag_definition fde " .
+                       " where obj.obj_id = flg.obj_id " .
+                       "   and flg.fde_flag_id = fde.fde_flag_id " .
+                       "   and fde.fde_name = 'PLAYER' " .
+                       "   and upper(substr(obj_name,1,length(?))) = upper(?) ",
+                       $name,
+                       $name
+                      ) ||
+         return undef;
+      return $target;
+   }
+}
+  
+
+sub locate_object
+{
+   my ($target,$name,$type) = @_;
+   my ($where, @what,$exact,$indirect);
+
+   if($name =~ /^\s*#(\d+)\s*$/) {                                  # dbref
+      return fetch($1);
+   } elsif($name =~ /^\s*me\s*$/) {                                # myself
+      return $target;
+   } elsif($name =~ /^\s*here\s*$/) {
+      return loc_obj($target);
+   } elsif($name =~ /^\s*\*([^ ]+)\s*$/) {                  # online-player
+      return locate_player($1,"all");
+   } elsif($type eq "CONTENT") {
+      $where = 'con.con_source_id in ( ? )';
+      (@what[0]) = ($$target{obj_id});
+   } elsif($type eq "LOCAL") {
+      $where = 'con.con_source_id in ( ? , ? )';
+      (@what[0],@what[1]) = (loc($target),$$target{obj_id});
+   } else {
+      $where = 'con.con_source_id in ( ? , ? )';
+      (@what[0],@what[1]) = (loc($target),$$target{obj_id});
+   }
+    
+   
+   for my $hash (@{sql($db,"select * " .
+                           "  from object obj, flag flg, flag_definition fde, ".
+                           "       content con " .
+                           " where obj.obj_id = flg.obj_id " .
+                           "   and flg.fde_flag_id = fde.fde_flag_id " .
+                           "   and con.obj_id = obj.obj_id ".
+                           "   and fde.fde_name in ('PLAYER','OBJECT', 'EXIT')".
+                           "   and upper(substr(obj_name,1,length(?)))=upper(?)".
+                           "   and $where",
+                    $name,
+                    $name,
+                    @what)}) {
+      if(lc($name) eq lc($$hash{obj_name})) {
+         if($exact eq undef) {
+            $exact = $hash;
+         } else {
+            return undef;
+         }
+      } elsif($indirect ne undef) {
+         if(length($$indirect{obj_name}) > length($$hash{obj_name})) {
+            $indirect = $hash;
+         }
+      } else {
+         $indirect = $hash;
+      }
+   }
+   return ($exact ne undef) ? $exact : $indirect;
+}
+
+sub locate_exit
+{
+   my ($name,$type) = @_;
+   my $namecheck;
+
+   if($name =~ /^\s*#(\d+)\s*$/) {
+      return fetch($1);
+   } elsif($name =~ /^\s*home\s*/i) {
+      return fetch(3);
+   }
+
+   if(uc($type) eq "EXACT") {
+      $namecheck = "obj_name = upper(?)";
+   } else {
+      $namecheck = "upper(substr(obj_name,1," . length($name) . ")) = upper(?)";
+   }
+   
+   my $exit = one($db,
+                    "select * " .
+                    "  from object obj, flag flg, flag_definition fde, ".
+                    "       content con " .
+                    " where obj.obj_id = flg.obj_id " .
+                    "   and flg.fde_flag_id = fde.fde_flag_id " .
+                    "   and con.obj_id = obj.obj_id ".
+                    "   and fde.fde_name = 'EXIT' " .
+                    "   and $namecheck " .
+                    "   and con.con_source_id = ? ",
+                    $name,
+                    loc($user),
+                   ) ||
+      return undef;
+   return $exit;
+}
+
+
+
+#
+# set_flag
+#   Add a flag to an object. Verify that the object does not already have
+#   the flag first.
+#
+sub set_flag
+{
+    my ($object,$flag) = (obj($_[0]),$_[1]);
+    my $who = $$user{obj_name};;
+    my ($remove,$count);
+
+    if($flag eq "PLAYER" && $who eq undef) {
+       $who = "CREATE_USER";
+    }
+
+    if($flag =~ /^\s*!\s*/) {                        # remove flag or add it
+       $flag = $';
+       $remove = 1;
+    }
+
+    # lookup flag id
+    my $id = one_val($db,"select fde_flag_id value from flag_definition " .
+                         " where fde_name=upper(?)",$flag);
+
+    return "#-1 Unknown Flag" if($id eq undef);             # unknown flag?
+
+
+    # check if the flag is already set
+    my $count = one_val($db,"select count(*) value from flag ".
+                            " where obj_id = ? " .
+                            "   and fde_flag_id = ?",
+                            $$object{obj_id},
+                            $id);
+
+    # add flag to the object/user
+    if($count > 0 && $remove) {
+       sql($db,"delete from flag " .
+               " where obj_id = ? " .
+               "   and fde_flag_id = ?",
+               $$object{obj_id},
+               $id);
+       commit;
+       return "Flag Removed";
+    } elsif($remove) {
+       return "Flag not set";
+    } elsif($count > 0) {
+       return "Already Set";
+    } else {
+       sql($db,
+           "insert into flag " .
+           "   (obj_id,ofg_created_by,ofg_created_date,fde_flag_id)" .
+           "values " .
+           "   (?,?,now(),?)",
+           $$object{obj_id},
+           $who,
+           $id);
+       commit;
+       return "#-1 Flag note removed [Internal Error]" if($$db{rows} != 1);
+       return "Set";
+    }
+}
+
+sub hasperm
+{
+   my ($target,$perm) = @_;
+
+   return one_val($db,"select if(count(*) > 0,1,0) value " .
+                      "  from flag flg, flag_definition fde " .
+                      " where flg.fde_flag_id = fde.fde_flag_id " .
+                      "   and flg.obj_id = ? " .
+                      "   and fde_name in ( ? ,'WIZARD')",
+                      $$target{obj_id},
+                      uc($perm));
+}
+
+sub hasflag
+{
+   my ($target,$flag) = @_;
+
+   $target = { obj_id => $target } if (ref($target) ne "HASH");
+   return one_val($db,"select if(count(*) > 0,1,0) value " . 
+                      "  from flag flg, flag_definition fde " .
+                      " where flg.fde_flag_id = fde.fde_flag_id " .
+                      "   and obj_id = ? " .
+                      "   and fde_name = ? ",
+                      $$target{obj_id},
+                      uc($flag));
+}
+
+sub create_object
+{
+   my ($name,$pass,$type) = @_;
+   my ($hash,$where);
+   my $who = $$user{obj_name};
+   my $owner = $$user{obj_id};
+
+   # check quota
+   return 0 if(quota_left($$user{obj_id}) <= 0);
+  
+   if($type eq "PLAYER") {
+      $where = 3;
+      $who = $$user{hostname};
+      $owner = 0;
+   } elsif($type eq "OBJECT") {
+      $where = $$user{obj_id};
+   } elsif($type eq "ROOM") {
+      $where = -1;
+   } elsif($type eq "EXIT") {
+      $where = -1;
+   }
+
+   sql($db,
+       " insert into object " .
+       "    (obj_name,obj_password,obj_owner,obj_created_by," .
+       "     obj_created_date, obj_home " .
+       "    ) ".
+       "values " .
+       "   (?,password(?),?,?,now(),?)",
+       $name,$pass,$owner,$who,$where);
+
+   if($$db{rows} != 1) {
+      rollback($db);
+      return undef;
+   }
+
+   my $hash = one($db,"select last_insert_id() obj_id") ||
+      return rollback($db);
+
+   set_flag($$hash{obj_id},$type);
+   if($type eq "PLAYER" || $type eq "OBJECT") {
+      move(fetch($$hash{obj_id}),fetch($where));
+   }
+
+   return $$hash{obj_id};
+}
+
+#
+# ignoreit
+#    Ignore certain hash key entries at all depths or just the specified
+#    depth.
+#
+sub ignoreit
+{
+   my ($skip,$key,$depth) = @_;
+
+
+   if(!defined $$skip{$key}) {
+      return 0;
+   } elsif($$skip{$key} < 0 || ($$skip{$key} >= 0 && $$skip{$key} == $depth)) {
+     return 1;
+   } else {
+     return 0;
+   }
+}
+
+#
+# print_var
+#    Return a "text" printable version of a HASH / Array
+#
+sub print_var
+{
+   my ($var,$depth,$name,$skip,$recursive) = @_;
+   my ($PL,$PR) = ('{','}');
+   my $out;
+
+   return "$name -> TO_BIG" if $depth > 6;
+   $depth = 0 if $depth eq "";
+   $out .= (" " x ($depth * 2)) . (($name eq undef) ? "UNDEFINED" : $name) .
+           " $PL\n" if(!$recursive);
+   $depth++;
+
+   for my $key (sort ((ref($var) eq "HASH") ? keys %$var : 0 .. $#$var)) {
+
+      my $data = (ref($var) eq "HASH") ? $$var{$key} : $$var[$key];
+
+      if((ref($data) eq "HASH" || ref($data) eq "ARRAY") &&
+         !ignoreit($skip,$key,$depth)) {
+         $out .= sprintf("%s%s $PL\n"," " x ($depth*2),$key);
+         $out .= print_var($$var{$key},$depth+1,$key,$skip,1);
+         $out .= sprintf("%s$PR\n"," " x ($depth*2));
+      } elsif(!ignoreit($skip,$key,$depth)) {
+         $out .= sprintf("%s%s = %s\n"," " x ($depth*2),$key,$data);
+      }
+   }
+
+   $out .= (" " x (($depth-1)*2)) . "$PR\n" if(!$recursive);
+   return $out;
+}
+
+
+sub inuse_player_name
+{
+   my $name = shift;
+
+   my $result = one_val($db,
+                  "select if(count(*) = 0,0,1) value " .
+                  "  from object obj, flag flg, flag_definition fde " .
+                  " where obj.obj_id = flg.obj_id " .
+                  "   and flg.fde_flag_id = fde.fde_flag_id " .
+                  "   and fde.fde_name = 'PLAYER' " .
+                  "   and lower(obj_name) = lower(?) ",
+                  $name
+                 );
+   return $result;
+}
+
+sub set
+{
+   my ($obj,$attribute,$value) = @_;
+
+   if($value =~ /^\s*$/) {
+      sql($db,
+          "delete " .
+          "  from attribute " .
+          " where atr_name = ? " .
+          "   and obj_id = ? ",
+          lc($attribute),
+          $$obj{obj_id}
+         );
+      if($$db{rows} == 1) {
+         echo($user,"Attribute %s Removed.",uc($attribute));
+      } else {
+         echo($user,"Unknown attribute %s on %s",uc($attribute),name($obj));
+      }
+   } else {
+      sql($db,
+          "insert into attribute " .
+          "   (obj_id, " .
+          "    atr_name, " .
+          "    atr_value, " .
+          "    atr_created_by, " .
+          "    atr_created_date, " .
+          "    atr_last_updated_by, " .
+          "    atr_last_updated_date)  " .
+          "values " .
+          "   (?,?,?,?,now(),?,now()) " .
+          "ON DUPLICATE KEY UPDATE  " .
+          "   atr_value=values(atr_value), " .
+          "   atr_last_updated_by=values(atr_last_updated_by), " .
+          "   atr_last_updated_date = values(atr_last_updated_date)",
+          $$obj{obj_id},
+          uc($attribute),
+          $value,
+          $$user{obj_name},
+          $$user{obj_name});
+      echo($user,"Set.");
+   }
+}
+
+sub get
+{
+   my ($obj,$attribute) = @_;
+   my $hash;
+
+   $obj = { obj_id => $obj } if ref($obj) ne "HASH";
+
+   if(($hash = one($db,"select atr_value from attribute " .
+                         " where obj_id = ? " .
+                         "   and atr_name = upper( ? )",
+                         $$obj{obj_id},
+                         $attribute
+                        ))) {
+      return $$hash{atr_value};
+   } else {
+      return undef;
+   }
+}
+
+sub loc_obj
+{
+   my $obj = obj(shift);
+
+   my $val = one_val("select con_source_id value from content where obj_id=?",
+                     $$obj{obj_id});
+
+   return fetch(one_val($db,
+                        "select con_source_id value from content where obj_id=?",
+                        $$obj{obj_id}
+                       )
+               );
+}
+
+sub loc
+{
+   my $loc = loc_obj(@_[0],@_[1]);
+   return ($loc eq undef) ? undef : $$loc{obj_id};
+}
+
+sub player
+{
+   my $obj = shift;
+   return hasflag($obj,"PLAYER");
+}
+
+sub same
+{
+   my ($one,$two) = @_;
+   return ($$one{obj_id} == $$two{obj_id}) ? 1 : 0;
+}
+
+sub obj_ref
+{
+   my $obj  = shift;
+
+   if(ref($obj) eq "HASH") {
+      return $obj;
+   } else {
+      return fetch($obj);
+   }
+}
+
+sub obj_name
+{
+   my $obj = obj_ref(shift);
+   
+   if(controls($user,$obj)) {
+      return $$obj{obj_name} . "(#" . $$obj{obj_id} . flag_list($obj) . ")";
+   } else {
+      return $$obj{obj_name};
+   }
+}
+
+#
+# date_split
+#    Segment up the seconds into somethign more readable then displaying
+#    some large number of seconds.
+#
+sub date_split
+{
+   my $time = shift;
+   my (%result,$num);
+
+   # define how the date will be split up (i.e by month,day,..)
+   my %chart = ( 3600 * 24 * 30 => 'M',
+                 3600 * 24 * 7 => 'w',
+                 3600 * 24 => 'd',
+                 3600 => 'h',
+                 60 => 'm',
+                 0 => 's',
+               );
+
+    # loop through the chart and split the dates up
+    for my $i (sort {$b <=> $a} keys %chart) {
+       if($i == 0) {                             # handle seconds/leftovers
+          @result{s} = ($time > 0) ? $time : 0;
+          if(!defined @result{max_val}) {
+             @result{max_val} = @result{s};
+             @result{max_abr} = @chart{$i};
+          }
+       } elsif($time > $i) {                   # remaining seconds is larger
+          $num = int($time / $i);                       # add it to the list
+          $time -= $num * $i;
+          @result{@chart{$i}} = $num;
+          if(!defined @result{max_val}) {
+             @result{max_val} = $num;
+             @result{max_abr} = @chart{$i};
+          }
+       } else {
+          @result{@chart{$i}} = 0;                          # fill in blanks
+       }
+   }
+   return \%result;
+}
+
+#
+# move
+#    move an object from to a new location.
+#
+sub move
+{
+   my ($target,$dest,$type) = (obj($_[0]),obj($_[1]),$_[2]);
+   my $who = $$user{obj_name};
+
+   $who = 'CREATE_COMMAND' if($who eq undef);
+
+   # look up destination object
+   # remove previous location record for object
+   sql($db,"delete from content " .           # remove previous loc
+           " where obj_id = ?",
+           $$target{obj_id});
+
+   # insert current location record for object
+   my $result = sql(e($db,1),                              # set new location
+       "INSERT INTO content (obj_id, ".
+       "                     con_source_id, ".
+       "                     con_created_by, ".
+       "                     con_created_date, ".
+       "                     con_type) ".
+       "     VALUES (?, ".
+       "             ?, ".
+       "             ?, ".
+       "             now(), ".
+       "             ?)",
+       $$target{obj_id},
+       $$dest{obj_id},
+       $who,
+       ($type eq undef) ? 3 : 4
+   );
+   commit($db);
+   return 1;
+}
+
+sub obj
+{
+   my $id = shift;
+
+   if(ref($id) eq "HASH") {
+      return $id;
+   } else {
+      return { obj_id => $id };
+   }
+}
+
+sub obj_import
+{
+   my @result;
+
+   for my $i (0 .. $#_) {
+      if(ref(@_[$i]) eq "HASH") {
+         push(@result,@_[$i]);
+      } else {
+         push(@result,{ obj_id => @_[$i] });
+      }
+   }
+   return (@result);
+}
+
+sub link_exit
+{
+   my ($exit,$to) = obj_import(@_);
+    
+   one($db,                                     # set new location
+       "INSERT INTO content (obj_id, ".
+       "                     con_dest_id, ".
+       "                     con_created_by, ".
+       "                     con_created_date, ".
+       "                     con_type) ".
+       "     VALUES (?, ".
+       "             ?, ".
+       "             ?, ".
+       "             now(), ".
+       "             ?) " .
+       "ON DUPLICATE KEY UPDATE " .
+       "   con_dest_id=values(con_dest_id), " .
+       "   con_updated_by=values(con_created_by), " .
+       "   con_updated_date=now()",
+       $$exit{obj_id},
+       $$to{obj_id},
+       $$user{obj_name},
+       4
+   );
+
+   if($$db{rows} == 1) {
+      commit;
+      return 1;
+   } else {
+      rollback;
+      return 0;
+   }
+}
+
+sub getfile
+{
+   my ($fn,$code) = @_;
+   my($actual,$file, $out);
+
+   if($fn =~ /\||;/) {         # ignore bad file names and attempt to be safe
+      return undef;
+   } elsif($fn =~ /^[^\\|\/]+\.(pl|dat)$/i) {
+      $actual = $fn;
+   } elsif($fn =~ /^[^\\|\/]+$/i) {
+      $actual = "txt\/$fn";
+   } else {
+      return undef;
+   }
+
+   my $newmod = (stat($actual))[9];                  # find modification time
+
+   if(defined @info{"file_$fn"}) {                      # look at cached data
+      my $hash = @info{"file_$fn"};
+
+      # use cached version if its still good
+      return $$hash{data} if($$hash{mod} == $newmod);
+   }
+
+   open($file,$actual) || return undef;
+
+   @{$$code{$fn}}{lines} = 0 if(ref($code) eq "HASH");
+   while(<$file>) {                                           # read all data
+      @{$$code{$fn}}{lines}++ if(ref($code) eq "HASH");
+      $out .= $_;
+   }
+   close($file);
+
+   @info{"file_$fn"} = {                                 # store cached data
+      mod => $newmod,
+      data => $out
+   };
+
+   return $out;                                                # return data
+}
+
+sub lastsite
+{
+   my $id = shift;
+
+   return one_val($db,"SELECT con_hostname value" .
+                      "  FROM connect " .
+                      " WHERE con_connect_id = (SELECT max(con_connect_id) " .
+                      "                           FROM connect " .
+                      "                          WHERE obj_id = ?)",
+                      $id) || return "N/A";
+}
+
+#
+# fuzzy_secs
+#    Determine a date based upon what each word looks like.
+#
+sub fuzzy
+{
+   my ($time) = @_;
+   my ($sec,$min,$hour,$day,$mon,$year);
+   my $AMPM = 1;
+
+   for my $word (split(/\s+/,$time)) {
+
+      if($word =~ /^(\d+):(\d+):(\d+)$/) {
+         ($hour,$min,$sec) = ($1,$2,$3);
+      } elsif($word =~ /^(\d+):(\d+)$/) {
+         ($hour,$min) = ($1,$2);
+      } elsif($word =~ /^(\d{4})[\/\-](\d+)[\/\-](\d+)$/) {
+         ($mon,$day,$year) = ($2,$3,$1);
+      } elsif($word =~ /^(\d+)[\/\-](\d+)[\/\-](\d+)$/) {
+         ($mon,$day,$year) = ($1,$2,$3);
+      } elsif(defined @months{lc($word)}) {
+         $mon = @months{lc($word)};
+      } elsif($word =~ /^\d{4}$/) {
+         $year = $word;
+      } elsif($word =~ /^\d{1,2}$/ && $word < 31) {
+         $day = $word;
+      } elsif($word =~ /^(AM|PM)$/i) {
+         $AMPM = uc($1);
+      } elsif(defined @days{lc($word)}) {
+         # okay to ignore day of the week
+      }
+   }
+
+   $year = (localtime())[5] if $year eq undef;
+   $day = 1 if $day eq undef;
+
+   if($AMPM eq "AM" || $AMPM eq "PM") {               # handle am/pm hour
+      if($hour == 12 && $AMPM eq "AM") {
+         $hour = 0;
+      } elsif($hour == 12 && $AMPM eq "PM") {
+         # do nothing
+      } elsif($AMPM eq "PM") {
+         $hour += 12;
+      }
+   }
+   
+   # don't go negative on which month it is, this will make
+   # timelocal assume its the current month.
+   if($mon eq undef) { 
+      return timelocal($sec,$min,$hour,$day,$mon,$year);
+   } else {
+      return timelocal($sec,$min,$hour,$day,$mon-1,$year);
+   }
+}
+
+sub quota_left
+{
+   my $obj = obj(shift);
+
+#   if(hasflag($obj,"WIZARD")) {
+#      return 1;
+#   } else {
+      return one_val($db,
+                     "select max(if(obj_id=?,obj_quota,0)) - count(*) value " .
+                     "  from object " .
+                     " where obj_owner = ?" .
+                     "    or obj_id = ?",
+                     $$obj{obj_id},
+                     $$obj{obj_id},
+                     $$obj{obj_id}
+                    );
+#   }
+}

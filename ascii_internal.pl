@@ -54,6 +54,17 @@ sub evaluate
     return $result;
 }
 
+sub text
+{
+   my ($sql,@args) = @_;
+   my $out = "---[ Start ]---\n";
+   for my $hash (@{sql($db,$sql,@args)}) {
+      $out .= $$hash{text} . "\n";
+   }
+   $out .= "---[  End  ]---";
+   return $out;
+}
+
 sub table
 {
    my ($sql,@args) = @_;
@@ -174,6 +185,44 @@ sub controls
 }
 
 sub echo
+{
+   my ($target,$fmt,@args) = @_;
+   my $match = 0;
+
+   my $out = sprintf($fmt,@args);
+   $out .= "\n" if($out !~ /\n$/);
+   $out =~ s/\n/\r\n/g if($out !~ /\r/);
+   my $txt = $out;
+   $txt =~ s/\r|\n//g;
+
+   sql($db,
+       "insert into output" .
+       "(" .
+       "   out_text, " .
+       "   out_source, ".
+       "   out_destination ".
+       ") values ( ".
+       "   ?, " .
+       "   ?, " .
+       "   ? " .
+       ")",
+       $txt,
+       $$user{obj_id},
+       $$target{obj_id}
+      );
+    commit;
+   
+#   if(hasflag($target,"PLAYER")) {
+      for my $key (keys %connected) {
+         if($$target{obj_id} eq @{@connected{$key}}{obj_id}) {
+            my $sock = @{@connected{$key}}{sock};
+            printf($sock "%s",$out);
+         }
+      }
+#   }
+}
+
+sub echo_nolog
 {
    my ($target,$fmt,@args) = @_;
    my $match = 0;

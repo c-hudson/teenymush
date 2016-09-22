@@ -107,6 +107,9 @@ delete @command{keys %command};
                          fun  => sub { cmd_list(@_); }};
 @command{"score"}   =  { help => "Lists how many pennies you have",
                          fun  => sub { echo($user,"You have 0 pennies."); }};
+
+@command{"\@recall"}=  { help => "Recall output sent to you",
+                         fun  => sub { cmd_recall(@_); }};
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); }};
@@ -124,6 +127,43 @@ sub cmd_huh         { echo($user,"Huh?  (Type \"help\" for help.)");     }
 sub cmd_offline_huh { echo($user,getfile("login.txt"));                  }
 sub cmd_version     { echo($user,"TeenyMUSH 0.1 [cmhudson\@gmail.com]");   }
 sub cmd_exec        { echo($user,"Exec: '%s'\n",@_[0]); }
+
+sub cmd_recall
+{
+    my $txt = shift;
+
+    if($txt =~ /^\s*$/) {
+       echo_nolog($user,
+                  text("  select text ".
+                       "    from (   select out_timestamp, " .
+                       "                    out_text text " .
+                       "               from output " .
+                       "              where out_destination = ? " .
+                       "           order by out_timestamp desc " .
+                       "           limit 15 " .
+                       "         ) tmp  " .
+                       "order by out_timestamp",
+                       $$user{obj_id}
+                      )
+           );
+    } else {
+       echo_nolog($user,
+                  text("  select text ".
+                       "    from (   select out_timestamp, " .
+                       "                    out_text text " .
+                       "               from output " .
+                       "              where out_destination = ? " .
+                       "                and lower(out_text) like ? ".
+                       "           order by out_timestamp desc " .
+                       "           limit 15 " .
+                       "         ) tmp  " .
+                       "order by out_timestamp",
+                       $$user{obj_id},
+                       lc('%' . $txt . '%')
+                      )
+           );
+    }
+}
 
 sub cmd_uptime
 {
@@ -222,7 +262,7 @@ sub cmd_toad
    my $txt = shift;
 
    if($txt =~ /^\s*$/) {
-       return echo($user,"syntax: \@destroy <object>");
+       return echo($user,"syntax: \@toad <object>");
    }
 
    my $target = locate_object($user,$txt,"LOCAL") ||

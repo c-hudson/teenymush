@@ -55,7 +55,7 @@ CREATE TABLE `connect` (
   PRIMARY KEY (`con_connect_id`),
   KEY `obj_id` (`obj_id`),
   CONSTRAINT `connect_ibfk_1` FOREIGN KEY (`obj_id`) REFERENCES `object` (`obj_id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=641 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=646 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -176,7 +176,23 @@ CREATE TABLE `site` (
   `ste_last_updated_date` datetime DEFAULT NULL,
   `ste_last_updated_by` int(11) DEFAULT NULL,
   PRIMARY KEY (`ste_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `valid_option`
+--
+
+DROP TABLE IF EXISTS `valid_option`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `valid_option` (
+  `vao_id` int(11) NOT NULL AUTO_INCREMENT,
+  `vao_table` varchar(64) NOT NULL,
+  `vao_code` int(11) NOT NULL,
+  `vao_value` varchar(30) NOT NULL,
+  PRIMARY KEY (`vao_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
@@ -188,4 +204,4 @@ CREATE TABLE `site` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2016-09-21 12:45:44
+-- Dump completed on 2016-09-22  5:00:01

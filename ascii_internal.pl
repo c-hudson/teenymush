@@ -56,13 +56,23 @@ sub evaluate
 
 sub table
 {
-   my $sql = shift;
-   my ($out, @data, @line, @header, @keys, %max);
-   echo($user,"SQL: %s",$sql);
+   my ($sql,@args) = @_;
+   my ($out, @data, @line, @header, @keys, %order, %max,$count,@pos);
 
-   for my $hash (@{sql($db,$sql)}) {                         # determine max
+   # determine column order from the original sql
+   if($sql =~ /^\s*select (.+?) from/) {
+      for my $field (split(/\s*,\s*/,$1)) {
+         if($field =~ / ([^ ]+)\s*$/) {
+            @order{lc(trim($1))} = ++$count;
+         } else {
+            @order{lc(trim($field))} = ++$count;
+         }
+      }
+   }
+
+   for my $hash (@{sql($db,$sql,@args)}) {                    # determine max
       push(@data,$hash);
-      for my $key (sort keys %$hash) {
+      for my $key (keys %$hash) {
          if(length($$hash{$key}) > @max{$key}) {
              @max{$key} = length($$hash{$key});
          }
@@ -75,7 +85,11 @@ sub table
    for my $i (0 .. $#data) {
       my $hash = @data[$i];
       delete @line[0 .. $#line];
-      for my $key (sort keys %$hash) {
+
+      if($#pos == -1) {
+         @pos = (sort {@order{lc($a)} <=> @order{lc($b)}} keys %$hash);
+      }
+      for my $key (@pos) {
          if($i == 0) {
             push(@header,"-" x @max{$key});
             push(@keys,sprintf("%-*s",@max{$key},$key));
@@ -83,12 +97,12 @@ sub table
          push(@line,sprintf("%-*s",@max{$key},$$hash{$key}));
       }
       if($i == 0) {
-         $out .= "  " . join(" | ",@keys) . "\n";
-         $out .= " -" . join("-|-",@header) . "- \n";
+         $out .= join(" | ",@keys) . "\n";
+         $out .= join("-|-",@header) .  "\n";
       }
-      $out .= "| " . join(" | ",@line) . " |\n";
+      $out .= join(" | ",@line) . "\n";
    }
-   $out .= " -" . join("- -",@header) . "- \n";
+   $out .= join("- -",@header) . "\n";
    return $out;
 }
 

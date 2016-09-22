@@ -103,6 +103,10 @@ delete @command{keys %command};
                          fun  => sub { cmd_toad(@_); }};
 @command{"\@update_hostname"} =   { help => "Perform hostname lookups on any connected player as needed",
                          fun  => sub { cmd_update_hostname(@_); }};
+@command{"\@list"}  =  { help => "List internal server data",
+                         fun  => sub { cmd_list(@_); }};
+@command{"score"}   =  { help => "Lists how many pennies you have",
+                         fun  => sub { echo($user,"You have 0 pennies."); }};
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); }};
@@ -159,6 +163,27 @@ sub cmd_force
       }
    } else {
       echo($user,"syntax: \@force <object> = <command>");
+   }
+}
+
+sub cmd_list
+{
+   my $txt = shift;
+
+   if($txt =~ /^\s*site.*$/) {
+       echo($user,"%s",table("select ste_id Id, " .
+                        "       ste_pattern Pattern, " .
+                        "       vao_value Type,".
+                        "       obj_name Creator, " .
+                        "       ste_created_date Date" .
+                        "  from site, object, valid_option " .
+                        " where ste_created_by = obj_id " .
+                        "   and vao_code = ste_type".
+                        "   and vao_table = 'site'"
+                       )
+           );
+   } else {
+       echo($user,"Undefined option '%s' used.",$txt);
    }
 }
 
@@ -452,7 +477,7 @@ sub cmd_page
 sub cmd_last
 {
    my $txt = shift;
-   my ($what,$extra);
+   my ($what,$extra, $hostname);
 
    # determine the target
    if($txt =~ /^\s*([^ ]+)\s*$/) {
@@ -463,7 +488,33 @@ sub cmd_last
       $what = $$user{obj_id};
    }
 
+   if($what eq $$user{obj_id} || hasflag($user,"WIZARD")) {
+      $hostname = "con_hostname Hostname,";
+   }
+
    # show target's total connections
+   echo($user,"%s",
+              table("  select obj_name Name, " .
+                    "         $hostname " .
+                    "         min(case " .
+                    "                when con_type = 1 then " .
+                    "                   con_timestamp " .
+                    "         end) Connect, ".
+                    "         min(case " .
+                    "                when con_type = 2 then " .
+                    "                   con_timestamp " .
+                    "         end) Disconnect ".
+                    "    from connect con, object obj, valid_option " .
+                    "   where con.obj_id = obj.obj_id " .
+                    "     and obj.obj_id = ? ".
+                    "     and vao_table = 'connect' " .
+                    "     and vao_code = con_type " .
+                    "group by obj_name, con_hostname, con_socket ".
+                    "order by con_timestamp desc " .
+                    "   limit 10",
+                    $what
+                   )
+        );
  
    if((my $val=one_val("select count(*) value " .
                        "  from connect " .
@@ -477,37 +528,37 @@ sub cmd_last
    }
 
    # show target's last 5 connection details
-   for my $hash (@{sql("    SELECT con.obj_id, " .
-                       "           con.con_timestamp con, " .
-                       "           con.con_hostname, " .
-                       "           ifnull(dis.con_timestamp,'N/A') dis " .
-                       "      FROM connect con " .
-                       " LEFT JOIN connect dis " .
-                       "        ON con.con_socket = dis.con_socket " .
-                       "       AND dis.con_type = 2 " .
-                       "     WHERE con.obj_id = ? AND con.con_type = 1 " .
-                       "  order by con.con_timestamp desc " .
-                       " limit 5",
-                       $what
-                )}) {
-      if($$hash{dis} eq 'N/A') {
-         echo($user,"   From: %s, On: %s for ** online **",
-            short_hn($$hash{con_hostname}),$$hash{con});
-      } else {
-         my $online = date_split(fuzzy($$hash{dis}) - fuzzy($$hash{con}));
-         if($$online{max_val} =~ /^(M|W|D)$/) {
-            $extra = sprintf("%s ",$$online{max_val} . $$online{max_val});
-         }
-    
-         echo($user,"   From: %s, On: %s for %s%02d:%02d\n",
-              short_hn($$hash{con_hostname}),
-              $$hash{con},
-              $extra,
-              $$online{h},
-              $$online{m}
-             );
-      }
-   }
+#   for my $hash (@{sql("    SELECT con.obj_id, " .
+#                       "           con.con_timestamp con, " .
+#                       "           con.con_hostname, " .
+#                       "           ifnull(dis.con_timestamp,'N/A') dis " .
+#                       "      FROM connect con " .
+#                       " LEFT JOIN connect dis " .
+#                       "        ON con.con_socket = dis.con_socket " .
+#                       "       AND dis.con_type = 2 " .
+#                       "     WHERE con.obj_id = ? AND con.con_type = 1 " .
+#                       "  order by con.con_timestamp desc " .
+#                       " limit 5",
+#                       $what
+#                )}) {
+#      if($$hash{dis} eq 'N/A') {
+#         echo($user,"   From: %s, On: %s for ** online **",
+#            short_hn($$hash{con_hostname}),$$hash{con});
+#      } else {
+#         my $online = date_split(fuzzy($$hash{dis}) - fuzzy($$hash{con}));
+#         if($$online{max_val} =~ /^(M|W|D)$/) {
+#            $extra = sprintf("%s ",$$online{max_val} . $$online{max_val});
+#         }
+#    
+#         echo($user,"   From: %s, On: %s for %s%02d:%02d\n",
+#              short_hn($$hash{con_hostname}),
+#              $$hash{con},
+#              $extra,
+#              $$online{h},
+#              $$online{m}
+#             );
+#      }
+#   }
 }
 
 

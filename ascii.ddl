@@ -55,7 +55,7 @@ CREATE TABLE `connect` (
   PRIMARY KEY (`con_connect_id`),
   KEY `obj_id` (`obj_id`),
   CONSTRAINT `connect_ibfk_1` FOREIGN KEY (`obj_id`) REFERENCES `object` (`obj_id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=646 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=659 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -99,7 +99,7 @@ CREATE TABLE `flag` (
   KEY `fde_flag_id` (`fde_flag_id`),
   CONSTRAINT `flag_ibfk_1` FOREIGN KEY (`obj_id`) REFERENCES `object` (`obj_id`) ON DELETE CASCADE,
   CONSTRAINT `flag_ibfk_2` FOREIGN KEY (`fde_flag_id`) REFERENCES `flag_definition` (`fde_flag_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=106 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=107 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -156,7 +156,24 @@ CREATE TABLE `object` (
   `obj_home` int(11) NOT NULL,
   `obj_quota` int(11) DEFAULT NULL,
   PRIMARY KEY (`obj_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=113 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=114 DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `output`
+--
+
+DROP TABLE IF EXISTS `output`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `output` (
+  `out_id` int(11) NOT NULL AUTO_INCREMENT,
+  `out_timestamp` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `out_text` varchar(4000) NOT NULL,
+  `out_source` int(11) NOT NULL,
+  `out_destination` int(11) DEFAULT NULL,
+  PRIMARY KEY (`out_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2115 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -204,4 +221,4 @@ CREATE TABLE `valid_option` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2016-09-22  5:00:01
+-- Dump completed on 2016-09-24  5:00:01

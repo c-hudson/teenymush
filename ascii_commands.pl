@@ -101,8 +101,8 @@ delete @command{keys %command};
                          fun  => sub { cmd_destroy(@_); }};
 @command{"\@toad"} =   { help => "Destroy an player",
                          fun  => sub { cmd_toad(@_); }};
-@command{"\@update_hostname"} =   { help => "Perform hostname lookups on any connected player as needed",
-                         fun  => sub { cmd_update_hostname(@_); }};
+#@command{"\@update_hostname"} =   { help => "Perform hostname lookups on any connected player as needed",
+#                         fun  => sub { cmd_update_hostname(@_); }};
 @command{"\@list"}  =  { help => "List internal server data",
                          fun  => sub { cmd_list(@_); }};
 @command{"score"}   =  { help => "Lists how many pennies you have",
@@ -131,38 +131,34 @@ sub cmd_exec        { echo($user,"Exec: '%s'\n",@_[0]); }
 sub cmd_recall
 {
     my $txt = shift;
+    my ($qualifier,@args);
 
-    if($txt =~ /^\s*$/) {
-       echo_nolog($user,
-                  text("  select text ".
-                       "    from (   select out_timestamp, " .
-                       "                    out_text text " .
-                       "               from output " .
-                       "              where out_destination = ? " .
-                       "           order by out_timestamp desc " .
-                       "           limit 15 " .
-                       "         ) tmp  " .
-                       "order by out_timestamp",
-                       $$user{obj_id}
-                      )
-           );
-    } else {
-       echo_nolog($user,
-                  text("  select text ".
-                       "    from (   select out_timestamp, " .
-                       "                    out_text text " .
-                       "               from output " .
-                       "              where out_destination = ? " .
-                       "                and lower(out_text) like ? ".
-                       "           order by out_timestamp desc " .
-                       "           limit 15 " .
-                       "         ) tmp  " .
-                       "order by out_timestamp",
-                       $$user{obj_id},
-                       lc('%' . $txt . '%')
-                      )
-           );
+    @args[0] = $$user{obj_id};
+    if($txt !~ /^\s*$/) {
+       $qualifier = 'and lower(out_text) like ? ';
+       @args[1] = lc('%' . $txt . '%');
     }
+
+    echo_nolog($user,
+               text("  select concat( " .
+                    "            date_format(" .
+                    "               out_timestamp, ".
+                    "               '[%H:%s %m/%d/%y]  ' " .
+                    "            ), " .
+                    "            text " .
+                    "         ) text ".
+                    "    from (   select out_timestamp, " .
+                    "                    out_text text " .
+                    "               from output " .
+                    "              where out_destination = ? " .
+                    "                $qualifier " .
+                    "           order by out_timestamp desc " .
+                    "           limit 15 " .
+                    "         ) tmp  " .
+                    "order by out_timestamp",
+                    @args
+                   )
+        );
 }
 
 sub cmd_uptime

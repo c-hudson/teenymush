@@ -616,7 +616,17 @@ sub cmd_go
       echo($user,"There's no place like home...");
       echo_room($user,"%s goes home.",name($user));
       echo_room($user,"%s has left.",name($user));
-      $dest = fetch(3);
+
+      $dest = one("select obj2.* " .
+                  "  from object obj1, " .
+                  "       object obj2 " . 
+                  " where obj1.obj_home = obj2.obj_id " .
+                  "   and obj1.obj_id = ? " ,
+                  $$user{obj_id});
+
+      # default to room #0
+      $dest = fetch(0) if($dest eq undef || !defined $$dest{obj_id});
+
    } else {
       # find the exit to go through
       $hash = locate_exit($txt) ||
@@ -647,38 +657,36 @@ sub cmd_teleport
    if($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*/) {
       ($target,$location) = ($1,$2);
    } elsif($txt =~ /^\s*([^ ]+)\s*/) {
-      ($target,$location) = ($$user{obj_id},$1);
+      ($target,$location) = ("#$$user{obj_id}",$1);
    } else {
       echo($user,"syntax: \@teleport <object> = <location>");
       echo($user,"        \@teleport <location>");
    }
 
-
    $target = locate_object($user,$target) ||
-      return err($user,"I don't see that object here");
+      return err("I don't see that object here.");
 
    $location = locate_object($user,$location) ||
-      return err($user,"I can't find that destination");
+      return err("I can't find that location");
 
    controls($user,$target) ||
-      return err($user,"Permission Denied.");
+      return err("Permission Denied.");
 
    controls($user,$location) ||
-      return err($user,"Permission Denied.");
+      return err("Permission Denied.");
 
    if(hasflag($location,"EXIT")) {
       if(loc($location) == loc($user) && loc($user) == loc($target)) {
          $location = fetch(destination($location));
       } else {
-         return err($user,"Permission Denied.");
+         return err("Permission Denied.");
       }
    }
    
-
    echo_room($user,"%s has left.",name($user));
 
-   move($user,$target) ||
-      return echo($user,"Fatal error, unable to teleport to that location");
+   move($target,$location) ||
+      return echo("Fatal error, unable to teleport to that location");
 
    echo_room($user,"%s has arrived.",name($user));
 
@@ -769,6 +777,10 @@ sub cmd_help
             echo($user,"   %-10s : %s\n",$key,@{@command{$key}}{help});
          }
       }
+   } elsif(defined @command{trim(lc($txt))}) {
+      echo($user,@{@command{trim(lc($txt))}}{help});
+   } else {
+      echo($user,"Unknown help item '%s' specified",trim(lc($txt)));
    }
 }
 
@@ -1306,7 +1318,11 @@ sub cmd_look
                            "ORDER BY con_created_date",
                            $$hash{obj_id}
                       )}) {
-      push(@exit,$$hash{obj_name});
+      if($$hash{obj_name} =~ /^([^;]+)/) {
+         push(@exit,$1);
+      } else {
+         push(@exit,$$hash{obj_name});
+      }
    }
    if($#exit >= 0) {
       echo($user,"Exits:");

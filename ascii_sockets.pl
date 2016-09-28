@@ -66,9 +66,9 @@ sub mush_command
                        " where obj.obj_id = atr.obj_id " .
                        "   and obj.obj_id = con.obj_id " .
                        "   and ? like  " .
-                "replace(substr(atr_value,2,instr(atr_value,':')-2),'*','%')" .
+                "replace(substr(atr_value,1,instr(atr_value,':')-1),'*','%')" .
                        "   and con.con_source_id = ? ",
-                       lc($cmd),
+                       "\$" . lc($cmd),
                        loc($user)
                       )
                 }) {

@@ -31,8 +31,9 @@ sub evaluate
 {
     my $txt = shift;
 
-    $txt =~ s/%r/\n/g;
-    $txt =~ s/%b/ /g;
+    $txt =~ s/%r/\n/ig;
+    $txt =~ s/%b/ /ig;
+    $txt =~ s/%t/\t/ig;
     if($enactor ne undef) {
        $txt =~ s/%n/$$enactor{obj_name}/g;
        $txt =~ s/%#/#$$enactor{obj_id}/g;
@@ -184,12 +185,84 @@ sub controls
    }
 }
 
+
+#
+# handle_listener
+#    handle listening objects and the listener flag. This allows objects
+#    to listen via the "^pattern:mush command".
+#
+sub handle_listener
+{
+   my ($target,$txt,@args) = @_;
+   my $count = 0;
+
+   my $msg = sprintf($txt,@args);
+
+   # search the $$user's location for things that listen
+   for my $hash (@{sql("select obj.obj_id, " .
+                    "       substr(atr_value,2,instr(atr_value,':')-2) cmd,".
+                    "       substr(atr_value,instr(atr_value,':')+1) txt ".
+                    "  from object obj, " .
+                    "       attribute atr, " .
+                    "       content con1," .
+                    "       content con2, " .
+                    "       flag_definition fld, " . 
+                    "       flag flg  " . 
+                    " where obj.obj_id = atr.obj_id " .
+                    "   and obj.obj_id = con1.obj_id " .
+                    "   and fld.fde_flag_id = flg.fde_flag_id " .
+                    "   and obj.obj_id = flg.obj_id " .
+                    "   and con2.con_source_id = con1.con_source_id " .
+                    "   and con2.obj_id = ? " .
+                    "   and con1.obj_id != con2.obj_id " .
+                    "   and ? like replace(substr(atr_value,1," .
+                    "                      instr(atr_value,':')-1),'*','%')" .
+                    "   and fde_name = ? ",
+                    $$target{obj_id},
+                    "\^" . lc($msg),
+                    "LISTENER"
+                   )
+                }) {
+
+      # reset variables
+      ($$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
+       $$user{6},$$user{7},$$user{8},$$user{9}) =
+         (undef,undef,undef,undef,undef,undef,undef,undef);
+
+      # determine %0 - %9
+      if($$hash{cmd} ne $msg) {
+         $$hash{cmd} =~ s/\*/\(.*\)/g;
+         if($msg =~ /^$$hash{cmd}$/) {
+            ($$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
+             $$user{6},$$user{7},$$user{8},$$user{9}) =
+            ($1,$2,$3,$4,$5,$6,$7,$8,$9);
+         }
+      }
+
+      # split apart commands and run them
+      while($$hash{txt} ne undef && $count++ < 5) {
+         # look for unescaped semi-colons to split apart lines
+         if($$hash{txt} =~ /^(.*?)(?<!(?<!\\)\\);/) {
+            force($hash,trim($1 . " " . $2));
+            $$hash{txt} = trim($');
+         } else {                  # process all text if no semi-colon found
+            force($hash,trim($$hash{txt}));
+            $$hash{txt} = undef;
+         }
+      }
+      # reset variables
+      ($$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
+       $$user{6},$$user{7},$$user{8},$$user{9}) =
+         (undef,undef,undef,undef,undef,undef,undef,undef);
+   }
+}
+
 sub echo
 {
    my ($target,$fmt,@args) = @_;
    my $match = 0;
-
    my $out = sprintf($fmt,@args);
+
    $out .= "\n" if($out !~ /\n$/);
    $out =~ s/\n/\r\n/g if($out !~ /\r/);
    my $txt = $out;
@@ -210,7 +283,7 @@ sub echo
        $$user{obj_id},
        $$target{obj_id}
       );
-    commit;
+#    commit;
    
 #   if(hasflag($target,"PLAYER")) {
       for my $key (keys %connected) {
@@ -220,6 +293,7 @@ sub echo
          }
       }
 #   }
+
 }
 
 sub echo_nolog
@@ -290,6 +364,7 @@ sub echo_room
          echo($who,$fmt,@args);
       }
    }
+   handle_listener($target,$fmt,@args);
 }
 
 sub connected_socket
@@ -473,7 +548,7 @@ sub locate_object
 sub locate_exit
 {
    my ($name,$type) = @_;
-   my $namecheck;
+   my $match;
 
    if($name =~ /^\s*#(\d+)\s*$/) {
       return fetch($1);
@@ -481,27 +556,34 @@ sub locate_exit
       return fetch(3);
    }
 
-   if(uc($type) eq "EXACT") {
-      $namecheck = "obj_name = upper(?)";
-   } else {
-      $namecheck = "upper(substr(obj_name,1," . length($name) . ")) = upper(?)";
+   for my $hash (@{sql($db,
+                      "select obj.*, con1.* " .
+                      "  from object obj, flag flg, flag_definition fde, ".
+                      "       content con1, content con2 " .
+                      " where obj.obj_id = flg.obj_id " .
+                      "   and flg.fde_flag_id = fde.fde_flag_id " .
+                      "   and con1.obj_id = obj.obj_id ".
+                      "   and con1.con_source_id = con2.con_source_id " .
+                      "   and fde.fde_name = 'EXIT' " .
+                      "   and con2.obj_id = ? ",
+                      $$user{obj_id}
+                   )}) { 
+      if($$hash{obj_name} =~ /(^|;)\s*$name([^;]*)\s*(;|$)/i) {
+         if($1 eq undef) {
+            return $hash;
+         } else {
+            if(length($$match{obj_name}) < length($$hash{obj_name})) {
+               $match = $hash;
+            }
+         }
+      }
    }
-   
-   my $exit = one($db,
-                    "select * " .
-                    "  from object obj, flag flg, flag_definition fde, ".
-                    "       content con " .
-                    " where obj.obj_id = flg.obj_id " .
-                    "   and flg.fde_flag_id = fde.fde_flag_id " .
-                    "   and con.obj_id = obj.obj_id ".
-                    "   and fde.fde_name = 'EXIT' " .
-                    "   and $namecheck " .
-                    "   and con.con_source_id = ? ",
-                    $name,
-                    loc($user),
-                   ) ||
+
+   if($type = "EXACT") {
       return undef;
-   return $exit;
+   } else {
+      return $match;
+   }
 }
 
 

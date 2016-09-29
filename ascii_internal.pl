@@ -528,7 +528,10 @@ sub locate_object
                     $name,
                     $name,
                     @what)}) {
-      if(lc($name) eq lc($$hash{obj_name})) {
+      if(($$hash{fde_name} ne "EXIT" &&
+         lc($name) eq lc($$hash{obj_name})) ||
+        ($$hash{fde_name} eq 'EXIT' && 
+         $$hash{obj_name} =~ /(^|;)\s*$name([^;]*)\s*(;|$)/i)) {
          if($exact eq undef) {
             $exact = $hash;
          } else {

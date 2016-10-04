@@ -16,22 +16,6 @@
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
 
 --
--- Table structure for table `valid_option`
---
-
-DROP TABLE IF EXISTS `valid_option`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `valid_option` (
-  `vao_id` int(11) NOT NULL AUTO_INCREMENT,
-  `vao_table` varchar(64) NOT NULL,
-  `vao_code` int(11) NOT NULL,
-  `vao_value` varchar(30) NOT NULL,
-  PRIMARY KEY (`vao_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=latin1;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
 -- Dumping data for table `valid_option`
 --
 
@@ -40,26 +24,6 @@ LOCK TABLES `valid_option` WRITE;
 INSERT INTO `valid_option` VALUES (1,'site',1,'INSTANT_BANNED'),(2,'site',2,'BANNED'),(3,'site',3,'REGISTRATION'),(4,'site',4,'OPEN'),(5,'connect',1,'CONNECT'),(6,'connect',2,'DISCONNECT');
 /*!40000 ALTER TABLE `valid_option` ENABLE KEYS */;
 UNLOCK TABLES;
-
---
--- Table structure for table `flag_definition`
---
-
-DROP TABLE IF EXISTS `flag_definition`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `flag_definition` (
-  `fde_flag_id` int(11) NOT NULL AUTO_INCREMENT,
-  `fde_name` varchar(100) NOT NULL,
-  `fde_letter` varchar(1) NOT NULL,
-  `fde_created_by` varchar(75) DEFAULT NULL,
-  `fde_created_date` datetime DEFAULT NULL,
-  `fde_last_updated_by` varchar(75) DEFAULT NULL,
-  `fde_last_updated_date` datetime DEFAULT NULL,
-  `FDE_PERMISSION` int(11) NOT NULL DEFAULT '-1',
-  PRIMARY KEY (`fde_flag_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
-/*!40101 SET character_set_client = @saved_cs_client */;
 
 --
 -- Dumping data for table `flag_definition`
@@ -80,4 +44,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2016-10-04  8:48:34
+-- Dump completed on 2016-10-04  8:55:14

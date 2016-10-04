@@ -183,6 +183,8 @@ sub server_process_line
    };
    if($@) {                                   # oops., you sunk my battle ship
       printf("# %s crashed the server with: %s\n%s",name($hash),$_[1],$@); 
+      printf("LastSQL: '%s'\n",@info{sql_last});
+      printf("         '%s'\n",@info{sql_last_args});
       rollback($db);
 
       my $msg = sprintf("%s crashed the server with: %s",name($hash),$_[1]);

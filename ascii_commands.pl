@@ -110,6 +110,11 @@ delete @command{keys %command};
 
 @command{"\@recall"}=  { help => "Recall output sent to you",
                          fun  => sub { cmd_recall(@_); }};
+@command{"\@connect"} ={ help => "open a connection to the internet",
+                         fun  => sub { cmd_socket(@_); }};
+@command{"\@password"}={ help => "Change your password",
+                         fun  => sub { cmd_password(@_); }};
+
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); }};
@@ -126,7 +131,112 @@ delete @command{keys %command};
 sub cmd_huh         { echo($user,"Huh?  (Type \"help\" for help.)");     }
 sub cmd_offline_huh { echo($user,getfile("login.txt"));                  }
 sub cmd_version     { echo($user,"TeenyMUSH 0.1 [cmhudson\@gmail.com]");   }
-sub cmd_exec        { echo($user,"Exec: '%s'\n",@_[0]); }
+sub cmd_exec        { echo($user,"Exec: '%s'\n",@_[1]); }
+
+#
+# BEGIN statement with including code, and most of socket_connect were
+# copied from from: http://aspn.activestate.com/ASPN/Mail/Message/
+# perl-win32-porters/1449297.
+#
+BEGIN {
+   # This nonsense is needed in 5.6.1 and earlier -- I'm too lazy to
+   # test if it's been fixed in 5.8.0.
+   if( $^O eq 'MSWin32' ) {
+      *EWOULDBLOCK = sub () { 10035 };
+      *EINPROGRESS = sub () { 10036 };
+      *IO::Socket::blocking = sub {
+          my ($self, $blocking) = @_;
+          my $nonblocking = $blocking ? "0" : "1";
+          ioctl($self, 0x8004667e, $nonblocking);
+      };
+   } else {
+      require Errno;
+      import  Errno qw(EWOULDBLOCK EINPROGRESS);
+   }
+}
+
+sub good_password
+{
+   my $txt = shift;
+
+   echo($user,"PASS: '%s'\n",$txt);
+   if($txt !~ /^\s*.{8,999}\s*$/) {
+      echo($user,"#-1 Passwords must be 8 characters or more");
+      return 0;
+   } elsif($txt !~ /[0-9]/) {
+      echo($user,"#-1 Passwords must one digit [0-9]");
+      return 0;
+   } elsif($txt !~ /[A-Z]/) {
+      echo($user,"#-1 Passwords must contain at least one upper case character");
+      return 0;
+   } elsif($txt !~ /[A-Z]/) {
+      echo($user,"#-1 Passwords must contain at least one lower case character");
+      return 0;
+   } else {
+      return 1;
+   }
+}
+
+sub cmd_password
+{
+   my $txt = shift;
+
+   if($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*$/) {
+
+      good_password($2) || return;
+
+      if(one($db,"select obj_password ".
+                 "  from object " .
+                 " where obj_id = ? " .
+                 "   and obj_password = password(?)",
+                 $$user{obj_id},
+                 $1
+            )) {
+        sql(e($db,1),
+            "update object ".
+            "   set obj_password = password(?) " . 
+            " where obj_id = ?" ,
+            $2,
+            $$user{obj_id}
+           );
+        echo($user,"Your password has been updated.");
+      } else {
+        echo($user,"Invalid old password.");
+      }
+   } else {
+      echo($user,"usage: \@password <old_password> = <new_password>");
+   }
+}
+
+
+sub cmd_socket_connect
+{
+   my $txt = shift;
+   my $pending = 1;
+
+   if(!hasflag($user,"SOCKET")) {
+      echo($user,"Permission Denied");
+   } elsif($txt =~ /^\s*([^:]+)\s*:\s*(\d+)\s$/) {
+      my $addr = inet_aton($1) ||
+         return echo($user,"Invalid hostname '%s' specified.",$1);
+      my $sock = IO::Socket::INET->new(Proto=>'tcp') ||
+         return echo($user,"Could not create socket");
+      my $sockaddr = sockaddr_in($2, $addr) ||
+         return echo($user,"Could not create SOCKET");
+      $sock->connect($sockaddr) or                     # start connect to host
+         $! == EWOULDBLOCK or $! == EINPROGRESS or         # and check status
+         return echo($user,"Could not open connection");
+      () = IO::Select->new($sock)->can_write(10)     # see if socket is pending
+          or $pending = 2;
+      defined($sock->blocking(1)) ||
+         return echo($user,"Could not open a nonblocking connection");
+
+      $readable->add($sock);
+      echo($user,"Connection started to: %s:%s\n",$1,$2);
+   } else {
+      echo($user,"usage: \@connect <hostname>:<port>");
+   }
+}
 
 sub cmd_recall
 {
@@ -1011,8 +1121,6 @@ sub cmd_connect
 
             echo($user,getfile("motd.txt"));                       # show modt
             cmd_look();                                           # show room
-            echo($user,"%s has connected.",name($user));              # notify
-            echo_room($user,"%s has connected.",name($user));          # users
 
             printf("    %s@%s\n",$$hash{obj_name},$$user{hostname});
             sql(e($db,1),                                       # log connects
@@ -1031,6 +1139,8 @@ sub cmd_connect
                 1
                );
             commit($db);
+            echo($user,"%s has connected.",name($user));              # notify
+            echo_room($user,"%s has connected.",name($user));          # users
          } else {
             sql(e($db,1),                                       # log connects
                 "insert into connect " .

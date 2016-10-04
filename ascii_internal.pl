@@ -180,6 +180,8 @@ sub controls
       return 1;
    } elsif(hasflag($enactor,"WIZARD")) {                   # i have the power
       return 1;                                                      # He-man
+   } elsif(hasflag($enactor,"GOD")) {
+      return 1;                                            # no-atheists here
    } else {
       return 0;                                                    # skeletor
    }
@@ -598,7 +600,7 @@ sub locate_exit
 #
 sub set_flag
 {
-    my ($object,$flag) = (obj($_[0]),$_[1]);
+    my ($object,$flag,$override) = (obj($_[0]),$_[1]);
     my $who = $$user{obj_name};;
     my ($remove,$count);
 
@@ -611,45 +613,62 @@ sub set_flag
        $remove = 1;
     }
 
-    # lookup flag id
-    my $id = one_val($db,"select fde_flag_id value from flag_definition " .
-                         " where fde_name=upper(?)",$flag);
+    # lookup flag info
+    my $hash = one($db,
+                   "select fde1.fde_flag_id, " .
+                   "       fde1.fde_name, " .
+                   "       fde2.fde_name fde_permission_name," .
+                   "       fde1.fde_permission" .
+                   "       from flag_definition fde1," .
+                   "            flag_definition fde2 " .
+                   " where fde1.fde_permission = fde2.fde_flag_id " .
+                   "   and fde1.fde_name=upper(?)",
+                   $flag
+                 );
 
-    return "#-1 Unknown Flag" if($id eq undef);             # unknown flag?
+    if($hash eq undef || !defined $$hash{fde_flag_id} ||
+       $$hash{fde_name} eq "ANYONE") {       # unknown flag?
+       return "#-1 Unknown Flag";
+    }
 
+    if($override || $$hash{fde_permission_name} eq "ANYONE" ||
+       ($$hash{fde_permission} >= 0 && hasflag($user,$$hash{fde_name}))) {
 
-    # check if the flag is already set
-    my $count = one_val($db,"select count(*) value from flag ".
-                            " where obj_id = ? " .
-                            "   and fde_flag_id = ?",
-                            $$object{obj_id},
-                            $id);
+       # check if the flag is already set
+       my $count = one_val($db,"select count(*) value from flag ".
+                               " where obj_id = ? " .
+                               "   and fde_flag_id = ?",
+                               $$object{obj_id},
+                               $$hash{fde_flag_id});
 
-    # add flag to the object/user
-    if($count > 0 && $remove) {
-       sql($db,"delete from flag " .
-               " where obj_id = ? " .
-               "   and fde_flag_id = ?",
-               $$object{obj_id},
-               $id);
-       commit;
-       return "Flag Removed";
-    } elsif($remove) {
-       return "Flag not set";
-    } elsif($count > 0) {
-       return "Already Set";
+       # add flag to the object/user
+       if($count > 0 && $remove) {
+          sql($db,"delete from flag " .
+                  " where obj_id = ? " .
+                  "   and fde_flag_id = ?",
+                  $$object{obj_id},
+                  $$hash{fde_flag_id});
+          commit;
+          return "Flag Removed.";
+       } elsif($remove) {
+          return "Flag not set.";
+       } elsif($count > 0) {
+          return "Already Set.";
+       } else {
+          sql($db,
+              "insert into flag " .
+              "   (obj_id,ofg_created_by,ofg_created_date,fde_flag_id)" .
+              "values " .
+              "   (?,?,now(),?)",
+              $$object{obj_id},
+              $who,
+              $$hash{fde_flag_id});
+          commit;
+          return "#-1 Flag note removed [Internal Error]" if($$db{rows} != 1);
+          return "Set.";
+       }
     } else {
-       sql($db,
-           "insert into flag " .
-           "   (obj_id,ofg_created_by,ofg_created_date,fde_flag_id)" .
-           "values " .
-           "   (?,?,now(),?)",
-           $$object{obj_id},
-           $who,
-           $id);
-       commit;
-       return "#-1 Flag note removed [Internal Error]" if($$db{rows} != 1);
-       return "Set";
+       return "#-1 Permission Denied.";
     }
 }
 
@@ -719,7 +738,7 @@ sub create_object
    my $hash = one($db,"select last_insert_id() obj_id") ||
       return rollback($db);
 
-   set_flag($$hash{obj_id},$type);
+   set_flag($$hash{obj_id},$type,1);
    if($type eq "PLAYER" || $type eq "OBJECT") {
       move(fetch($$hash{obj_id}),fetch($where));
    }

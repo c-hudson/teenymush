@@ -17,6 +17,11 @@ my %days = (
    mon => 1, tue => 2, wed => 3, thu => 4, fri => 5, sat => 6, sun => 7,
 );
 
+#
+# err
+#    Show the user a the provided message. These could be logged
+#    eventually too.
+#
 sub err
 {
    my ($txt,@fmt) = @_;
@@ -27,13 +32,20 @@ sub err
    # insert log entry? 
 }
 
+#
+# evaluate
+#    Take a string and evaluate any functions, and mush variables
+#
 sub evaluate
 {
     my $txt = shift;
 
+    # convert %r [return], %b [space], and %t [tab]
     $txt =~ s/%r/\n/ig;
     $txt =~ s/%b/ /ig;
     $txt =~ s/%t/\t/ig;
+
+    # convert %n [name] and %# [dbref]
     if($enactor ne undef) {
        $txt =~ s/%n/$$enactor{obj_name}/g;
        $txt =~ s/%#/#$$enactor{obj_id}/g;
@@ -41,6 +53,8 @@ sub evaluate
        $txt =~ s/%#/#$$user{obj_id}/g;
        $txt =~ s/%n/$$user{obj_name}/g;
     }
+
+    # convert %1 - %9
     $txt =~ s/(?<!(?<!\\)\\)%1/$$user{1}/g;
     $txt =~ s/(?<!(?<!\\)\\)%2/$$user{2}/g;
     $txt =~ s/(?<!(?<!\\)\\)%3/$$user{3}/g;
@@ -50,22 +64,40 @@ sub evaluate
     $txt =~ s/(?<!(?<!\\)\\)%7/$$user{7}/g;
     $txt =~ s/(?<!(?<!\\)\\)%8/$$user{8}/g;
     $txt =~ s/(?<!(?<!\\)\\)%9/$$user{9}/g;
+
+
+    # evaluate functions
     my $result = evaluate_string($txt);
+
+    # remove any escaped characters
     $result =~ s/\\(.)/\1/g;
+
     return $result;
 }
 
+#
+# text
+#    Generic function to return the results of a single column query.
+#    Column needs to be aliased to text.
+#
 sub text
 {
    my ($sql,@args) = @_;
-   my $out = "---[ Start ]---\n";
-   for my $hash (@{sql($db,$sql,@args)}) {
-      $out .= $$hash{text} . "\n";
+   my $out = "---[ Start ]---\n";                              # add header
+
+   for my $hash (@{sql($db,$sql,@args)}) {                      # run query
+      $out .= $$hash{text} . "\n";                             # add output
    }
-   $out .= "---[  End  ]---";
+   $out .= "---[  End  ]---";                                  # add footer
    return $out;
 }
 
+#
+# table
+#    Generic function to resturn the results of a multiple column
+#    query. The results will be put into a nice text-based table
+#    with column the columns sorted similar to the provided sql.
+#
 sub table
 {
    my ($sql,@args) = @_;
@@ -82,44 +114,50 @@ sub table
       }
    }
 
-   for my $hash (@{sql($db,$sql,@args)}) {                    # determine max
-      push(@data,$hash);
+   # determine the max column length for each column, and store the
+   # output of the sql so it doesn't have to be run twice.
+   for my $hash (@{sql($db,$sql,@args)}) {
+      push(@data,$hash);                                     # store results
       for my $key (keys %$hash) {
-         if(length($$hash{$key}) > @max{$key}) {
+         if(length($$hash{$key}) > @max{$key}) {         # determine  if max
              @max{$key} = length($$hash{$key});
          }
+                             # make max minium size that of the column name
          @max{$key} = length($key) if(length($key) > @max{$key});
       }
    }
 
    return "No data found" if($#data == -1);
 
-   for my $i (0 .. $#data) {
+   for my $i (0 .. $#data) {                        # cycle through each row
       my $hash = @data[$i];
       delete @line[0 .. $#line];
 
-      if($#pos == -1) {
+      if($#pos == -1) {                            # create sort order once
          @pos = (sort {@order{lc($a)} <=> @order{lc($b)}} keys %$hash);
       }
-      for my $key (@pos) {
+      for my $key (@pos) {                       # cycle through each column
          if($i == 0) {
-            push(@header,"-" x @max{$key});
+            push(@header,"-" x @max{$key});        # add first row of header
             push(@keys,sprintf("%-*s",@max{$key},$key));
          }
-         push(@line,sprintf("%-*s",@max{$key},$$hash{$key}));
+         push(@line,sprintf("%-*s",@max{$key},$$hash{$key}));   # add column
       }
-      if($i == 0) {
-         $out .= join(" | ",@keys) . "\n";
+      if($i == 0) {                          # add second/third row of header
+         $out .= join(" | ",@keys) . "\n"; # add 
          $out .= join("-|-",@header) .  "\n";
       }
-      $out .= join(" | ",@line) . "\n";
+      $out .= join(" | ",@line) . "\n"; # add pre-generated column to output
    }
-   $out .= join("- -",@header) . "\n";
+   $out .= join("- -",@header) . "\n";                          # add footer
    return $out;
 }
 
 #
 # force
+#    Force an object to do something. This could be envoked by the @force
+#    command or just when we want something to happen.
+#
 #    Use the Force, Luke.
 #
 sub force
@@ -259,18 +297,29 @@ sub handle_listener
    }
 }
 
+#
+# echo
+#     Send a message to only the specified target using a printf type
+#     format. All output is logged to the output table at the same
+#     time. Data is not commited at this time for perforance issues
+#     (on a raspberry pi). This could cause us to lose data but it
+#     should be saved to disk on the next event. We also don't really
+#     care that much about the logs, they'll probably just get deleted
+#     before anyone sees them.
+#
 sub echo
 {
    my ($target,$fmt,@args) = @_;
    my $match = 0;
    my $out = sprintf($fmt,@args);
 
-   $out .= "\n" if($out !~ /\n$/);
-   $out =~ s/\n/\r\n/g if($out !~ /\r/);
-   my $txt = $out;
-   $txt =~ s/\r|\n//g;
+   $out .= "\n" if($out !~ /\n$/);               # add return if none exists
+   $out =~ s/\n/\r\n/g if($out !~ /\r/);                     # add linefeeds
 
-   sql($db,
+   my $txt = $out;                     # don't store returns in output table
+   $txt =~ s/\r|\n//g; 
+
+   sql($db,                                     #store output in output table
        "insert into output" .
        "(" .
        "   out_text, " .
@@ -287,7 +336,7 @@ sub echo
       );
 #    commit;
    
-#   if(hasflag($target,"PLAYER")) {
+#   if(hasflag($target,"PLAYER")) {           # send to connected players
       for my $key (keys %connected) {
          if($$target{obj_id} eq @{@connected{$key}}{obj_id}) {
             my $sock = @{@connected{$key}}{sock};
@@ -298,6 +347,11 @@ sub echo
 
 }
 
+#
+# echo_no_log
+#    The same as the echo function but without logging anything to the
+#    output table.
+#
 sub echo_nolog
 {
    my ($target,$fmt,@args) = @_;
@@ -331,23 +385,34 @@ sub e
    return $db;
 }
 
-
+#
+# name
+#    Return the name of the object from the database if it hasn't already
+#    been pulled.
+#
 sub name
 {
-   my $target = shift;
+   my $target = obj(shift);
 
-   if(ref($target) ne "HASH") {
-      printf("###   OOOps\n%s\n",Carp::shortmess);
-   } elsif(!defined $$target{obj_name}) {
+   if(!defined $$target{obj_name}) {                    # no name, query db
       $$target{obj_name} = one_val("select obj_name value " .
                                    "  from object "  .
                                    " where obj_id = ?",
                                    $$target{obj_id}); 
-      $$target{obj_name} = "[<UNKNOWN>]" if $$target{obj_name} eq undef;
    }
-   return $$target{obj_name};
+
+   if($$target{obj_name} eq undef) {           # no name, how'd that happen?
+      $$target{obj_name} = "[<UNKNOWN>]";
+   }
+
+   return $$target{obj_name}; 
 }
 
+#
+# echo_room
+#    Send a message to everyone in $target's location except for $target.
+#    Only connected players.
+#
 sub echo_room
 {
    my ($target,$fmt,@args) = @_;
@@ -483,8 +548,7 @@ sub locate_player
                        " where obj.obj_id = flg.obj_id " .
                        "   and flg.fde_flag_id = fde.fde_flag_id " .
                        "   and fde.fde_name = 'PLAYER' " .
-                       "   and upper(substr(obj_name,1,length(?))) = upper(?) ",
-                       $name,
+                       "   and upper(obj_name) = upper(?) ",
                        $name
                       ) ||
          return undef;

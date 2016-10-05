@@ -114,7 +114,8 @@ delete @command{keys %command};
                          fun  => sub { cmd_socket(@_); }};
 @command{"\@password"}={ help => "Change your password",
                          fun  => sub { cmd_password(@_); }};
-
+@command{"\@newpassword"}={ help => "Change someone else's password",
+                         fun  => sub { cmd_newpassword(@_); }};
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); }};
@@ -159,7 +160,6 @@ sub good_password
 {
    my $txt = shift;
 
-   echo($user,"PASS: '%s'\n",$txt);
    if($txt !~ /^\s*.{8,999}\s*$/) {
       echo($user,"#-1 Passwords must be 8 characters or more");
       return 0;
@@ -205,6 +205,35 @@ sub cmd_password
       }
    } else {
       echo($user,"usage: \@password <old_password> = <new_password>");
+   }
+}
+
+sub cmd_newpassword
+{
+   my $txt = shift;
+
+   if($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*$/) {
+
+      my $player = locate_player($1) ||
+         return err("Unknown player '%s' specified",$1);
+
+      if(!controls($user,$player)) {
+         return err("Permission denied.");
+      }
+
+      good_password($2) || return;
+
+      sql(e($db,1),
+          "update object ".
+          "   set obj_password = password(?) " . 
+          " where obj_id = ?" ,
+          $2,
+          $$player{obj_id}
+         );
+      echo($user,"The password for %s has been updated.",name($player));
+
+   } else {
+      echo($user,"usage: \@newpassword <player> = <new_password>");
    }
 }
 
@@ -1139,7 +1168,6 @@ sub cmd_connect
                 1
                );
             commit($db);
-            echo($user,"%s has connected.",name($user));              # notify
             echo_room($user,"%s has connected.",name($user));          # users
          } else {
             sql(e($db,1),                                       # log connects

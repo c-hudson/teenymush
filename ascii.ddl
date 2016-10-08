@@ -34,7 +34,7 @@ CREATE TABLE `attribute` (
   PRIMARY KEY (`atr_id`),
   UNIQUE KEY `attribute_unq` (`obj_id`,`atr_name`),
   CONSTRAINT `attribute_ibfk_1` FOREIGN KEY (`obj_id`) REFERENCES `object` (`obj_id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=54 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=53 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -55,7 +55,7 @@ CREATE TABLE `connect` (
   PRIMARY KEY (`con_connect_id`),
   KEY `obj_id` (`obj_id`),
   CONSTRAINT `connect_ibfk_1` FOREIGN KEY (`obj_id`) REFERENCES `object` (`obj_id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=751 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=784 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -119,7 +119,7 @@ CREATE TABLE `flag_definition` (
   `fde_last_updated_date` datetime DEFAULT NULL,
   `FDE_PERMISSION` int(11) NOT NULL DEFAULT '-1',
   PRIMARY KEY (`fde_flag_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -174,7 +174,7 @@ CREATE TABLE `output` (
   `out_source` int(11) DEFAULT NULL,
   `out_destination` int(11) DEFAULT NULL,
   PRIMARY KEY (`out_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=18731 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=19383 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -195,6 +195,44 @@ CREATE TABLE `site` (
   `ste_last_updated_by` int(11) DEFAULT NULL,
   PRIMARY KEY (`ste_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `socket`
+--
+
+DROP TABLE IF EXISTS `socket`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `socket` (
+  `obj_id` int(11) NOT NULL,
+  `sck_id` int(11) NOT NULL AUTO_INCREMENT,
+  `sck_start_time` datetime NOT NULL,
+  `sck_socket` varchar(50) DEFAULT NULL,
+  `sck_type` int(11) DEFAULT NULL,
+  `sck_hostname` varchar(255) NOT NULL,
+  `sck_port` int(11) DEFAULT NULL,
+  PRIMARY KEY (`sck_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=16 DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `socket_history`
+--
+
+DROP TABLE IF EXISTS `socket_history`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `socket_history` (
+  `skh_id` int(11) NOT NULL AUTO_INCREMENT,
+  `sck_id` int(11) DEFAULT NULL,
+  `obj_id` int(11) NOT NULL,
+  `skh_hostname` varchar(255) NOT NULL,
+  `skh_start_time` datetime NOT NULL,
+  `skh_end_time` datetime DEFAULT NULL,
+  `skh_success` int(11) NOT NULL,
+  PRIMARY KEY (`skh_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -222,4 +260,4 @@ CREATE TABLE `valid_option` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2016-10-07  5:00:01
+-- Dump completed on 2016-10-07 23:02:34

@@ -301,16 +301,29 @@ sub server_disconnect
          delete @connected_user{$$player{obj_id}};
       }
 
-      sql(e($db,1),
-          "insert into connect " .
-          "   (obj_id,con_hostname, con_type, con_socket, con_timestamp) " .
-          "values " .
-          "   (?,?,2,?,now()) ",
-          $$player{obj_id},  
-          $$player{hostname},
-          $id
-         );
-      commit($db);
+
+      my $sck_id = one_val($db,                           # find socket id
+                           "select sck_id value " .
+                           "  from socket " .
+                           " where sck_socket = ?" ,
+                           $id
+                          );
+
+      if($sck_id ne undef) {
+          sql($db,                                  # log disconnect time
+              "update socket_history " .
+              "   set skh_end_time = now() " .
+              " where sck_id = ? ",
+               $sck_id
+             );
+
+          sql($db,                             # delete socket table row
+              "delete from socket " .
+              " where sck_id = ? ",
+              $sck_id
+             );
+          commit($db);
+      }
    }
 
    # remove user out of the loop

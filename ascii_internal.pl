@@ -810,6 +810,11 @@ sub create_object
    return $$hash{obj_id};
 }
 
+sub curval
+{
+   return one_val($db,"select last_insert_id() value");
+}
+
 #
 # ignoreit
 #    Ignore certain hash key entries at all depths or just the specified

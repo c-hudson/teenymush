@@ -1152,38 +1152,52 @@ sub cmd_connect
             cmd_look();                                           # show room
 
             printf("    %s@%s\n",$$hash{obj_name},$$user{hostname});
-            sql(e($db,1),                                       # log connects
-                "insert into connect " .
-                "   (obj_id, ".
-                "    con_hostname, " .
-                "    con_type, " .
-                "    con_socket, " .
-                "    con_timestamp, " .
-                "    con_success) ".
-                "values " .
-                "   (?,?,1,?,now(),?) ",
-                $$user{obj_id},
-                $$user{hostname},
-                $$user{sock},
-                1
+
+            sql(e($db,1),
+                "insert into socket " .
+                "( " . 
+                "    obj_id, " . 
+                "    sck_start_time, " .
+                "    sck_hostname, " .
+                "    sck_socket, " .
+                "    sck_type " . 
+                ") values ( ?, now(), ?, ?, ? ) ",
+                     $$user{obj_id},
+                     $$user{hostname},
+                     $$user{sock},
+                     1
                );
+
+            sql(e($db,1),
+                "insert into socket_history ".
+                "( obj_id, " .
+                "  sck_id, " .
+                "  skh_hostname, " .
+                "  skh_start_time, " .
+                "  skh_success " .
+                ") values ( " .
+                "  ?, ?, ?, now(), 1 ".
+                ")",
+                $$user{obj_id},
+                curval(),
+                $$user{hostname}
+               );
+
             commit($db);
             echo_room($user,"%s has connected.",name($user));          # users
          } else {
-            sql(e($db,1),                                       # log connects
-                "insert into connect " .
-                "   (obj_id, ".
-                "    con_hostname, " .
-                "    con_type, " .
-                "    con_socket, " .
-                "    con_timestamp, " .
-                "    con_success) ".
-                "values " .
-                "   (?,?,1,?,now(),?) ",
+            sql(e($db,1),
+                "insert into socket_history ".
+                "( obj_id, " .
+                "  skn_hostname, " .
+                "  skh_starttime, " .
+                "  skh_end_time, " .
+                "  skh_success " .
+                ") values ( " .
+                "  ?, ?, now(), now(), 0 ".
+                ")",
                 $$hash{obj_id},
-                $$user{hostname},
-                $$user{sock},
-                0
+                $$hash{hostname}
                );
             commit($db);
 

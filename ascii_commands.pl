@@ -1222,10 +1222,22 @@ sub cmd_doing
    my $txt = shift;
 
    if($txt =~ /^\s*$/) {                            # no arguments provided
-      delete @$user{doing};
+      sql(e($db,1),
+          "update object " . 
+          "   set obj_doing = NULL " .
+          " where obj_id = ? ",
+          $$user{obj_id}
+         );
    } else {                                                # doing provided
-      $$user{doing} = $txt;
+      sql(e($db,1),
+          "update object " . 
+          "   set obj_doing = ? " .
+          " where obj_id = ? ",
+          $txt,
+          $$user{obj_id}
+         );
    }
+   commit;
    echo($user,"Set.");
 }
 
@@ -1553,61 +1565,83 @@ sub short_hn
    }
 }
 
+#
+# cmd_who
+#    Show the users who is conected. There is a priviledged version
+#    and non-privileged version. The DOING command is just a non-priviledged
+#    version of the WHO command.
+#
 sub cmd_who
 {
    my ($txt,$flag) = @_;
-   my ($num,$count,$extra,$idle,$online,$hasperm,$max);
-
+   my ($max,@who,$idle,$count) = (2);
    my $hasperm = (hasperm($user,"WHO") && !$flag) ? 1 : 0;
 
-   if($hasperm) {
-      $max = 2;
-      for my $key (sort {nvl(@{@connected{$b}}{connect_time},0) <=>
-                nvl(@{@connected{$a}}{connect_time},0)} keys %connected) {
-         my $who = @connected{$key};
-         my $loc = loc($who);
-         $max = length($loc) if length($loc) > length($max);
+   # query the database for connected user, location, and socket
+   # details.
+   for my $key (@{sql($db,
+                    "select obj.*, " .
+                    "       sck_start_time start_time, " .
+                    "       sck_hostname, " .
+                    "       sck_socket, " .
+                    "       con_source_id " .
+                    "  from socket sck, object obj, content con " .
+                    " where sck_type = 1 " .
+                    "   and sck.obj_id = obj.obj_id " .
+                    "   and con.obj_id = obj.obj_id " .
+                    " order by sck_start_time desc"
+                   )}
+               ) {
+      if(length($$key{con_source_id}) > length($max)) {
+         $max = length($$key{con_source_id});
       }
+      push(@who,$key);
+   }
+      
+   # show headers for normal / wiz who 
+   if($hasperm) {
       echo($user,"%-15s%10s%5s %-*s %s","Player Name","On For","Idle",$max,
          "Loc","Hostname");
    } else {
       echo($user,"%-15s%10s%5s  %s","Player Name","On For","Idle","\@doing");
    }
+   
 
-   # connected users sorted by time connected
-   for my $key (sort {nvl(@{@connected{$b}}{connect_time},0) <=>
-                nvl(@{@connected{$a}}{connect_time},0)} keys %connected) {
-      my $who = @connected{$key};
-      if(loggedin($who)) {
-         $online = date_split(time() - $$who{connect_time});
+   # generate detail for every connected user
+   for my $hash (@who) {
 
-         if(defined $$who{last}) {
-            $idle = date_split(time() - @{$$who{last}}{time});
-         } else {
-            $idle = { max_abr => 's' , max_val => 0 };
-         }
-        
-         if($$online{max_abr} =~ /^(M|w|d)$/) {
-            $extra = sprintf("%4s",$$online{max_val} . $$online{max_abr});
-         } else {
-            $extra = "    ";
-         }
+      # determine idle details
+      my $extra = @connected{$$hash{sck_socket}};
+      if(defined $$extra{last}) {
+         $idle = date_split(time() - @{$$extra{last}}{time});
+      } else {
+         $idle = { max_abr => 's' , max_val => 0 };
+      }
 
-         if($hasperm) {
-            echo($user,"%-15s%4s %02d:%02d %4s #%-*s %s",name($who),$extra,
-                $$online{h},$$online{m},$$idle{max_val} . $$idle{max_abr},
-                $max,loc($who),
-                short_hn($$who{hostname}));
-         } else {
-            echo($user,"%-15s%4s %02d:%02d %4s  %s",name($who),$extra,
-                $$online{h},$$online{m},$$idle{max_val} . $$idle{max_abr},
-                $$who{doing});
-         }
-         $count++;
+      # determine connect time details
+      my $online = date_split(time() - fuzzy($$hash{start_time}));
+      if($$online{max_abr} =~ /^(M|w|d)$/) {
+         $extra = sprintf("%4s",$$online{max_val} . $$online{max_abr});
+      } else {
+         $extra = "    ";
+      } 
+
+      # show connected user details
+      if($hasperm) {
+         echo($user,"%-15s%4s %02d:%02d %4s #%-*s %s",$$hash{obj_name},$extra,
+             $$online{h},$$online{m},$$idle{max_val} . $$idle{max_abr},
+             $max,$$hash{con_source_id},
+             short_hn($$hash{sck_hostname}));
+      } else {
+            echo($user,"%-14s%4s %02d:%02d  %4s  %s",name($hash),$extra,
+             $$online{h},$$online{m},$$idle{max_val} . $$idle{max_abr},
+             $$hash{obj_doing});
       }
    }
-   echo($user,"%d Players logged in",$count);
+   echo($user,"%d Players logged in",$#who+1);               # show totals
 }
+
+
 
 sub cmd_update_hostname
 {

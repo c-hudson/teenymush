@@ -110,6 +110,10 @@ sub load_all_code
    return join(', ',@file);                           # return succ/fail list
 }
 
+sql($db,"delete from socket");
+sql($db,"update socket_history " .
+        "   set skh_end_time = skh_start_time " .
+        " where skh_end_time is null");
 printf("Loading: ascii_mysql.pl\n");
 load_code_in_file("ascii_mysql.pl");                       # only call of main
 load_all_code(1);                                # initial load of code

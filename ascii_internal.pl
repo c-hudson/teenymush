@@ -319,6 +319,17 @@ sub echo
    my $txt = $out;                     # don't store returns in output table
    $txt =~ s/\r|\n//g; 
 
+   if(ref($target) eq "IO::Socket::INET") {
+      printf($target "%s",$out);
+      return;
+   } elsif(ref($target) eq "HASH" 
+           && !defined $$target{obj_id}
+           && defined $$target{sock}) {
+      my $sock = $$target{sock};
+      printf($sock "%s",$out);
+      return;
+   }
+      
    sql($db,                                     #store output in output table
        "insert into output" .
        "(" .
@@ -334,17 +345,19 @@ sub echo
        $$user{obj_id},
        $$target{obj_id}
       );
-#    commit;
-   
-#   if(hasflag($target,"PLAYER")) {           # send to connected players
-      for my $key (keys %connected) {
-         if($$target{obj_id} eq @{@connected{$key}}{obj_id}) {
-            my $sock = @{@connected{$key}}{sock};
-            printf($sock "%s",$out);
-         }
-      }
-#   }
 
+    if(defined $$target{sck_socket}) {                       # exact socket
+       my $sock = @{@connected{$$target{sck_socket}}}{sock};
+       printf($sock "%s",$out);
+    } else {                                       # sockets used by obj_id
+       for my $sock (@{sql($db, 
+                           "select * from socket " .
+                           " where obj_id = ?",
+                           $$target{obj_id})}) {
+          my $sock = @{@connected{$$sock{sck_socket}}}{sock};
+          printf($sock "%s",$out);
+       }
+    }
 }
 
 #
@@ -418,19 +431,23 @@ sub echo_room
    my ($target,$fmt,@args) = @_;
    my $all;
 
-   if(hasflag($target,"PLAYER")) {
-      $all = @connected_user{$$target{obj_id}};
-   } else {
-      $all = {};
+   for my $player (@{sql($db,
+                         "select * " .
+                         "  from object obj, " .
+                         "       content con1, " . 
+                         "       content con2, " .
+                         "       socket sck " .
+                         " where obj.obj_id = con1.obj_id ".
+                         "   and sck.obj_id = obj.obj_id " .
+                         "   and con1.con_source_id = con2.con_source_id " .
+                         "   and con2.obj_id = ? " .
+                         "   and con1.obj_id != ? ",
+                         $$target{obj_id},
+                         $$target{obj_id}
+                   )}) {
+      echo($player,$fmt,@args);
    }
 
-   my $loc = loc($target,1);
-   for my $key (keys %connected) {
-      my $who = @connected{$key};
-      if(loggedin($who) && !defined $$all{$$who{sock}} && loc($who) eq $loc) {
-         echo($who,$fmt,@args);
-      }
-   }
    handle_listener($target,$fmt,@args);
 }
 
@@ -466,14 +483,18 @@ sub loggedin
    my $target = shift;
 
    if(ref($target) eq "HASH") {
-      if(defined $$target{connected_time} ||
-         defined @connected_user{$$target{obj_id}}) {
-         return 1;
+      if(defined $$target{sock} && 
+         defined @connected{$$target{sock}} &&
+         defined @{@connected{$$target{sock}}}{loggedin}) {
+         return  @{@connected{$$target{sock}}}{loggedin};
       } else {
-         return 0;
+         my $result = one_val($db,
+                              "select count(*) value from socket " .
+                              " where obj_id = ? ",
+                              $$target{obj_id}
+                             );
+         return ($result > 0) ? 1 : 0;
       }
-   } elsif(defined @connected_user{$target}) {
-      return 1;
    } else {
       return 0;
    }

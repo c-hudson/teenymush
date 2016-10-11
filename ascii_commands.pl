@@ -1143,15 +1143,11 @@ sub cmd_connect
             for my $key (keys %$hash) {                # copy object structure
                $$user{$key} = $$hash{$key};
             }
+            $$user{loggedin} = 1;
             if(!defined @connected_user{$$user{obj_id}}) {    # reverse lookup
                @connected_user{$$user{obj_id}} = {};                   # setup
             }
             @{@connected_user{$$user{obj_id}}}{$$user{sock}} = $$user{sock};
-
-            echo($user,getfile("motd.txt"));                       # show modt
-            cmd_look();                                           # show room
-
-            printf("    %s@%s\n",$$hash{obj_name},$$user{hostname});
 
             sql(e($db,1),
                 "insert into socket " .
@@ -1184,31 +1180,37 @@ sub cmd_connect
                );
 
             commit($db);
+            echo($user,getfile("motd.txt"));                       # show modt
+            cmd_look();                                           # show room
+
+            printf("    %s@%s\n",$$hash{obj_name},$$user{hostname});
             echo_room($user,"%s has connected.",name($user));          # users
          } else {
+   printf("# got this far 1\n");
             sql(e($db,1),
                 "insert into socket_history ".
                 "( obj_id, " .
-                "  skn_hostname, " .
-                "  skh_starttime, " .
+                "  skh_hostname, " .
+                "  skh_start_time, " .
                 "  skh_end_time, " .
                 "  skh_success " .
                 ") values ( " .
                 "  ?, ?, now(), now(), 0 ".
                 ")",
                 $$hash{obj_id},
-                $$hash{hostname}
+                $$user{hostname}
                );
             commit($db);
 
-            echo($user,"Either that player does not exist, or has a different ".
-                       "password.");
+            echo($user,"Either that player does not exist, or has a " .
+               "different password.");
          }
       } else {
-         echo($user,"Either that player does not exist, or has a different " .
-              "password.");
+         echo($$user{sock},"Either that player does not exist, or has a " .
+              "different password.");
       }
    } else {
+   printf("# got this far21\n");
       echo($user,"Invalid connect command, try: connect <user> <password>");
    }
 }

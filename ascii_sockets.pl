@@ -243,7 +243,8 @@ sub server_handle_sockets
              $readable->add($new);                 # add 2 watch list 4 input
              my $hash = { sock => $new,               # store connect details
                           hostname => server_hostname($new),
-                          ip => $new->peerhost
+                          ip => $new->peerhost,
+                          loggedin => 0
                         };
              add_site_restriction($hash);
              @connected{$new} = $hash;

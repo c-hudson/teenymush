@@ -15,22 +15,10 @@ $SIG{HUP} = sub {
 #
 # close the loop on connections that have start times but not end times
 #
-sql($db,"INSERT INTO connect (obj_id, " .
-    "                     con_hostname, " .
-    "                     con_timestamp, " .
-    "                     con_type, " .
-    "                     con_socket) " .
-    "  SELECT obj_id, " .
-    "         con_hostname, " .
-    "         now(), " .
-    "         2, " .
-    "         con_socket " .
-    "    FROM connect a " .
-    "   WHERE     con_type = 1 " .
-    "         AND NOT EXISTS " .
-    "                (SELECT 1 " .
-    "                   FROM connect b " .
-    "                  WHERE b.con_socket = a.con_socket AND con_type = 2)");
+sql($db,"delete from socket");
+sql($db,"update socket_history " .
+        "   set skh_end_time = skh_start_time " .
+        " where skh_end_time is null");
 commit($db);
 
 

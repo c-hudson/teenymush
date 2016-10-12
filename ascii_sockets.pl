@@ -67,9 +67,10 @@ sub mush_command
                        "   and obj.obj_id = con.obj_id " .
                        "   and ? like  " .
                 "replace(substr(atr_value,1,instr(atr_value,':')-1),'*','%')" .
-                       "   and con.con_source_id = ? ",
+                       "   and con.con_source_id in ( ?, ? ) ",
                        "\$" . lc($cmd),
-                       loc($user)
+                       loc($user),
+                       $$user{obj_id}
                       )
                 }) {
       # run up to  150 commands
@@ -168,32 +169,39 @@ sub server_process_line
 #      printf("#%s# '%s'\n",((defined $$hash{obj_id}) ? obj_name($hash) : "?"),
 #      $input);
 #   }
-   eval {                                                     # catch errors
-      if($input =~ /^\s*([^ ]+)/) {
-         $user = $hash;
-         if(loggedin($hash) || hasflag($hash,"OBJECT")) {
-            my ($cmd,$arg) = lookup_command(\%command,$1,$',1);
-            &{@{@command{$cmd}}{fun}}($arg);                     # invoke cmd
-            add_last_info($cmd,$');                                   #logit
-         } else {
-            my ($cmd,$arg) = lookup_command(\%offline,$1,$',0);
-            &{@offline{$cmd}}($arg);                             # invoke cmd
-         }
-      }
-   };
-   if($@) {                                   # oops., you sunk my battle ship
-      printf("# %s crashed the server with: %s\n%s",name($hash),$_[1],$@); 
-      printf("LastSQL: '%s'\n",@info{sql_last});
-      printf("         '%s'\n",@info{sql_last_args});
-      rollback($db);
+   my $data = @connected{$$hash{sock}};
 
-      my $msg = sprintf("%s crashed the server with: %s",name($hash),$_[1]);
-      echo($hash,"%s",$msg);
-      if($msg ne $$user{crash}) {
-        echo_room($hash,"%s",$msg);
-         $$user{crash} = $msg;
+   if($$data{raw}) {
+     echo_room($$data{owner},"%s",$input);
+   } else {
+      eval {                                                  # catch errors
+         if($input =~ /^\s*([^ ]+)/) {
+            $user = $hash;
+            if(loggedin($hash) || hasflag($hash,"OBJECT")) {
+               my ($cmd,$arg) = lookup_command(\%command,$1,$',1);
+               &{@{@command{$cmd}}{fun}}($arg);                  # invoke cmd
+               add_last_info($cmd,$');                                #logit
+            } else {
+               my ($cmd,$arg) = lookup_command(\%offline,$1,$',0);
+               &{@offline{$cmd}}($arg);                          # invoke cmd
+            }
+         }
+      };
+
+      if($@) {                                # oops., you sunk my battle ship
+         printf("# %s crashed the server with: %s\n%s",name($hash),$_[1],$@); 
+         printf("LastSQL: '%s'\n",@info{sql_last});
+         printf("         '%s'\n",@info{sql_last_args});
+         rollback($db);
+   
+         my $msg = sprintf("%s crashed the server with: %s",name($hash),$_[1]);
+         echo($hash,"%s",$msg);
+         if($msg ne $$user{crash}) {
+           echo_room($hash,"%s",$msg);
+            $$user{crash} = $msg;
+         }
+         delete @$hash{buf};
       }
-      delete @$hash{buf};
    }
 }
 
@@ -244,7 +252,8 @@ sub server_handle_sockets
              my $hash = { sock => $new,               # store connect details
                           hostname => server_hostname($new),
                           ip => $new->peerhost,
-                          loggedin => 0
+                          loggedin => 0,
+                          raw => 0
                         };
              add_site_restriction($hash);
              @connected{$new} = $hash;
@@ -264,7 +273,9 @@ sub server_handle_sockets
           server_disconnect($s);
        } else {                                           # socket has input
           $buf =~ s/\r//g;                                  # remove returns
+          $buf =~ tr/\x80-\xFF//d;
           @{@connected{$s}}{buf} .= $buf;                      # store input
+          
                                                         # breakapart by line
           while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
              @{@connected{$s}}{buf} = $';                 # store left overs
@@ -292,38 +303,48 @@ sub server_disconnect
    my $id = shift;
 
    # notify connected users of disconnect
-   if(defined @connected{$id} && defined @{@connected{$id}}{connect_time}) {
-      my $player = @connected{$id};
-      echo_room($player,"%s has disconnected.",name($player));
+   if(defined @connected{$id}) {
+      my $hash = @connected{$id};
 
-      my $key = connected_user($player);
-      delete @{@connected_user{$$player{obj_id}}}{$key};
-      if(scalar keys %{@connected_user{$$player{obj_id}}} == 0) {
-         delete @connected_user{$$player{obj_id}};
-      }
+      if(defined $$hash{raw} && $$hash{raw} == 1) {            # MUSH Socket
+         echo_room($$hash{owner},"[ Connection closed ]");
+         sql($db,                             # delete socket table row
+             "delete from socket " .
+             " where sck_socket = ? ",
+             $id
+            );
+         commit($db);
+      } elsif(defined $$hash{connect_time}) {                # Player Socket
+         echo_room($hash,"%s has disconnected.",name($hash));
 
+         my $key = connected_user($hash);
+         delete @{@connected_user{$$hash{obj_id}}}{$key};
+         if(scalar keys %{@connected_user{$$hash{obj_id}}} == 0) {
+            delete @connected_user{$$hash{obj_id}};
+         }
 
-      my $sck_id = one_val($db,                           # find socket id
-                           "select sck_id value " .
-                           "  from socket " .
-                           " where sck_socket = ?" ,
-                           $id
-                          );
+         my $sck_id = one_val($db,                           # find socket id
+                              "select sck_id value " .
+                              "  from socket " .
+                              " where sck_socket = ?" ,
+                              $id
+                             );
 
-      if($sck_id ne undef) {
-          sql($db,                                  # log disconnect time
-              "update socket_history " .
-              "   set skh_end_time = now() " .
-              " where sck_id = ? ",
-               $sck_id
-             );
-
-          sql($db,                             # delete socket table row
-              "delete from socket " .
-              " where sck_id = ? ",
-              $sck_id
-             );
-          commit($db);
+         if($sck_id ne undef) {
+             sql($db,                                  # log disconnect time
+                 "update socket_history " .
+                 "   set skh_end_time = now() " .
+                 " where sck_id = ? ",
+                  $sck_id
+                );
+   
+             sql($db,                             # delete socket table row
+                 "delete from socket " .
+                 " where sck_id = ? ",
+                 $sck_id
+                );
+             commit($db);
+         }
       }
    }
 

@@ -110,7 +110,7 @@ delete @command{keys %command};
 
 @command{"\@recall"}=  { help => "Recall output sent to you",
                          fun  => sub { cmd_recall(@_); }};
-@command{"\@connect"} ={ help => "open a connection to the internet",
+@command{"\@socket "} ={ help => "open a connection to the internet",
                          fun  => sub { cmd_socket(@_); }};
 @command{"\@password"}={ help => "Change your password",
                          fun  => sub { cmd_password(@_); }};
@@ -131,7 +131,7 @@ delete @command{keys %command};
 
 sub cmd_huh         { echo($user,"Huh?  (Type \"help\" for help.)");     }
 sub cmd_offline_huh { echo($user,getfile("login.txt"));                  }
-sub cmd_version     { echo($user,"TeenyMUSH 0.1 [cmhudson\@gmail.com]");   }
+sub cmd_version     { echo($user,"TeenyMUSH 0.1 [cmhudson\@gmail.com]"); }
 sub cmd_exec        { echo($user,"Exec: '%s'\n",@_[1]); }
 
 #
@@ -238,32 +238,58 @@ sub cmd_newpassword
 }
 
 
-sub cmd_socket_connect
+sub cmd_socket
 {
    my $txt = shift;
    my $pending = 1;
 
    if(!hasflag($user,"SOCKET")) {
-      echo($user,"Permission Denied");
-   } elsif($txt =~ /^\s*([^:]+)\s*:\s*(\d+)\s$/) {
+      return echo_room($user,"Permission Denied");
+   } elsif($txt =~ /^\s*([^:]+)\s*:\s*(\d+)\s*$/ ||
+           $txt =~ /^\s*([^:]+)\s* \s*(\d+)\s*$/) {
       my $addr = inet_aton($1) ||
-         return echo($user,"Invalid hostname '%s' specified.",$1);
+         return echo_room($user,"Invalid hostname '%s' specified.",$1);
       my $sock = IO::Socket::INET->new(Proto=>'tcp') ||
-         return echo($user,"Could not create socket");
+         return echo_room($user,"Could not create socket");
       my $sockaddr = sockaddr_in($2, $addr) ||
-         return echo($user,"Could not create SOCKET");
+         return echo_room($user,"Could not create SOCKET");
       $sock->connect($sockaddr) or                     # start connect to host
          $! == EWOULDBLOCK or $! == EINPROGRESS or         # and check status
-         return echo($user,"Could not open connection");
+         return echo_room($user,"Could not open connection");
       () = IO::Select->new($sock)->can_write(10)     # see if socket is pending
           or $pending = 2;
       defined($sock->blocking(1)) ||
-         return echo($user,"Could not open a nonblocking connection");
+         return echo_room($user,"Could not open a nonblocking connection");
+
+      @connected{$sock} = {
+         sock     => $sock,
+         raw      => 1,
+         hostname => $1,
+         port     => $2, 
+         loggedin => 0,
+         owner    => $$user{obj_id}
+      };
 
       $readable->add($sock);
-      echo($user,"Connection started to: %s:%s\n",$1,$2);
+      sql(e($db,1),
+          "insert into socket " . 
+          "(   obj_id, " .
+          "    sck_start_time, " .
+          "    sck_type, " . 
+          "    sck_socket, " .
+          "    sck_hostname, " .
+          "    sck_port " .
+          ") values ( ? , now(), ?, ?, ?, ? )",
+               $$user{obj_id},
+               2,
+               $sock,
+               $1,
+               $2
+         );
+      echo_room($user,"Connection started to: %s:%s\n",$1,$2);
+      printf($sock "QUIT\r\n");
    } else {
-      echo($user,"usage: \@connect <hostname>:<port>");
+      echo_room($user,"usage: \@connect <hostname>:<port>");
    }
 }
 
@@ -774,7 +800,7 @@ sub cmd_go
       # grab the destination object
       $dest = fetch($$hash{con_dest_id}) ||
          return echo($user,"That exit does not go anywhere");
-      echo_room($user,"%s goes %s.",name($user),$$hash{obj_name});
+      echo_room($user,"%s goes %s.",name($user),first($$hash{obj_name}));
       echo_room($user,"%s has left.",name($user),$$hash{obj_name});
    }
 
@@ -1484,11 +1510,7 @@ sub cmd_look
                            "ORDER BY con_created_date",
                            $$hash{obj_id}
                       )}) {
-      if($$hash{obj_name} =~ /^([^;]+)/) {
-         push(@exit,$1);
-      } else {
-         push(@exit,$$hash{obj_name});
-      }
+      push(@exit,first($$hash{obj_name}));
    }
    if($#exit >= 0) {
       echo($user,"Exits:");

@@ -32,6 +32,15 @@ sub err
    # insert log entry? 
 }
 
+sub first
+{
+   my ($txt,$delim) = @_;
+
+   $delim = ';' if $delim eq undef;
+
+   return (split($delim,$txt))[0];
+}
+
 #
 # evaluate
 #    Take a string and evaluate any functions, and mush variables
@@ -315,6 +324,7 @@ sub echo
 
    $out .= "\n" if($out !~ /\n$/);               # add return if none exists
    $out =~ s/\n/\r\n/g if($out !~ /\r/);                     # add linefeeds
+   $out =~ tr/\x80-\xFF//d;
 
    my $txt = $out;                     # don't store returns in output table
    $txt =~ s/\r|\n//g; 
@@ -346,7 +356,8 @@ sub echo
        $$target{obj_id}
       );
 
-    if(defined $$target{sck_socket}) {                       # exact socket
+    if(defined $$target{sck_socket} && 
+       defined @connected{$$target{sck_socket}}) {               # exact socket
        my $sock = @{@connected{$$target{sck_socket}}}{sock};
        printf($sock "%s",$out);
     } else {                                       # sockets used by obj_id
@@ -428,7 +439,8 @@ sub name
 #
 sub echo_room
 {
-   my ($target,$fmt,@args) = @_;
+   my $target = obj(shift);
+   my ($fmt,@args) = @_;
    my $all;
 
    for my $player (@{sql($db,
@@ -445,6 +457,7 @@ sub echo_room
                          $$target{obj_id},
                          $$target{obj_id}
                    )}) {
+#      printf("ECHO(%s) => '$fmt'\n",$$player{obj_id},@args);
       echo($player,$fmt,@args);
    }
 
@@ -658,8 +671,8 @@ sub locate_exit
                       "   and con2.obj_id = ? ",
                       $$user{obj_id}
                    )}) { 
-      if($$hash{obj_name} =~ /(^|;)\s*$name([^;]*)\s*(;|$)/i) {
-         if($1 eq undef) {
+      if($$hash{obj_name} =~ /(^|;)\s*$name\s*([^;]*)\s*(;|$)/i) {
+         if($2 eq undef) {
             return $hash;
          } else {
             if(length($$match{obj_name}) < length($$hash{obj_name})) {

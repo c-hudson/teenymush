@@ -169,6 +169,34 @@ sub table
    return $out;
 }
 
+sub run_single
+{
+   my $cmd = shift;
+
+   if($cmd =~ /^\s*([^ ]+)(\s*)/) {
+      my ($cmd,$arg) = lookup_command(\%command,$1,"$2$'",1);
+      return -3 if $cmd eq 'huh';
+
+      &{@{@command{$cmd}}{fun}}($arg);
+   } 
+}
+
+sub run_multiple
+{
+   my $cmd = shift;
+   my $count = 0;
+
+   while($cmd ne undef && $count++ < 150) {
+      if($cmd =~ /^(.*?)(?<!(?<!\\)\\);/) {
+         run_single(trim($1 . " " . $2));
+         $cmd = trim($');
+      } else {                  # process all text if no semi-colon found
+         run_single(trim($cmd));
+         return;
+      }
+   }
+}
+
 #
 # force
 #    Force an object to do something. This could be envoked by the @force
@@ -265,7 +293,7 @@ sub handle_object_listener
                     "   and fde_name = ? ",
                     $$target{obj_id},
                     "\!" . lc($msg),
-                    "LISTENER"
+                    "SOCKET"
                    )
                 }) {
       ($$user{0},$$user{1},$$user{2},$$user{3},$$user{4},$$user{5},

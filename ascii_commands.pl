@@ -112,8 +112,8 @@ delete @command{keys %command};
 
 @command{"\@recall"}=  { help => "Recall output sent to you",
                          fun  => sub { cmd_recall(@_); }};
-@command{"\@socket"} ={ help => "open a connection to the internet",
-                         fun  => sub { cmd_socket(@_); }};
+@command{"\@telnet"} ={ help => "open a connection to the internet",
+                         fun  => sub { cmd_telnet(@_); }};
 @command{"\@send"}    ={ help => "Send data to a connected socket",
                          fun  => sub { cmd_send(@_); }};
 @command{"\@password"}={ help => "Change your password",
@@ -216,22 +216,30 @@ sub cmd_password
    }
 }
 
+#
+# get_segment
+#    Get a single segment of a $delim delimited string. Strings can
+#    be enclosed in "quotes" or {brackets} to avoid breaking apart the
+#    string in the wrong location.
+#
 sub get_segment
 {
    my ($txt,$delim) = @_;
 
-    echo($user,"TEXT: %s {%s}\n",$txt,$delim);
-    if($txt =~ /^\s*"(.+?)(?<!(?<!\\)\\)"($delim|$)/ ||
+    if($txt =~ /^\s*"(.+?)(?<!(?<!\\)\\)"($delim|$)/ ||
        $txt =~ /^\s*{(.+?)(?<!(?<!\\)\\)}($delim|$)/ ||
        $txt =~ /^(.+?)($delim|$)/) {
-#       echo($user,"   RETURN1: '%s' -> '%s'\n",$1,$');
        return ($1,$');
     } else {
-#       echo($user,"   RETURN2: '%s' -> '%s'\n",$txt,undef);
        return ($txt,undef);
     } 
 }
 
+#
+# mush_split
+#    Take a multiple segment string that is deliminted by $delim and
+#    break it apart. Return the result as an array.
+#
 sub mush_split
 {
    my $txt = shift;
@@ -239,7 +247,6 @@ sub mush_split
 
    while($txt) {
       ($seg,$txt) = (get_segment($txt,","));
-#      echo($user,"Adding: '%s' [$txt]\n",$seg,$txt);
       push(@list,$seg);
    }
    return @list;
@@ -250,21 +257,17 @@ sub cmd_switch
     my (@list) = (mush_split(shift));
 
     my ($first,$second) = (get_segment(shift(@list),"="));
+    $first = evaluate($first);
     unshift(@list,$second);
-
-    echo($user,"SWITCH: {$first}");
 
     while($#list >= 0) {
        if($#list >= 1) {
-          my ($txt,$cmd) = (shift(@list),shift(@list));
+          my ($txt,$cmd) = (evaluate(shift(@list)),evaluate(shift(@list)));
           $txt =~ s/\*/\(.*\)/g;
 
-          if($first =~ /^\s*$txt\s*$/) {
-             echo($user,"           run: '%s'\n",$cmd);
-             return $cmd;
-          }
+          return run_multiple($cmd) if($first =~ /^\s*$txt\s*$/);
        } else {
-          return shift;
+          return run_multiple(@list[0]);
        }
     }
 }
@@ -299,7 +302,7 @@ sub cmd_newpassword
    }
 }
 
-sub cmd_socket
+sub cmd_telnet
 {
    my $txt = shift;
    my $pending = 1;
@@ -354,7 +357,7 @@ sub cmd_socket
       echo($user,"Connection started to: %s:%s\n",$2,$3);
 #      printf($sock "QUIT\r\n");
    } else {
-      echo($user,"usage: \@connect <id>=<hostname>:<port>");
+      echo($user,"usage: \@telnet <id>=<hostname>:<port>");
    }
 }
 

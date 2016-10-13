@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+#foo
 
 
  
@@ -63,7 +64,8 @@ sub evaluate
        $txt =~ s/%n/$$user{obj_name}/g;
     }
 
-    # convert %1 - %9
+    # convert %0 - %8
+    $txt =~ s/(?<!(?<!\\)\\)%0/$$user{0}/g;
     $txt =~ s/(?<!(?<!\\)\\)%1/$$user{1}/g;
     $txt =~ s/(?<!(?<!\\)\\)%2/$$user{2}/g;
     $txt =~ s/(?<!(?<!\\)\\)%3/$$user{3}/g;
@@ -72,7 +74,12 @@ sub evaluate
     $txt =~ s/(?<!(?<!\\)\\)%6/$$user{6}/g;
     $txt =~ s/(?<!(?<!\\)\\)%7/$$user{7}/g;
     $txt =~ s/(?<!(?<!\\)\\)%8/$$user{8}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%9/$$user{9}/g;
+
+    if(defined $$user{raw_raw} && $$user{raw_raw} == 1) {
+       $txt =~ s/(?<!(?<!\\)\\)%hostname/$$user{raw_hostname}/ig;
+       $txt =~ s/(?<!(?<!\\)\\)%socket/$$user{raw_socket}/ig;
+    }
+#    $txt =~ s/(?<!(?<!\\)\\)%9/$$user{9}/g;
 
 
     # evaluate functions
@@ -185,7 +192,7 @@ sub force
       $enactor = $user;
       $user = $target;                                # run command as user
 
-      for my $i (1 .. 9) {                               # copy over %1 - %9
+      for my $i (0 .. 9) {                               # copy over %1 - %9
           $$temp{$i} = $$user{$i};
           $$user{$i} = $$enactor{$i};
       }
@@ -234,6 +241,69 @@ sub controls
    }
 }
 
+sub handle_object_listener
+{
+   my ($target,$txt,@args) = @_;
+   my $msg = sprintf($txt,@args);
+   my $count;
+
+#   printf("handle_object_listener: CALLED ($$target{obj_id}:%s)\n",$msg);
+#   printf("target: '%s' -> '%s'\n",$$target{hostname},$$target{raw});
+   for my $hash (@{sql("select obj.obj_id, " .
+                    "       substr(atr_value,2,instr(atr_value,':')-2) cmd,".
+                    "       substr(atr_value,instr(atr_value,':')+1) txt ".
+                    "  from object obj, " .
+                    "       attribute atr, " .
+                    "       flag_definition fld, " . 
+                    "       flag flg  " . 
+                    " where obj.obj_id = atr.obj_id " .
+                    "   and fld.fde_flag_id = flg.fde_flag_id " .
+                    "   and obj.obj_id = flg.obj_id " .
+                    "   and obj.obj_id = ? " .
+                    "   and ? like replace(substr(atr_value,1," .
+                    "                      instr(atr_value,':')-1),'*','%')" .
+                    "   and fde_name = ? ",
+                    $$target{obj_id},
+                    "\!" . lc($msg),
+                    "LISTENER"
+                   )
+                }) {
+      ($$user{0},$$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
+       $$user{6},$$user{7},$$user{8}) =
+         (undef,undef,undef,undef,undef,undef,undef,undef);
+      $$hash{raw_hostname} = $$target{hostname};
+      $$hash{raw_raw} = $$target{raw};
+      $$hash{raw_socket} = $$target{socket};
+
+      # determine %0 - %9
+      if($$hash{cmd} ne $msg) {
+         $$hash{cmd} =~ s/\*/\(.*\)/g;
+         if($msg =~ /^$$hash{cmd}$/) {
+            ($$user{0},$$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
+             $$user{6},$$user{7},$$user{8}) =
+            ($1,$2,$3,$4,$5,$6,$7,$8,$9);
+         }
+      }
+
+
+      # split apart commands and run them
+      while($$hash{txt} ne undef && $count++ < 5) {
+         # look for unescaped semi-colons to split apart lines
+         if($$hash{txt} =~ /^(.*?)(?<!(?<!\\)\\);/) {
+            force($hash,trim($1 . " " . $2));
+            $$hash{txt} = trim($');
+         } else {                  # process all text if no semi-colon found
+            force($hash,trim($$hash{txt}));
+            $$hash{txt} = undef;
+         }
+      }
+      # reset variables
+      ($$user{0},$$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
+       $$user{6},$$user{7},$$user{8}) =
+         (undef,undef,undef,undef,undef,undef,undef,undef);
+   }
+    
+}
 
 #
 # handle_listener
@@ -274,16 +344,16 @@ sub handle_listener
                 }) {
 
       # reset variables
-      ($$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
+      ($$user{0},$$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
        $$user{6},$$user{7},$$user{8},$$user{9}) =
-         (undef,undef,undef,undef,undef,undef,undef,undef);
+         (undef,undef,undef,undef,undef,undef,undef,undef,undef);
 
       # determine %0 - %9
       if($$hash{cmd} ne $msg) {
          $$hash{cmd} =~ s/\*/\(.*\)/g;
          if($msg =~ /^$$hash{cmd}$/) {
-            ($$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
-             $$user{6},$$user{7},$$user{8},$$user{9}) =
+            ($$user{0},$$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
+             $$user{6},$$user{7},$$user{8}) =
             ($1,$2,$3,$4,$5,$6,$7,$8,$9);
          }
       }
@@ -300,9 +370,9 @@ sub handle_listener
          }
       }
       # reset variables
-      ($$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
+      ($$user{0},$$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
        $$user{6},$$user{7},$$user{8},$$user{9}) =
-         (undef,undef,undef,undef,undef,undef,undef,undef);
+         (undef,undef,undef,undef,undef,undef,undef,undef,undef);
    }
 }
 
@@ -318,7 +388,8 @@ sub handle_listener
 #
 sub echo
 {
-   my ($target,$fmt,@args) = @_;
+   my $target = obj(shift);
+   my ($fmt,@args) = @_;
    my $match = 0;
    my $out = sprintf($fmt,@args);
 
@@ -329,44 +400,64 @@ sub echo
    my $txt = $out;                     # don't store returns in output table
    $txt =~ s/\r|\n//g; 
 
-   if(ref($target) eq "IO::Socket::INET") {
+   # handle objects set puppet
+   if(!hasflag($target,"PLAYER")) {                         # handle objects
+      if(defined $$target{raw} && $$target{raw} == 1) { # forward for ^listen
+         handle_object_listener($target,"%s",$out);
+      }
+      if(hasflag($target,"PUPPET")) {                    # forward if puppet
+         for my $player (@{sql($db,
+                               "select obj1.*, " .
+                               "       obj2.obj_name owner_name, " .
+                               "       sck_socket " .
+                               "  from socket sck, " .
+                               "       object obj1, " .
+                               "       object obj2 " .
+                               " where sck.obj_id = obj1.obj_id ".
+                               "   and obj1.obj_id =  obj2.obj_owner ".
+                               "   and obj2.obj_id = ? ",
+                               $$target{obj_id}
+                        )}) {
+            my $sock = @{@connected{$$player{sck_socket}}}{sock};
+            printf($sock "%s-%s> %s",$$target{raw},$$player{owner_name},$out);
+         }
+      }
+   } elsif(ref($target) eq "IO::Socket::INET") {
       printf($target "%s",$out);
-      return;
    } elsif(ref($target) eq "HASH" 
            && !defined $$target{obj_id}
            && defined $$target{sock}) {
       my $sock = $$target{sock};
       printf($sock "%s",$out);
-      return;
-   }
-      
-   sql($db,                                     #store output in output table
-       "insert into output" .
-       "(" .
-       "   out_text, " .
-       "   out_source, ".
-       "   out_destination ".
-       ") values ( ".
-       "   ?, " .
-       "   ?, " .
-       "   ? " .
-       ")",
-       $txt,
-       $$user{obj_id},
-       $$target{obj_id}
-      );
+   } else {
+      sql($db,                                     #store output in output table
+          "insert into output" .
+          "(" .
+          "   out_text, " .
+          "   out_source, ".
+          "   out_destination ".
+          ") values ( ".
+          "   ?, " .
+          "   ?, " .
+          "   ? " .
+          ")",
+          $txt,
+          $$user{obj_id},
+          $$target{obj_id}
+         );
 
-    if(defined $$target{sck_socket} && 
-       defined @connected{$$target{sck_socket}}) {               # exact socket
-       my $sock = @{@connected{$$target{sck_socket}}}{sock};
-       printf($sock "%s",$out);
-    } else {                                       # sockets used by obj_id
-       for my $sock (@{sql($db, 
-                           "select * from socket " .
-                           " where obj_id = ?",
-                           $$target{obj_id})}) {
-          my $sock = @{@connected{$$sock{sck_socket}}}{sock};
+       if(defined $$target{sck_socket} && 
+          defined @connected{$$target{sck_socket}}) {          # exact socket
+          my $sock = @{@connected{$$target{sck_socket}}}{sock};
           printf($sock "%s",$out);
+       } else {                                       # sockets used by obj_id
+          for my $sock (@{sql($db, 
+                              "select * from socket " .
+                              " where obj_id = ?",
+                              $$target{obj_id})}) {
+             my $sock = @{@connected{$$sock{sck_socket}}}{sock};
+             printf($sock "%s",$out);
+          }
        }
     }
 }
@@ -441,24 +532,33 @@ sub echo_room
 {
    my $target = obj(shift);
    my ($fmt,@args) = @_;
-   my $all;
+   my ($all);
 
-   for my $player (@{sql($db,
-                         "select * " .
+   for my $player (@{sql($db,                    # search room target is in
+                         "select obj.* " .
                          "  from object obj, " .
                          "       content con1, " . 
-                         "       content con2, " .
-                         "       socket sck " .
+                         "       content con2 " .
                          " where obj.obj_id = con1.obj_id ".
-                         "   and sck.obj_id = obj.obj_id " .
                          "   and con1.con_source_id = con2.con_source_id " .
-                         "   and con2.obj_id = ? " .
-                         "   and con1.obj_id != ? ",
+                         "   and con1.obj_id != con2.obj_id " .
+                         "   and con2.obj_id = ? ",
                          $$target{obj_id},
-                         $$target{obj_id}
                    )}) {
-#      printf("ECHO(%s) => '$fmt'\n",$$player{obj_id},@args);
-      echo($player,$fmt,@args);
+       # players may have multiple sockets
+      if(hasflag($player,"PLAYER")) {          # handle multiple player login
+          for my $hash (@{sql($db,
+                              "select * " .
+                              "  from socket sck, object obj " .  
+                              " where sck.obj_id = ? " .
+                              "   and sck.obj_id = obj.obj_id",
+                              $$player{obj_id}
+                       )}) {
+             echo($hash,$fmt,@args);
+          }
+      } else {                                           # non-player echoing
+          echo($player,$fmt,@args);
+      }
    }
 
    handle_listener($target,$fmt,@args);

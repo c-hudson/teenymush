@@ -1,5 +1,4 @@
 #!/usr/bin/perl
-
 #
 # add_last_info
 #
@@ -172,7 +171,7 @@ sub server_process_line
    my $data = @connected{$$hash{sock}};
 
    if($$data{raw}) {
-     echo_room($$data{owner},"%s",$input);
+     echo($data,"%s",$input);
    } else {
       eval {                                                  # catch errors
          if($input =~ /^\s*([^ ]+)/) {
@@ -307,7 +306,7 @@ sub server_disconnect
       my $hash = @connected{$id};
 
       if(defined $$hash{raw} && $$hash{raw} == 1) {            # MUSH Socket
-         echo_room($$hash{owner},"[ Connection closed ]");
+         echo($hash,"[ Connection closed ]");
          sql($db,                             # delete socket table row
              "delete from socket " .
              " where sck_socket = ? ",

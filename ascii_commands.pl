@@ -83,6 +83,8 @@ delete @command{keys %command};
                          fun  => sub { cmd_describe(@_); }};
 @command{"\@pemit"}  = { help => "Send a mesage to an object or person",
                          fun  => sub { cmd_pemit(@_); }};
+@command{"\@emit"}  = { help => "Send a mesage to an object or person",
+                         fun  => sub { cmd_emit(@_); }};
 @command{"think"}    = { help => "Send a mesage to just yourself",
                          fun  => sub { cmd_think(@_); }};
 @command{"version"}  = { help => "Show the current version of the MUSH",
@@ -110,12 +112,17 @@ delete @command{keys %command};
 
 @command{"\@recall"}=  { help => "Recall output sent to you",
                          fun  => sub { cmd_recall(@_); }};
-@command{"\@socket "} ={ help => "open a connection to the internet",
+@command{"\@socket"} ={ help => "open a connection to the internet",
                          fun  => sub { cmd_socket(@_); }};
+@command{"\@send"}    ={ help => "Send data to a connected socket",
+                         fun  => sub { cmd_send(@_); }};
 @command{"\@password"}={ help => "Change your password",
                          fun  => sub { cmd_password(@_); }};
 @command{"\@newpassword"}={ help => "Change someone else's password",
                          fun  => sub { cmd_newpassword(@_); }};
+@command{"\@switch"}  ={ help => "Compares strings then runs coresponding " .
+                                 "commands",
+                         fun  => sub { cmd_switch(@_); }};
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); }};
@@ -125,6 +132,7 @@ delete @command{keys %command};
 @command{w}          = { fun  => sub { return &cmd_whisper(@_); }        };
 @command{i}          = { fun  => sub { return &cmd_inventory(@_); }      };
 @command{"\@\@"}     = { fun  => sub { return;}                          };
+
  
 # ------------------------------------------------------------------------#
 
@@ -208,6 +216,60 @@ sub cmd_password
    }
 }
 
+sub get_segment
+{
+   my ($txt,$delim) = @_;
+
+    echo($user,"TEXT: %s {%s}\n",$txt,$delim);
+    if($txt =~ /^\s*"(.+?)(?<!(?<!\\)\\)"($delim|$)/ ||
+       $txt =~ /^\s*{(.+?)(?<!(?<!\\)\\)}($delim|$)/ ||
+       $txt =~ /^(.+?)($delim|$)/) {
+#       echo($user,"   RETURN1: '%s' -> '%s'\n",$1,$');
+       return ($1,$');
+    } else {
+#       echo($user,"   RETURN2: '%s' -> '%s'\n",$txt,undef);
+       return ($txt,undef);
+    } 
+}
+
+sub mush_split
+{
+   my $txt = shift;
+   my (@list,$seg);
+
+   while($txt) {
+      ($seg,$txt) = (get_segment($txt,","));
+#      echo($user,"Adding: '%s' [$txt]\n",$seg,$txt);
+      push(@list,$seg);
+   }
+   return @list;
+}
+
+sub cmd_switch
+{
+    my (@list) = (mush_split(shift));
+
+    my ($first,$second) = (get_segment(shift(@list),"="));
+    unshift(@list,$second);
+
+    echo($user,"SWITCH: {$first}");
+
+    while($#list >= 0) {
+       if($#list >= 1) {
+          my ($txt,$cmd) = (shift(@list),shift(@list));
+          $txt =~ s/\*/\(.*\)/g;
+
+          if($first =~ /^\s*$txt\s*$/) {
+             echo($user,"           run: '%s'\n",$cmd);
+             return $cmd;
+          }
+       } else {
+          return shift;
+       }
+    }
+}
+      
+
 sub cmd_newpassword
 {
    my $txt = shift;
@@ -237,37 +299,37 @@ sub cmd_newpassword
    }
 }
 
-
 sub cmd_socket
 {
    my $txt = shift;
    my $pending = 1;
 
    if(!hasflag($user,"SOCKET")) {
-      return echo_room($user,"Permission Denied");
-   } elsif($txt =~ /^\s*([^:]+)\s*:\s*(\d+)\s*$/ ||
-           $txt =~ /^\s*([^:]+)\s* \s*(\d+)\s*$/) {
-      my $addr = inet_aton($1) ||
-         return echo_room($user,"Invalid hostname '%s' specified.",$1);
+      return echo($user,"Permission Denied");
+   } elsif($txt =~ /^\s*([^ ]+)\s*=\s*([^:]+)\s*:\s*(\d+)\s*$/ ||
+           $txt =~ /^\s*([^ ]+)\s*=\s*([^:]+)\s* \s*(\d+)\s*$/) {
+      my $addr = inet_aton($2) ||
+         return echo($user,"Invalid hostname '%s' specified.",$2);
       my $sock = IO::Socket::INET->new(Proto=>'tcp') ||
-         return echo_room($user,"Could not create socket");
-      my $sockaddr = sockaddr_in($2, $addr) ||
-         return echo_room($user,"Could not create SOCKET");
+         return echo($user,"Could not create socket");
+      my $sockaddr = sockaddr_in($3, $addr) ||
+         return echo($user,"Could not create SOCKET");
       $sock->connect($sockaddr) or                     # start connect to host
          $! == EWOULDBLOCK or $! == EINPROGRESS or         # and check status
-         return echo_room($user,"Could not open connection");
+         return echo($user,"Could not open connection");
       () = IO::Select->new($sock)->can_write(10)     # see if socket is pending
           or $pending = 2;
       defined($sock->blocking(1)) ||
-         return echo_room($user,"Could not open a nonblocking connection");
+         return echo($user,"Could not open a nonblocking connection");
 
       @connected{$sock} = {
-         sock     => $sock,
-         raw      => 1,
-         hostname => $1,
-         port     => $2, 
-         loggedin => 0,
-         owner    => $$user{obj_id}
+         obj_id    => $$user{obj_id},
+         sock      => $sock,
+         raw       => 1,
+         socket    => $1,
+         hostname  => $2,
+         port      => $3, 
+         loggedin  => 0
       };
 
       $readable->add($sock);
@@ -277,20 +339,48 @@ sub cmd_socket
           "    sck_start_time, " .
           "    sck_type, " . 
           "    sck_socket, " .
+          "    sck_tag, " .
           "    sck_hostname, " .
           "    sck_port " .
-          ") values ( ? , now(), ?, ?, ?, ? )",
+          ") values ( ? , now(), ?, ?, ?, ?, ? )",
                $$user{obj_id},
                2,
                $sock,
                $1,
-               $2
+               $2,
+               $3
          );
-      echo_room($user,"Connection started to: %s:%s\n",$1,$2);
-      printf($sock "QUIT\r\n");
+       commit;
+      echo($user,"Connection started to: %s:%s\n",$2,$3);
+#      printf($sock "QUIT\r\n");
    } else {
-      echo_room($user,"usage: \@connect <hostname>:<port>");
+      echo($user,"usage: \@connect <id>=<hostname>:<port>");
    }
+}
+
+sub cmd_send
+{
+    my $txt = shift;
+
+    if($txt =~ /^\s*([^ ]+)\s*=/) {
+       my $hash = one($db,
+                        "select * " .
+                        "  from socket ".
+                        " where lower(sck_tag) = lower(?) ",
+                        $1
+                   );
+
+       if($hash eq undef) {
+          echo($user,"Unknown socket '%s' requested",$1);
+       } elsif(!defined @connected{$$hash{sck_socket}}) {
+          echo($user,"Socket '%s' has closed.",$1);
+       } else {
+          my $sock=@{@connected{$$hash{sck_socket}}}{sock};
+          printf($sock "%s\r\n",evaluate($'));
+       }
+    } else {
+       echo($user,"Usage: \@send <socket>=<data>");
+    }
 }
 
 sub cmd_recall
@@ -473,6 +563,15 @@ sub cmd_pemit
    } else {
       echo($user,"syntax: \@pemit <object> = <message>");
    }
+}
+
+sub cmd_emit
+{
+   my $txt = shift;
+
+   my $txt = evaluate($txt);
+   echo($user,"%s",$txt);
+   echo_room($user,"%s",$txt);
 }
 
 sub cmd_drop

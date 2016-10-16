@@ -103,6 +103,8 @@ delete @command{keys %command};
                          fun  => sub { cmd_destroy(@_); }};
 @command{"\@toad"} =   { help => "Destroy an player",
                          fun  => sub { cmd_toad(@_); }};
+@command{"\@sleep"} =   { help => "Destroy an player",
+                         fun  => sub { cmd_sleep(@_); }};
 #@command{"\@update_hostname"} =   { help => "Perform hostname lookups on any connected player as needed",
 #                         fun  => sub { cmd_update_hostname(@_); }};
 @command{"\@list"}  =  { help => "List internal server data",
@@ -123,6 +125,13 @@ delete @command{keys %command};
 @command{"\@switch"}  ={ help => "Compares strings then runs coresponding " .
                                  "commands",
                          fun  => sub { cmd_switch(@_); }};
+@command{"\@engine"}  ={ help => "Run a command via the process queue engine",
+                         fun  => sub { cmd_engine(@_); }};
+
+@command{"\@spin"}    ={ help => "Let the process queue engine run one cycle",
+                         fun  => sub { cmd_spin(@_); }};
+@command{"\@var"}     ={ help => "Set a local variable",
+                         fun  => sub { cmd_var(@_); }};
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); }};
@@ -162,6 +171,29 @@ BEGIN {
       require Errno;
       import  Errno qw(EWOULDBLOCK EINPROGRESS);
    }
+}
+
+sub cmd_var
+{
+    my ($txt,$prog) = @_;
+
+    echo($user,"TEXT: '%s'\n",$txt);
+    if($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
+       $$prog{var} = {} if !defined $$prog{var};
+       @{$$prog{var}}{$1} = $2; 
+    } else {
+       echo($user,"usage: \@var <variable> = <variables>");
+    }
+}
+
+sub cmd_engine
+{
+    mush_command2($user,shift);
+}
+
+sub cmd_spin
+{
+    spin();
 }
 
 sub good_password
@@ -216,6 +248,12 @@ sub cmd_password
    }
 }
 
+sub cmd_sleep
+{
+   sleep(30);
+   echo($user,"!Foo! sleep");
+}
+
 #
 # get_segment
 #    Get a single segment of a $delim delimited string. Strings can
@@ -242,11 +280,13 @@ sub get_segment
 #
 sub mush_split
 {
-   my $txt = shift;
+   my ($txt,$delim) = @_;
    my (@list,$seg);
 
+   $delim = "," if $delim eq undef;
+
    while($txt) {
-      ($seg,$txt) = (get_segment($txt,","));
+      ($seg,$txt) = (get_segment($txt,$delim));
       push(@list,$seg);
    }
    return @list;
@@ -555,14 +595,14 @@ sub cmd_think
 
 sub cmd_pemit
 {
-   my $txt = shift;
+   my ($txt,$prog) = @_;
 
    if($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
       my $target = locate_object($user,$1,"local");
       if($target eq undef) {
          return echo($user,"I don't see that here");
       } 
-      echo($target,"%s\n",evaluate($2));
+      echo($target,"%s\n",evaluate($2,$prog));
    } else {
       echo($user,"syntax: \@pemit <object> = <message>");
    }

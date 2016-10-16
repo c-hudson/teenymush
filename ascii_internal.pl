@@ -48,7 +48,7 @@ sub first
 #
 sub evaluate
 {
-    my $txt = shift;
+    my ($txt,$prog) = @_;
 
     # convert %r [return], %b [space], and %t [tab]
     $txt =~ s/%r/\n/ig;
@@ -74,6 +74,21 @@ sub evaluate
     $txt =~ s/(?<!(?<!\\)\\)%6/$$user{6}/g;
     $txt =~ s/(?<!(?<!\\)\\)%7/$$user{7}/g;
     $txt =~ s/(?<!(?<!\\)\\)%8/$$user{8}/g;
+    
+    if(ref($prog) eq "HASH") {                     # handle local variables
+       my $var = $$prog{var};
+       my $out;
+
+       while($txt =~ /(?<!(?<!\\)\\)%{([^ ]+)}/) {      # look for variables
+          $txt = $';
+          if(defined $$var{$1}) {
+             $out .= $` . $$var{$1};                # defined variable
+          } else {
+             $out .= $` . "%{$1}";                  # undefed variable
+          }
+       }
+       $txt = $out . $txt;
+    }
 
     if(defined $$user{raw_raw} && $$user{raw_raw} == 1) {
        $txt =~ s/(?<!(?<!\\)\\)%hostname/$$user{raw_hostname}/ig;
@@ -971,6 +986,8 @@ sub create_object
 
    return $$hash{obj_id};
 }
+
+
 
 sub curval
 {

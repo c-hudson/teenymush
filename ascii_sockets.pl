@@ -52,7 +52,7 @@ sub add_site_restriction
 #
 # mush_command
 #    Search and run attributes that match the command that was typed in.
-sub mush_command
+sub mush_command2
 {
    my ($data,$cmd) = @_;
    my ($match,$count)=(0,0);
@@ -110,7 +110,7 @@ sub mush_command
 }
 
 
-sub mush_command2
+sub mush_command
 {
    my ($data,$cmd) = @_;
    my $match= 0;
@@ -261,68 +261,70 @@ sub server_hostname
 sub server_handle_sockets
 {
    eval {
-   # wait for IO or 1 second
-   my ($sockets) = IO::Select->select($readable,undef,undef,2);
-   my $buf;
+      # wait for IO or 1 second
+      my ($sockets) = IO::Select->select($readable,undef,undef,.1);
+      my $buf;
 
-   if(!defined @info{server_start} || @info{server_start} =~ /^\s*$/) {
-      @info{server_start} = time();
-   }
-
-   # all processing happens when there is I/O but certain things will
-   # have to happen when it should instead of when I/O happened. Add
-   # code here when whatever that is figured out.
-   # 
-   # server_tick()?
-
-   # process any IO
-   foreach my $s (@$sockets) {         # loop through active sockets [if any]
-       if($s == $listener) {                                 # new connection
-          my $new = $listener->accept();                          # accept it
-          if($new) {                                          # valid connect
-             $readable->add($new);                 # add 2 watch list 4 input
-             my $hash = { sock => $new,               # store connect details
-                          hostname => server_hostname($new),
-                          ip => $new->peerhost,
-                          loggedin => 0,
-                          raw => 0
-                        };
-             add_site_restriction($hash);
-             @connected{$new} = $hash;
-
-             printf("# Connect from: %s\n",$$hash{hostname});
-             if($$hash{site_restriction} <= 2) {                    # banned
-                printf("   BANNED   [Booted]\n");
-                if($$hash{site_restriction} == 2) {
-                   printf($new "%s",getfile("badsite.txt"));
-                }
-                server_disconnect(@{@connected{$new}}{sock});
-             } else {
-                printf($new "%s",getfile("login.txt"));   #  show login
-             }
-          }                                                        
-       } elsif(sysread($s,$buf,1024) <= 0) {           # socket disconnected
-          server_disconnect($s);
-       } else {                                           # socket has input
-          $buf =~ s/\r//g;                                  # remove returns
-          $buf =~ tr/\x80-\xFF//d;
-          @{@connected{$s}}{buf} .= $buf;                      # store input
-          
-                                                        # breakapart by line
-          while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
-             @{@connected{$s}}{buf} = $';                 # store left overs
-             server_process_line(@connected{$s},$`);          # process line
-          }
-       }
-    }
-    };
-      if($@){
-         printf("Server Crashed, minimal details [main_loop]\n");
-         printf("LastSQL: '%s'\n",@info{sql_last});
-         printf("         '%s'\n",@info{sql_last_args});
-         printf("%s\n---[end]-------\n",$@);
+      if(!defined @info{server_start} || @info{server_start} =~ /^\s*$/) {
+         @info{server_start} = time();
       }
 
+      # all processing happens when there is I/O but certain things will
+      # have to happen when it should instead of when I/O happened. Add
+      # code here when whatever that is figured out.
+      # 
+      # server_tick()?
+
+      # process any IO
+      foreach my $s (@$sockets) {      # loop through active sockets [if any]
+         if($s == $listener) {                               # new connection
+            my $new = $listener->accept();                        # accept it
+            if($new) {                                        # valid connect
+               $readable->add($new);               # add 2 watch list 4 input
+               my $hash = { sock => $new,             # store connect details
+                            hostname => server_hostname($new),
+                            ip => $new->peerhost,
+                            loggedin => 0,
+                            raw => 0
+                          };
+               add_site_restriction($hash);
+               @connected{$new} = $hash;
+
+               printf("# Connect from: %s\n",$$hash{hostname});
+               if($$hash{site_restriction} <= 2) {                  # banned
+                  printf("   BANNED   [Booted]\n");
+                  if($$hash{site_restriction} == 2) {
+                     printf($new "%s",getfile("badsite.txt"));
+                  }
+                  server_disconnect(@{@connected{$new}}{sock});
+               } else {
+                  printf($new "%s",getfile("login.txt"));   #  show login
+               }
+            }                                                        
+         } elsif(sysread($s,$buf,1024) <= 0) {          # socket disconnected
+            server_disconnect($s);
+         } else {                                          # socket has input
+            $buf =~ s/\r//g;                                 # remove returns
+            $buf =~ tr/\x80-\xFF//d;
+            @{@connected{$s}}{buf} .= $buf;                     # store input
+          
+                                                         # breakapart by line
+            while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
+               @{@connected{$s}}{buf} = $';                # store left overs
+               server_process_line(@connected{$s},$`);         # process line
+            }
+         }
+      }
+
+      spin();
+
+   };
+   if($@){
+      printf("Server Crashed, minimal details [main_loop]\n");
+      printf("LastSQL: '%s'\n",@info{sql_last});
+      printf("         '%s'\n",@info{sql_last_args});
+      printf("%s\n---[end]-------\n",$@);
+   }
 }
 
 #

@@ -177,7 +177,6 @@ sub cmd_var
 {
     my ($txt,$prog) = @_;
 
-    echo($user,"TEXT: '%s'\n",$txt);
     if($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
        $$prog{var} = {} if !defined $$prog{var};
        @{$$prog{var}}{$1} = $2; 

@@ -4,7 +4,7 @@ delete @command{keys %command};
 
 @offline{connect}     = sub { return cmd_connect(@_);                    };
 @offline{who}         = sub { return cmd_who(@_);                        };
-@offline{create}      = sub { return cmd_create(@_);                     };
+@offline{create}      = sub { return cmd_pcreate(@_);                     };
 @offline{quit}        = sub { return cmd_quit(@_);                       };
 @offline{huh}         = sub { return cmd_offline_huh(@_);                };
 # ------------------------------------------------------------------------#
@@ -54,7 +54,7 @@ delete @command{keys %command};
 @command{"\@cls"}    = { help => "Clear the console screen",
                          fun  => sub { return cmd_clear(@_); }           };
 @command{"\@create"} = { help => "Create an object",
-                         fun  => sub { return cmd_ATcreate(@_); }        };
+                         fun  => sub { return cmd_create(@_); }        };
 @command{"print"}    = { help => "Print an internal variable",
                          fun  => sub { return cmd_print(@_); }           };
 @command{"go"}       = { help => "Go through an exit",
@@ -259,7 +259,7 @@ sub cmd_sleep
 #    be enclosed in "quotes" or {brackets} to avoid breaking apart the
 #    string in the wrong location.
 #
-sub get_segment
+sub get_segment2
 {
    my ($txt,$delim) = @_;
 
@@ -277,7 +277,7 @@ sub get_segment
 #    Take a multiple segment string that is deliminted by $delim and
 #    break it apart. Return the result as an array.
 #
-sub mush_split
+sub mush_split2
 {
    my ($txt,$delim) = @_;
    my (@list,$seg);
@@ -285,7 +285,7 @@ sub mush_split
    $delim = "," if $delim eq undef;
 
    while($txt) {
-      ($seg,$txt) = (get_segment($txt,$delim));
+      ($seg,$txt) = (get_segment2($txt,$delim));
       push(@list,$seg);
    }
    return @list;
@@ -293,9 +293,9 @@ sub mush_split
 
 sub cmd_switch
 {
-    my (@list) = (mush_split(shift));
+    my (@list) = (banana_split(shift,',',1));
 
-    my ($first,$second) = (get_segment(shift(@list),"="));
+    my ($first,$second) = (get_segment2(shift(@list),"="));
     $first = evaluate($first);
     unshift(@list,$second);
 
@@ -347,7 +347,7 @@ sub cmd_telnet
    my $pending = 1;
 
    if(!hasflag($user,"SOCKET")) {
-      return echo($user,"Permission Denied");
+      return echo($user,"* Permission Denied *");
    } elsif($txt =~ /^\s*([^ ]+)\s*=\s*([^:]+)\s*:\s*(\d+)\s*$/ ||
            $txt =~ /^\s*([^ ]+)\s*=\s*([^:]+)\s* \s*(\d+)\s*$/) {
       my $addr = inet_aton($2) ||
@@ -1090,7 +1090,7 @@ sub cmd_help
    }
 }
 
-sub cmd_create
+sub cmd_pcreate
 {
    my $txt = shift;
 
@@ -1126,7 +1126,7 @@ sub create_exit
 }
 
 
-sub cmd_ATcreate
+sub cmd_create
 {
    my $txt = shift;
 
@@ -1672,7 +1672,9 @@ sub cmd_set2
 {
    my $txt = shift;
 
-   if($txt =~ /^\s*([^ ]+)\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
+   if($txt =~ /^\s*&([^& ]+)\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
+      $$user{inattr} = $txt;
+   } elsif($txt =~ /^\s*([^& ]+)\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
       cmd_set("$2/$1=$3");
    } elsif($txt =~ /^\s*([^ ]+)\s*([^ ]+)\s*$/) {
       cmd_set("$2/$1=");

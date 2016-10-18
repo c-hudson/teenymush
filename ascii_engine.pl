@@ -9,6 +9,41 @@
 
 
 use Time::HiRes "ualarm";
+
+sub mush_command
+{
+   my ($data,$cmd) = @_;
+   my $match= 0;
+
+   # look for any attributes in the same room as the player
+   for my $hash (@{sql("select obj.obj_id, " .
+                       "       substr(atr_value,2,instr(atr_value,':')-2) cmd,".
+                       "       substr(atr_value,instr(atr_value,':')+1) txt ".
+                       "  from object obj, attribute atr, content con " .
+                       " where obj.obj_id = atr.obj_id " .
+                       "   and obj.obj_id = con.obj_id " .
+                       "   and ? like  " .
+                "replace(substr(atr_value,1,instr(atr_value,':')-1),'*','%')" .
+                       "   and con.con_source_id in ( ?, ? ) ",
+                       "\$" . lc($cmd),
+                       loc($user),
+                       $$user{obj_id}
+                      )
+                }) {
+
+      $$hash{cmd} =~ s/\*/\(.*\)/g;
+      if($cmd =~ /^$$hash{cmd}$/) {
+         mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
+      } else {
+         mushrun($hash,$$hash{txt});
+      }
+      $match=1;                                   # signal mush command found
+   }
+   return $match;
+}
+
+
+
 #
 # mushrun
 #    Add the command to the que of what to run. The command will be run
@@ -20,12 +55,15 @@ sub mushrun
     delete @info{engine};
 
     my $prog = {
-       stack => [ mush_split($cmd,';') ],
-       enactor => $enactor,
-       user => $user,
-       obj => $hash,
+       stack => [ banana_split($cmd,';') ],
+       enactor => $user,
+       user => $hash,
        var => {}
     };
+#    my $array = $$prog{stack};
+#    for my $i (0 .. $#$array) {
+#       echo($user,"$i : '%s'\n",@$array[$i]);
+#    }
 
 
     if(hasflag($user,"WIZARD") || hasflag($user,"GOD")) {
@@ -91,7 +129,7 @@ sub spin
    };
 
    if($@) {
-      printf("Time slice timed out (%2f)\n",Time::HiRes::gettimeofday() - 
+      printf("Time slice timed out (%2f) $@\n",Time::HiRes::gettimeofday() - 
          $start);
       if(defined @last{user} && defined @{@last{user}}{var}) {
          my $var = @{@last{user}}{var};

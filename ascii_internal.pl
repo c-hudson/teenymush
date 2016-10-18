@@ -201,6 +201,10 @@ sub run_multiple
    my $cmd = shift;
    my $count = 0;
 
+   if($cmd =~ /^\s*{\s*(.*?)\s*}\s*$/) {
+      $cmd = $1;
+   }
+   
    while($cmd ne undef && $count++ < 150) {
       if($cmd =~ /^(.*?)(?<!(?<!\\)\\);/) {
          run_single(trim($1 . " " . $2));
@@ -741,6 +745,8 @@ sub locate_object
 
    if($name =~ /^\s*#(\d+)\s*$/) {                                  # dbref
       return fetch($1);
+   } elsif($name =~ /^\s*%#\s*$/) {
+      return $$enactor{obj_id};
    } elsif($name =~ /^\s*me\s*$/) {                                # myself
       return $target;
    } elsif($name =~ /^\s*here\s*$/) {
@@ -841,7 +847,7 @@ sub locate_exit
 #
 sub set_flag
 {
-    my ($object,$flag,$override) = (obj($_[0]),$_[1]);
+    my ($object,$flag,$override) = (obj($_[0]),$_[1],$_[2]);
     my $who = $$user{obj_name};;
     my ($remove,$count);
 
@@ -946,10 +952,12 @@ sub create_object
    my ($hash,$where);
    my $who = $$user{obj_name};
    my $owner = $$user{obj_id};
+   printf("# Got this far -1\n");
 
    # check quota
-   return 0 if(quota_left($$user{obj_id}) <= 0);
+   return 0 if($type ne "PLAYER" && quota_left($$user{obj_id}) <= 0);
   
+   printf("# Got this far\n");
    if($type eq "PLAYER") {
       $where = 3;
       $who = $$user{hostname};
@@ -961,6 +969,7 @@ sub create_object
    } elsif($type eq "EXIT") {
       $where = -1;
    }
+   printf("# Got this far1\n");
 
    sql($db,
        " insert into object " .
@@ -970,21 +979,25 @@ sub create_object
        "values " .
        "   (?,password(?),?,?,now(),?)",
        $name,$pass,$owner,$who,$where);
+   printf("# Got this far2\n");
 
    if($$db{rows} != 1) {
       rollback($db);
       return undef;
    }
 
+   printf("# Got this far3\n");
    my $hash = one($db,"select last_insert_id() obj_id") ||
       return rollback($db);
 
+   printf("# Got this far4\n");
    set_flag($$hash{obj_id},$type,1);
    if($type eq "PLAYER" || $type eq "OBJECT") {
       move(fetch($$hash{obj_id}),fetch($where));
    }
 
-   return $$hash{obj_id};
+   printf("# Got this far4\n");
+e  return $$hash{obj_id};
 }
 
 
@@ -1445,3 +1458,58 @@ sub quota_left
                     );
 #   }
 }
+
+#
+# get_segment
+#    Return the position and text of a segment if the matching $delimiter
+#    is found.
+#
+sub get_segment
+{
+   my ($array,$end,$delim) = @_;
+   my $start = $end;
+
+   while($start > 0) {
+      if($$array[--$start] eq $delim) {
+         return $start,join('',@$array[$start .. $end]);
+      }
+   }
+}
+
+#
+# bannana_split
+#    Take a string and split it according to the delimiter. Do not split
+#    the string if the delimiter is inside a "",{},() pair
+# 
+sub banana_split                                           # balanced split
+{
+   my ($txt,$delim,$flag) = @_;
+   $delim = ',' if $delim eq undef;                          # default of ,
+   my (@array)=(split(/(?<!(?<!\\)\\)([\(\)\{\}"$delim])/,$txt)); # cut up 
+   my %toppings = ( ')' => '(', '}' => '{', '"' => '"',);
+   my @result;
+
+   for(my $i=$#array;$i >= 0;$i--) {                   # put matching pairs
+      if(defined @toppings{@array[$i]}) {                   # back together
+         my ($start,$txt) = get_segment(\@array,$i,@toppings{@array[$i]});
+         if($start ne undef) {                                # match found
+            delete @array[$start .. $i];                  # delete multiple
+            @array[$start] = $txt;                      # put back combined
+            $i = $start;
+         }
+      }
+   }
+
+   for(my ($i,$pos)=(0,0);$i <= $#array;$i++) {         # put rest together
+      if(defined @array[$i]) {                        # unless $delim found
+         if(@array[$i] eq $delim) {
+            @result[$pos] .= $delim if !$flag;          # found split point
+            $pos++;
+         } else {
+            @result[$pos] .= @array[$i];                    # join together
+         }
+      }
+   }
+   return @result;
+}
+

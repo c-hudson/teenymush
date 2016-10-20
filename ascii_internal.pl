@@ -74,6 +74,10 @@ sub evaluate
     $txt =~ s/(?<!(?<!\\)\\)%6/$$user{6}/g;
     $txt =~ s/(?<!(?<!\\)\\)%7/$$user{7}/g;
     $txt =~ s/(?<!(?<!\\)\\)%8/$$user{8}/g;
+
+    if(defined $$user{cmd_data} && defined @{$$user{cmd_data}}{"##"}) {
+       $txt =~ s/(?<!(?<!\\)\\)##/@{$$user{cmd_data}}{"##"}/g;
+    }
     
     if(ref($prog) eq "HASH") {                     # handle local variables
        my $var = $$prog{var};
@@ -1046,10 +1050,13 @@ sub print_var
 
       my $data = (ref($var) eq "HASH") ? $$var{$key} : $$var[$key];
 
-      if((ref($data) eq "HASH" || ref($data) eq "ARRAY") &&
-         !ignoreit($skip,$key,$depth)) {
+      if(ref($data) eq "HASH" && !ignoreit($skip,$key,$depth)) {
          $out .= sprintf("%s%s $PL\n"," " x ($depth*2),$key);
          $out .= print_var($$var{$key},$depth+1,$key,$skip,1);
+         $out .= sprintf("%s$PR\n"," " x ($depth*2));
+      } elsif(ref($data) eq "ARRAY" && !ignoreit($skip,$key,$depth)) {
+         $out .= sprintf("%s%s $PL\n"," " x ($depth*2),$key);
+#         $out .= print_var(@$var[$key],$depth+1,$key,$skip,1);
          $out .= sprintf("%s$PR\n"," " x ($depth*2));
       } elsif(!ignoreit($skip,$key,$depth)) {
          $out .= sprintf("%s%s = %s\n"," " x ($depth*2),$key,$data);
@@ -1481,13 +1488,17 @@ sub get_segment
 #    Take a string and split it according to the delimiter. Do not split
 #    the string if the delimiter is inside a "",{},() pair
 # 
-sub banana_split                                           # balanced split
+sub bannana_split                                          # balanced split
 {
-   my ($txt,$delim,$flag) = @_;
+   my ($txt,$delim,$flag,$max) = @_;
    $delim = ',' if $delim eq undef;                          # default of ,
+
+   $txt = $1 if ($txt =~ /^\s*{\s*(.*?)\s*}\s*$/);
    my (@array)=(split(/(?<!(?<!\\)\\)([\(\)\{\}"$delim])/,$txt)); # cut up 
    my %toppings = ( ')' => '(', '}' => '{', '"' => '"',);
    my @result;
+   $max = 99 if $max eq undef;
+   $max--;
 
    for(my $i=$#array;$i >= 0;$i--) {                   # put matching pairs
       if(defined @toppings{@array[$i]}) {                   # back together
@@ -1503,8 +1514,10 @@ sub banana_split                                           # balanced split
    for(my ($i,$pos)=(0,0);$i <= $#array;$i++) {         # put rest together
       if(defined @array[$i]) {                        # unless $delim found
          if(@array[$i] eq $delim) {
-            @result[$pos] .= $delim if !$flag;          # found split point
-            $pos++;
+            if(!$flag || $max == $pos) {                 # found split point
+               @result[$pos] .= $delim;          # found split point
+            }
+            $pos++ if ($pos < $max);
          } else {
             @result[$pos] .= @array[$i];                    # join together
          }

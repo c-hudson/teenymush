@@ -125,13 +125,16 @@ delete @command{keys %command};
 @command{"\@switch"}  ={ help => "Compares strings then runs coresponding " .
                                  "commands",
                          fun  => sub { cmd_switch(@_); }};
-@command{"\@engine"}  ={ help => "Run a command via the process queue engine",
+@command{"\@engine"}  ={ help => "Provide details about the engine queue",
                          fun  => sub { cmd_engine(@_); }};
-
-@command{"\@spin"}    ={ help => "Let the process queue engine run one cycle",
-                         fun  => sub { cmd_spin(@_); }};
+@command{"\@kill"}  ={ help => "Kill a process",
+                         fun  => sub { cmd_engine(@_); }};
 @command{"\@var"}     ={ help => "Set a local variable",
                          fun  => sub { cmd_var(@_); }};
+@command{"\@dolist"}  ={ help => "Loop through a list of variables",
+                         fun  => sub { cmd_dolist(@_); },
+                         engine => 1
+                       };
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); }};
@@ -185,14 +188,132 @@ sub cmd_var
     }
 }
 
-sub cmd_engine
+sub cmd_kill
 {
-    mush_command2($user,shift);
+   my ($txt,$prog) = @_;
+
+   my $engine = @info{engine};
+
+   if($txt =~ /^\s*(\d+)\s*$/) {
+      if(defined $$engine{$1}) {
+         delete @$engine{$1};
+         echo($user,"PID '%s' has been killed",$1);
+      } else {
+         echo($user,"PID '%s' does not exist",$1);
+      }
+
+   } else {
+      echo($user,"Usage: \@kill <pid>");
+   }
 }
 
-sub cmd_spin
+sub cmd_engine
 {
-    spin();
+   my $engine = @info{engine};
+
+   echo($user,"----[ Start ]----");
+   for my $key (keys %$engine) {
+      my $data = @{$$engine{$key}}[0];
+      echo($user,"  PID: $key for %s",obj_name($$data{user},1));
+      for my $pid (@{$$engine{$key}}) {
+         my $stack = @{@{$$engine{$key}}[0]}{stack};
+
+         if($#$stack < 0) {
+            echo($user,"    cmd: %s\n",@{$$user{last}}{cmd});
+         } else {
+            for my $i (0 .. ($#$stack <= 3) ? $#$stack : 3) {
+               if(length($$stack[$i]) > 67) {
+                  echo($user,"    Cmd: %s...\n",substr($$stack[$i],1,64));
+               } else {
+                  echo($user,"    cmd: %s\n",$$stack[$i]);
+               }
+            }
+         }
+      }
+   }
+   echo($user,"----[  End  ]----");
+}
+
+sub test
+{
+   my $txt = shift;
+
+   if($txt      =~ / <= /)    { return ($` <= $') ? 1 : 0;  }
+   elsif($txt =~ / >= /)      { return ($` >= $') ? 1 : 0;  }
+   elsif($txt =~ / > /)       { return ($` > $') ? 1 : 0;   }
+   elsif($txt =~ / < /)       { return ($` < $') ? 1 : 0;   }
+   elsif($txt =~ / eq /)      { return ($` eq $') ? 1 : 0;  }
+   elsif($txt =~ / ne /)      { return ($` ne $') ? 1 : 0;  };
+}
+
+#
+# cmd_while
+#    Loop while the expression is true
+#
+sub cmd_while
+{
+    my ($txt,$prog) = @_;
+    my %last;
+
+    my $cmd = $$user{cmd_data};
+    if(!defined $$cmd{dolist_list}) {                 # initialize "loop"
+        my ($first,$second) = bannana_split($txt,"=",1,2);
+        $$cmd{dolist_cmd} = [ bannana_split($second,";",1) ];
+        $$cmd{dolist_list} = [ split(' ',$first) ];
+    } 
+
+    my $list = $$cmd{dolist_list};
+    return 0 if($#$list < 0);                           # oops already done
+
+    my $item = pop(@$list);                        # pull next ## off list
+
+    my $commands = $$cmd{dolist_cmd};
+    for my $i (0 .. $#$commands) {
+        spin_run(\%last,$prog,{ "##" => $item, cmd => $$commands[$i]});
+    }
+
+    if($#$list < 0) {                                                # done
+       return 0;
+    } else {                                          # signal still running
+       $$prog{still_running} = 1;
+       return 1;
+    }
+}
+
+
+
+#
+# cmd_dolist
+#    Loop though a list running specified commands.
+#
+sub cmd_dolist
+{
+    my ($txt,$prog) = @_;
+    my %last;
+
+    my $cmd = $$user{cmd_data};
+    if(!defined $$cmd{dolist_list}) {                 # initialize "loop"
+        my ($first,$second) = bannana_split($txt,"=",1,2);
+        $$cmd{dolist_cmd} = [ bannana_split($second,";",1) ];
+        $$cmd{dolist_list} = [ split(' ',$first) ];
+    } 
+
+    my $list = $$cmd{dolist_list};
+    return 0 if($#$list < 0);                           # oops already done
+
+    my $item = pop(@$list);                        # pull next ## off list
+
+    my $commands = $$cmd{dolist_cmd};
+    for my $i (0 .. $#$commands) {
+        spin_run(\%last,$prog,{ "##" => $item, cmd => $$commands[$i]});
+    }
+
+    if($#$list < 0) {                                                # done
+       return 0;
+    } else {                                          # signal still running
+       $$prog{still_running} = 1;
+       return 1;
+    }
 }
 
 sub good_password
@@ -293,7 +414,7 @@ sub mush_split2
 
 sub cmd_switch
 {
-    my (@list) = (banana_split(shift,',',1));
+    my (@list) = (bannana_split(shift,',',1));
 
     my ($first,$second) = (get_segment2(shift(@list),"="));
     $first = evaluate($first);

@@ -52,19 +52,21 @@ sub mush_command
 sub mushrun
 {
     my ($hash,$cmd,@wildcard) = @_;
-    delete @info{engine};
+#    delete @info{engine};
 
+#    echo($user,"Q: '%s'\n",$cmd);
     my $prog = {
-       stack => [ banana_split($cmd,';') ],
+       stack => [ ],
        enactor => $user,
        user => $hash,
        var => {}
     };
-#    my $array = $$prog{stack};
-#    for my $i (0 .. $#$array) {
-#       echo($user,"$i : '%s'\n",@$array[$i]);
-#    }
 
+   # add items inside a hash entry, so @dolist can store relavant info
+    for my $i ( bannana_split($cmd,';',1) ) {
+       my $stack=$$prog{stack};
+       push(@$stack,{ cmd => $i });
+    }
 
     if(hasflag($user,"WIZARD") || hasflag($user,"GOD")) {
        $$prog{priority} = 10;
@@ -75,10 +77,6 @@ sub mushrun
     for my $i (0 .. $#wildcard) {
        @{$$prog{var}}{$i+1} = @wildcard[$i];
     }
-
-#    for my $i (0 .. $#{$$prog{stack}}) {
-#       echo($user,"   %s",@{$$prog{stack}}[$i]);
-#    }
 
     @info{engine} = {} if not defined @info{engine};
     @{@info{engine}}{++@info{pid}} = [ $prog ];
@@ -96,8 +94,8 @@ sub spin
 
    my $start = Time::HiRes::gettimeofday();
 
-   eval {
-      ualarm(800_000);                                # die at 8 milliseconds
+#   eval {
+#      ualarm(800_000);                                # die at 8 milliseconds
 
       for my $pid (keys %{@info{engine}}) {
          my $thread = @{@info{engine}}{$pid};
@@ -113,8 +111,14 @@ sub spin
                shift(@$thread);
             } else {
                for(my $i=0;$#$command >= 0 && $i <= $$program{priority};$i++) {
-                  my $cmd  = shift(@$command);
+                  my $cmd = shift(@$command);
                   spin_run(\%last,$program,$cmd);
+
+                  # let the program decide if it is done (i.e. a loop)
+                  if(defined $$program{still_running}) {
+                     unshift(@$command,$cmd);
+                     delete @$program{still_running};
+                  }
                                                       # stop at 4 milliseconds
                   if(Time::HiRes::gettimeofday() - $start > 0.4) {
                      printf("Time slice ran long, exiting correctly\n");
@@ -125,8 +129,8 @@ sub spin
             }
          }
       }
-      ualarm(0);                                              # cancel alarm
-   };
+#      ualarm(0);                                              # cancel alarm
+#   };
 
    if($@) {
       printf("Time slice timed out (%2f) $@\n",Time::HiRes::gettimeofday() - 
@@ -153,8 +157,9 @@ sub spin_run
    my ($tmp_user,$tmp_enactor) = ($user,$enactor);
    ($user,$enactor) = ($$prog{user},$$prog{enactor});
    ($$last{user},$$last{enactor},$$last{cmd}) = ($user,$enactor,$cmd);
+   $$user{cmd_data} = $cmd;
 
-   if($cmd =~ /^\s*([^ ]+)(\s*)/) {
+   if($$cmd{cmd} =~ /^\s*([^ ]+)(\s*)/) {
       my ($cmd_name,$arg) = lookup_command(\%command,$1,"$2$'",1);
 
       &{@{@command{$cmd_name}}{fun}}($arg,$prog);

@@ -178,8 +178,9 @@ sub server_process_line
          if($input =~ /^\s*([^ ]+)/) {
             $user = $hash;
             if(loggedin($hash) || hasflag($hash,"OBJECT")) {
+               mushrun($user,$input);
                my ($cmd,$arg) = lookup_command(\%command,$1,$',1);
-               &{@{@command{$cmd}}{fun}}($arg);                  # invoke cmd
+#               &{@{@command{$cmd}}{fun}}($arg);                  # invoke cmd
                add_last_info($cmd,$');                                #logit
             } else {
                my ($cmd,$arg) = lookup_command(\%offline,$1,$',0);

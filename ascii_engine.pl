@@ -12,7 +12,7 @@ use Time::HiRes "ualarm";
 
 sub mush_command
 {
-   my ($data,$cmd) = @_;
+   my ($data,$cmd,$flag) = @_;
    my $match= 0;
 
    # look for any attributes in the same room as the player
@@ -51,7 +51,7 @@ sub mush_command
 #
 sub mushrun
 {
-    my ($hash,$cmd,@wildcard) = @_;
+   my ($hash,$cmd,@wildcard) = @_;
 #    delete @info{engine};
 
 #    echo($user,"Q: '%s'\n",$cmd);
@@ -63,10 +63,16 @@ sub mushrun
     };
 
    # add items inside a hash entry, so @dolist can store relavant info
-    for my $i ( bannana_split($cmd,';',1) ) {
-       my $stack=$$prog{stack};
-       push(@$stack,{ cmd => $i });
+    my $stack=$$prog{stack};
+    if(defined $$user{source} && $$user{source} == 1) {
+       push(@$stack,{ cmd => $cmd });
+    } else {
+       for my $i ( bannana_split($cmd,';',1) ) {
+          my $stack=$$prog{stack};
+          push(@$stack,{ cmd => $i });
+       }
     }
+    delete @$user{source};
 
     if(hasflag($user,"WIZARD") || hasflag($user,"GOD")) {
        $$prog{priority} = 10;
@@ -116,8 +122,11 @@ sub spin
 
                   # let the program decide if it is done (i.e. a loop)
                   if(defined $$program{still_running}) {
+#                     echo($user,"## !DONE ##");
                      unshift(@$command,$cmd);
                      delete @$program{still_running};
+                  } else {
+#                     echo($user,"## DONE ##");
                   }
                                                       # stop at 4 milliseconds
                   if(Time::HiRes::gettimeofday() - $start > 0.4) {

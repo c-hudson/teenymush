@@ -6,7 +6,7 @@
 #
 sub add_last_info
 {
-   my ($cmd,$arg) = @_;
+   my $cmd = shift;
 
    # create structure to hold last info if needed
    $$user{last} = {} if(!defined $$user{last});
@@ -15,7 +15,6 @@ sub add_last_info
    my $last = $$user{last};
    $$last{time} = time();
    $$last{cmd} = $cmd;
-   $$last{arg} = $arg;
 }
 
 sub trim
@@ -144,7 +143,7 @@ sub lookup_command
          return ($match,trim($txt));
       } elsif($txt =~ /^\s*$/ && $type && locate_exit($cmd)) {  # exit match
          return ("go",$cmd);
-      } elsif(mush_command($hash,trim($cmd . " " . $txt))) { # mush command
+      } elsif(mush_command($hash,trim($cmd . " " . $txt,1))) { # mush command
          return ("\@\@",$cmd . " " . $txt);    
       } else {                                                  # no match
          return ('huh',trim($txt));
@@ -178,10 +177,13 @@ sub server_process_line
          if($input =~ /^\s*([^ ]+)/) {
             $user = $hash;
             if(loggedin($hash) || hasflag($hash,"OBJECT")) {
+               $$user{source} = 1;
+#               echo($user,"----[start]---");
                mushrun($user,$input);
-               my ($cmd,$arg) = lookup_command(\%command,$1,$',1);
+#               echo($user,"----[ end ]---");
+#               my ($cmd,$arg) = lookup_command(\%command,$1,$',1);
 #               &{@{@command{$cmd}}{fun}}($arg);                  # invoke cmd
-               add_last_info($cmd,$');                                #logit
+               add_last_info($input);                                   #logit
             } else {
                my ($cmd,$arg) = lookup_command(\%offline,$1,$',0);
                &{@offline{$cmd}}($arg);                          # invoke cmd

@@ -132,9 +132,9 @@ delete @command{keys %command};
 @command{"\@var"}     ={ help => "Set a local variable",
                          fun  => sub { cmd_var(@_); }};
 @command{"\@dolist"}  ={ help => "Loop through a list of variables",
-                         fun  => sub { cmd_dolist(@_); },
-                         engine => 1
-                       };
+                         fun  => sub { cmd_dolist(@_); }};
+@command{"\@while"}   ={ help => "Loop while an expression is true",
+                         fun  => sub { cmd_while(@_); }};
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); }};
@@ -180,7 +180,11 @@ sub cmd_var
 {
     my ($txt,$prog) = @_;
 
-    if($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
+    if($txt =~ /^\s*([^ ]+)\+\+\s*$/) {
+       @{$$prog{var}}{$1}++;
+    } elsif($txt =~ /^\s*([^ ]+)\-\-\s*$/) {
+       @{$$prog{var}}{$1}--;
+    } elsif($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
        $$prog{var} = {} if !defined $$prog{var};
        @{$$prog{var}}{$1} = $2; 
     } else {
@@ -239,11 +243,17 @@ sub test
    my $txt = shift;
 
    if($txt      =~ / <= /)    { return ($` <= $') ? 1 : 0;  }
+   elsif($txt =~ / == /)      { 
+#      echo($user,"Found '$`' == '$''");
+      return ($` == $') ? 1 : 0;  }
    elsif($txt =~ / >= /)      { return ($` >= $') ? 1 : 0;  }
    elsif($txt =~ / > /)       { return ($` > $') ? 1 : 0;   }
    elsif($txt =~ / < /)       { return ($` < $') ? 1 : 0;   }
    elsif($txt =~ / eq /)      { return ($` eq $') ? 1 : 0;  }
-   elsif($txt =~ / ne /)      { return ($` ne $') ? 1 : 0;  };
+   elsif($txt =~ / ne /)      { return ($` ne $') ? 1 : 0;  }
+   else {
+      return 0;
+   }
 }
 
 #
@@ -256,27 +266,24 @@ sub cmd_while
     my %last;
 
     my $cmd = $$user{cmd_data};
-    if(!defined $$cmd{dolist_list}) {                 # initialize "loop"
-        my ($first,$second) = bannana_split($txt,"=",1,2);
-        $$cmd{dolist_cmd} = [ bannana_split($second,";",1) ];
-        $$cmd{dolist_list} = [ split(' ',$first) ];
+    if(!defined $$cmd{while_test}) {                 # initialize "loop"
+        if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/) {
+           ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
+           $$cmd{while_cmd} = [ bannana_split($2,";",1) ];
+        } else {
+           return err("usage: while (<expression>) { commands }");
+        }
     } 
+    $$cmd{while_count}++;
 
-    my $list = $$cmd{dolist_list};
-    return 0 if($#$list < 0);                           # oops already done
-
-    my $item = pop(@$list);                        # pull next ## off list
-
-    my $commands = $$cmd{dolist_cmd};
-    for my $i (0 .. $#$commands) {
-        spin_run(\%last,$prog,{ "##" => $item, cmd => $$commands[$i]});
-    }
-
-    if($#$list < 0) {                                                # done
-       return 0;
-    } else {                                          # signal still running
-       $$prog{still_running} = 1;
-       return 1;
+    if($$cmd{while_count} >= 500) {
+       return err("while exceeded maxium loop of 500, stopped");
+    } elsif(test(evaluate($$cmd{while_test},$prog))) {
+       my $commands = $$cmd{while_cmd};
+       for my $i (0 .. $#$commands) {
+          spin_run(\%last,$prog,{cmd => $$commands[$i]});
+       }
+       $$prog{still_running} = 1;              # signal loop is still running
     }
 }
 
@@ -296,7 +303,13 @@ sub cmd_dolist
         my ($first,$second) = bannana_split($txt,"=",1,2);
         $$cmd{dolist_cmd} = [ bannana_split($second,";",1) ];
         $$cmd{dolist_list} = [ split(' ',$first) ];
+        $$cmd{dolist_count} = 0;
     } 
+    $$cmd{dolist_count}++;
+
+    if($$cmd{dolist_count} > 500) {                       # no big @dolists
+       return err("dolist execeeded maxium count of 500, stopping");
+    }
 
     my $list = $$cmd{dolist_list};
     return 0 if($#$list < 0);                           # oops already done
@@ -312,6 +325,7 @@ sub cmd_dolist
        return 0;
     } else {                                          # signal still running
        $$prog{still_running} = 1;
+      
        return 1;
     }
 }
@@ -370,8 +384,31 @@ sub cmd_password
 
 sub cmd_sleep
 {
-   sleep(30);
-   echo($user,"!Foo! sleep");
+    my ($txt,$prog) = @_;
+
+    my $cmd = $$user{cmd_data};
+
+    if(!defined $$cmd{sleep}) {
+       if($txt =~ /^\s*(\d+)\s*$/) {
+          if($1 > 5400 || $1 < 1) {
+             echo($user,"\@sleep range must be between 1 and 5400 seconds");
+             return;
+          } else {
+             $$cmd{sleep} = time() + $1;
+          }
+       } else {
+          echo($user,"usage: \@sleep <seconds>");
+          return;
+       }
+    }
+
+    echo($user,"sleep: '%s' = '%s'",$$cmd{sleep},time());
+    if($$cmd{sleep} >= time()) {
+       echo($user,"   sleep: still in sleep");
+       $$prog{still_running} = 1;
+    } else {
+       echo($user,"   sleep: done with sleep");
+    }
 }
 
 #

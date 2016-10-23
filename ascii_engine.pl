@@ -12,13 +12,14 @@ use Time::HiRes "ualarm";
 
 sub mush_command
 {
-   my ($data,$cmd,$flag) = @_;
+   my ($data,$cmd) = @_;
    my $match= 0;
 
    # look for any attributes in the same room as the player
    for my $hash (@{sql("select obj.obj_id, " .
                        "       substr(atr_value,2,instr(atr_value,':')-2) cmd,".
-                       "       substr(atr_value,instr(atr_value,':')+1) txt ".
+                       "       substr(atr_value,instr(atr_value,':')+1) txt,".
+                       "       0 source " .
                        "  from object obj, attribute atr, content con " .
                        " where obj.obj_id = atr.obj_id " .
                        "   and obj.obj_id = con.obj_id " .
@@ -43,6 +44,14 @@ sub mush_command
 }
 
 
+sub priority
+{
+   if(hasflag($user,"WIZARD") || hasflag($user,"GOD")) {
+      return 10;
+   } else {
+      return 5;
+   }
+}
 
 #
 # mushrun
@@ -52,40 +61,43 @@ sub mush_command
 sub mushrun
 {
    my ($hash,$cmd,@wildcard) = @_;
-#    delete @info{engine};
+   my $prog;
 
-#    echo($user,"Q: '%s'\n",$cmd);
-    my $prog = {
-       stack => [ ],
-       enactor => $user,
-       user => $hash,
-       var => {}
-    };
+   if(defined $$hash{child}) {                        # add as child process
+      $prog = $$hash{child};
+      delete @$hash{child};
+   } else {
+      $prog = {                                      # add as parent process
+         stack => [ ],
+         enactor => $user,
+         user => $hash,
+         var => {},
+         priority => priority()
+      };
 
-   # add items inside a hash entry, so @dolist can store relavant info
+      @info{engine} = {} if not defined @info{engine}; # add to all programs
+      @{@info{engine}}{++@info{pid}} = [ $prog ];
+   };
+
+    # copy over command(s)
     my $stack=$$prog{stack};
-    if(defined $$user{source} && $$user{source} == 1) {
-       push(@$stack,{ cmd => $cmd });
+    if(defined $$hash{source} && $$hash{source} == 1) {
+       unshift(@$stack,{ cmd => $cmd });
     } else {
        for my $i ( bannana_split($cmd,';',1) ) {
           my $stack=$$prog{stack};
           push(@$stack,{ cmd => $i });
        }
     }
-    delete @$user{source};
+    delete @$hash{source};
 
-    if(hasflag($user,"WIZARD") || hasflag($user,"GOD")) {
-       $$prog{priority} = 10;
-    } else {
-       $$prog{priority} = 5;
+    for my $i (0 .. 9) {                              # copy over %0 .. %9
+       if(defined @wildcard[$i]) {
+          @{$$prog{var}}{$i} = @wildcard[$i];
+       } else {
+          delete @{$$prog{var}}{$i};
+       }
     }
- 
-    for my $i (0 .. $#wildcard) {
-       @{$$prog{var}}{$i+1} = @wildcard[$i];
-    }
-
-    @info{engine} = {} if not defined @info{engine};
-    @{@info{engine}}{++@info{pid}} = [ $prog ];
 }
 
 #

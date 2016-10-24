@@ -34,7 +34,7 @@ delete @command{keys %command};
 @command{whisper}    = { help => "Send a message to something nearby",
                          fun  => sub { return &cmd_whisper(@_); }        };
 @command{doing}      = { help => "Display online users",
-                         fun  => sub { return &cmd_who(@_,1); }          };
+                         fun  => sub { return &cmd_DOING(@_); }          };
 @command{"\@doing"}  = { help => "Set what your up to [visible in WHO]",
                          fun  => sub { return &cmd_doing(@_); }          };
 @command{help}       = { help => "Help on internal commands",
@@ -125,10 +125,10 @@ delete @command{keys %command};
 @command{"\@switch"}  ={ help => "Compares strings then runs coresponding " .
                                  "commands",
                          fun  => sub { cmd_switch(@_); }};
-@command{"\@engine"}  ={ help => "Provide details about the engine queue",
-                         fun  => sub { cmd_engine(@_); }};
+@command{"\@ps"}      ={ help => "Provide details about the engine queue",
+                         fun  => sub { cmd_ps(@_); }};
 @command{"\@kill"}  ={ help => "Kill a process",
-                         fun  => sub { cmd_engine(@_); }};
+                         fun  => sub { cmd_kill(@_); }};
 @command{"\@var"}     ={ help => "Set a local variable",
                          fun  => sub { cmd_var(@_); }};
 @command{"\@dolist"}  ={ help => "Loop through a list of variables",
@@ -211,7 +211,7 @@ sub cmd_kill
    }
 }
 
-sub cmd_engine
+sub cmd_ps
 {
    my $engine = @info{engine};
 
@@ -220,16 +220,17 @@ sub cmd_engine
       my $data = @{$$engine{$key}}[0];
       echo($user,"  PID: $key for %s",obj_name($$data{user},1));
       for my $pid (@{$$engine{$key}}) {
-         my $stack = @{@{$$engine{$key}}[0]}{stack};
+         my $stack = $$pid{stack};
 
          if($#$stack < 0) {
             echo($user,"    cmd: %s\n",@{$$user{last}}{cmd});
          } else {
-            for my $i (0 .. ($#$stack <= 3) ? $#$stack : 3) {
-               if(length($$stack[$i]) > 67) {
-                  echo($user,"    Cmd: %s...\n",substr($$stack[$i],1,64));
+            for my $i (0 .. (($#$stack <= 10) ? $#$stack : 10)) {
+               my $cmd = @{$$stack[$i]}{cmd};
+               if(length($cmd) > 67) {
+                  echo($user,"    Cmd: %s...",substr($cmd,0,64));
                } else {
-                  echo($user,"    cmd: %s\n",$$stack[$i]);
+                  echo($user,"    Cmd: %s ($#$stack)",$cmd);
                }
             }
          }
@@ -263,10 +264,12 @@ sub test
 sub cmd_while
 {
     my ($txt,$prog) = @_;
-    my %last;
+    my (%last,$first);
 
     my $cmd = $$user{cmd_data};
+    my $command = $$user{command_data};
     if(!defined $$cmd{while_test}) {                 # initialize "loop"
+        $first = 1;
         if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/) {
            ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
            $$cmd{while_cmd} = [ bannana_split($2,";",1) ];
@@ -279,11 +282,12 @@ sub cmd_while
     if($$cmd{while_count} >= 500) {
        return err("while exceeded maxium loop of 500, stopped");
     } elsif(test(evaluate($$cmd{while_test},$prog))) {
+       signal_still_running();
        my $commands = $$cmd{while_cmd};
-       for my $i (0 .. $#$commands) {
-          spin_run(\%last,$prog,{cmd => $$commands[$i]});
+       for my $i (reverse 0 .. $#$commands) {
+          $$user{child} = $prog;
+          mushrun($user,$$commands[$i]);
        }
-       $$prog{still_running} = 1;              # signal loop is still running
     }
 }
 
@@ -324,7 +328,7 @@ sub cmd_dolist
     if($#$list < 0) {                                                # done
        return 0;
     } else {                                          # signal still running
-       $$prog{still_running} = 1;
+       signal_still_running();
       
        return 1;
     }
@@ -382,6 +386,23 @@ sub cmd_password
    }
 }
 
+#
+# signal_still_running
+#
+#    This command puts the currently running command back into the
+#    queue of running commands. The assumption is that all commands
+#    will be done after the first run... and therefor are removed
+#    from the queue.. so we have to add it back in.
+#    
+sub signal_still_running
+{
+    my $cmd = $$user{cmd_data};
+    my $command = $$user{command_data};
+    $$cmd{still_running} = 1;
+
+    unshift(@$command,$cmd);
+}
+
 sub cmd_sleep
 {
     my ($txt,$prog) = @_;
@@ -402,12 +423,8 @@ sub cmd_sleep
        }
     }
 
-    echo($user,"sleep: '%s' = '%s'",$$cmd{sleep},time());
     if($$cmd{sleep} >= time()) {
-       echo($user,"   sleep: still in sleep");
-       $$prog{still_running} = 1;
-    } else {
-       echo($user,"   sleep: done with sleep");
+       signal_still_running();
     }
 }
 
@@ -1890,6 +1907,7 @@ sub short_hn
    }
 }
 
+
 #
 # cmd_who
 #    Show the users who is conected. There is a priviledged version
@@ -1898,8 +1916,18 @@ sub short_hn
 #
 sub cmd_who
 {
-   my ($txt,$flag) = @_;
-   my ($max,@who,$idle,$count) = (2);
+    echo($user,who());
+}
+
+sub cmd_DOING
+{
+    echo($user,"%s",who(1));
+}
+
+sub who
+{
+   my $flag = shift;
+   my ($max,@who,$idle,$count,$out) = (2);
    my $hasperm = (hasperm($user,"WHO") && !$flag) ? 1 : 0;
 
    # query the database for connected user, location, and socket
@@ -1925,10 +1953,11 @@ sub cmd_who
       
    # show headers for normal / wiz who 
    if($hasperm) {
-      echo($user,"%-15s%10s%5s %-*s %s","Player Name","On For","Idle",$max,
-         "Loc","Hostname");
+      $out .= sprintf("%-15s%10s%5s %-*s %s\r\n","Player Name","On For","Idle",
+                      $max,"Loc","Hostname");
    } else {
-      echo($user,"%-15s%10s%5s  %s","Player Name","On For","Idle","\@doing");
+      $out .= sprintf("%-15s%10s%5s  %s\r\n","Player Name","On For","Idle",
+                      "\@doing");
    }
    
 
@@ -1953,17 +1982,18 @@ sub cmd_who
 
       # show connected user details
       if($hasperm) {
-         echo($user,"%-15s%4s %02d:%02d %4s #%-*s %s",$$hash{obj_name},$extra,
-             $$online{h},$$online{m},$$idle{max_val} . $$idle{max_abr},
-             $max,$$hash{con_source_id},
+         $out .= sprintf("%-15s%4s %02d:%02d %4s #%-*s %s\r\n",
+             $$hash{obj_name},$extra,$$online{h},$$online{m},$$idle{max_val} .
+             $$idle{max_abr},$max,$$hash{con_source_id},
              short_hn($$hash{sck_hostname}));
       } else {
-            echo($user,"%-14s%4s %02d:%02d  %4s  %s",name($hash),$extra,
+         $out .= sprintf("%-14s%4s %02d:%02d  %4s  %s\r\n",name($hash),$extra,
              $$online{h},$$online{m},$$idle{max_val} . $$idle{max_abr},
              $$hash{obj_doing});
       }
    }
-   echo($user,"%d Players logged in",$#who+1);               # show totals
+   $out .= sprintf("%d Players logged in\r\n",$#who+1);        # show totals
+   return $out;
 }
 
 

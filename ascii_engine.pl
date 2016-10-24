@@ -47,9 +47,9 @@ sub mush_command
 sub priority
 {
    if(hasflag($user,"WIZARD") || hasflag($user,"GOD")) {
-      return 10;
-   } else {
       return 5;
+   } else {
+      return 1;
    }
 }
 
@@ -72,7 +72,8 @@ sub mushrun
          enactor => $user,
          user => $hash,
          var => {},
-         priority => priority()
+         priority => priority(),
+         calls => 0
       };
 
       @info{engine} = {} if not defined @info{engine}; # add to all programs
@@ -84,9 +85,9 @@ sub mushrun
     if(defined $$hash{source} && $$hash{source} == 1) {
        unshift(@$stack,{ cmd => $cmd });
     } else {
-       for my $i ( bannana_split($cmd,';',1) ) {
+       for my $i ( reverse bannana_split($cmd,';',1) ) {
           my $stack=$$prog{stack};
-          push(@$stack,{ cmd => $i });
+          unshift(@$stack,{ cmd => $i });
        }
     }
     delete @$hash{source};
@@ -119,27 +120,25 @@ sub spin
          my $thread = @{@info{engine}}{$pid};
 
          if($#$thread == -1) {                         # this program is done
+#            echo($user,"PID END: '%s'\n",@{@{@info{engine}}{$pid}}[0]);
             delete @{@info{engine}}{$pid};
          } else {
             my $program = @$thread[0];
-         
             my $command = $$program{stack};
 
             if($#$command == -1) {                      # this thread is done
                shift(@$thread);
             } else {
                for(my $i=0;$#$command >= 0 && $i <= $$program{priority};$i++) {
+                  $$program{calls}++;
                   my $cmd = shift(@$command);
-                  spin_run(\%last,$program,$cmd);
+                  delete @$cmd{still_running};
+                  spin_run(\%last,$program,$cmd,$command);
 
-                  # let the program decide if it is done (i.e. a loop)
-                  if(defined $$program{still_running}) {
-#                     echo($user,"## !DONE ##");
-                     unshift(@$command,$cmd);
-                     delete @$program{still_running};
-                  } else {
-#                     echo($user,"## DONE ##");
-                  }
+#                  if(!defined $$cmd{still_running}) {
+#                     echo($user,"Count: '%s' -> '%s'",$$program{calls},$$cmd{cmd});
+#                  }
+
                                                       # stop at 4 milliseconds
                   if(Time::HiRes::gettimeofday() - $start > 0.4) {
                      printf("Time slice ran long, exiting correctly\n");
@@ -173,16 +172,16 @@ sub spin
 #
 sub spin_run
 {
-   my ($last,$prog,$cmd) = @_;
+   my ($last,$prog,$cmd,$command) = @_;
 
    my ($tmp_user,$tmp_enactor) = ($user,$enactor);
    ($user,$enactor) = ($$prog{user},$$prog{enactor});
    ($$last{user},$$last{enactor},$$last{cmd}) = ($user,$enactor,$cmd);
    $$user{cmd_data} = $cmd;
+   $$user{command_data} = $command;
 
    if($$cmd{cmd} =~ /^\s*([^ ]+)(\s*)/) {
       my ($cmd_name,$arg) = lookup_command(\%command,$1,"$2$'",1);
-
       &{@{@command{$cmd_name}}{fun}}($arg,$prog);
    }
    ($user,$enactor) = ($tmp_user,$tmp_enactor);

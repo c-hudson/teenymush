@@ -470,7 +470,7 @@ sub echo
                                $$target{obj_id}
                         )}) {
             my $sock = @{@connected{$$player{sck_socket}}}{sock};
-            printf($sock "%s-%s> %s",$$target{raw},$$player{owner_name},$out);
+            printf($sock "%s> %s",$$player{owner_name},$out);
          }
       }
    } elsif(ref($target) eq "IO::Socket::INET") {
@@ -1052,11 +1052,11 @@ sub print_var
 
       if(ref($data) eq "HASH" && !ignoreit($skip,$key,$depth)) {
          $out .= sprintf("%s%s $PL\n"," " x ($depth*2),$key);
-         $out .= print_var($$var{$key},$depth+1,$key,$skip,1);
+         $out .= print_var($$data{$key},$depth+1,$key,$skip,1);
          $out .= sprintf("%s$PR\n"," " x ($depth*2));
       } elsif(ref($data) eq "ARRAY" && !ignoreit($skip,$key,$depth)) {
          $out .= sprintf("%s%s $PL\n"," " x ($depth*2),$key);
-#         $out .= print_var(@$var[$key],$depth+1,$key,$skip,1);
+         $out .= print_var(@$data[$key],$depth+1,$key,$skip,1);
          $out .= sprintf("%s$PR\n"," " x ($depth*2));
       } elsif(!ignoreit($skip,$key,$depth)) {
          $out .= sprintf("%s%s = %s\n"," " x ($depth*2),$key,$data);

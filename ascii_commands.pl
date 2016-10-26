@@ -150,7 +150,8 @@ delete @command{keys %command};
 
 
 sub cmd_huh         { echo($user,"Huh?  (Type \"help\" for help.)");     }
-sub cmd_offline_huh { echo($user,getfile("login.txt"));                  }
+sub cmd_offline_huh { my $sock = $$user{sock};
+                      printf($sock "%s ",getfile("login.txt"));          }
 sub cmd_version     { echo($user,"TeenyMUSH 0.1 [cmhudson\@gmail.com]"); }
 sub cmd_exec        { echo($user,"Exec: '%s'\n",@_[1]); }
 
@@ -500,7 +501,7 @@ sub cmd_newpassword
          return err("Permission denied.");
       }
 
-      good_password($2) || return;
+#      good_password($2) || return;
 
       sql(e($db,1),
           "update object ".
@@ -520,6 +521,7 @@ sub cmd_telnet
 {
    my $txt = shift;
    my $pending = 1;
+   return 0;
 
    if(!hasflag($user,"SOCKET")) {
       return echo($user,"* Permission Denied *");
@@ -1470,6 +1472,7 @@ sub cmd_open
 sub cmd_connect
 {
    my $txt = shift;
+   my $sock = @$user{sock};
    my $hash;
  
    if($txt =~ /^\s*([^ ]+) ([^ ]+)\s*$/) {              #parse player password
@@ -1528,7 +1531,6 @@ sub cmd_connect
             printf("    %s@%s\n",$$hash{obj_name},$$user{hostname});
             echo_room($user,"%s has connected.",name($user));          # users
          } else {
-   printf("# got this far 1\n");
             sql(e($db,1),
                 "insert into socket_history ".
                 "( obj_id, " .
@@ -1544,16 +1546,17 @@ sub cmd_connect
                );
             commit($db);
 
-            echo($user,"Either that player does not exist, or has a " .
-               "different password.");
+            printf($sock "Either that player does not exist, or has a " .
+               "different password.\r\n");
          }
       } else {
-         echo($$user{sock},"Either that player does not exist, or has a " .
-              "different password.");
+         my $sock = @$user{sock};
+         printf($sock "Either that player does not exist, or has a " .
+              "different password.\r\n");
       }
    } else {
-   printf("# got this far21\n");
-      echo($user,"Invalid connect command, try: connect <user> <password>");
+      printf($sock "Invalid connect command, " .
+             "try: connect <user> <password>\r\n");
    }
 }
 
@@ -1604,7 +1607,7 @@ sub cmd_set
    my $txt = shift;
    my ($target,$attr,$value,$flag);
 
-   if($txt =~ /^\s*([^ ]+)\/\s*([^ ]+)\s*=\s*(.*?)\s*$/) { # attribute
+   if($txt =~ /^\s*([^ ]+)\/\s*([^ ]+)\s*=\s*(.*?)\s*$/s) { # attribute
       ($target,$attr,$value) = (locate_object($user,$1),$2,$3);
       return echo($user,"Unknown object '%s'",$1) if !$target;
       controls($user,$target) || return echo($user,"Permission denied");
@@ -1846,10 +1849,17 @@ sub cmd_pose
 sub cmd_set2
 {
    my $txt = shift;
+#   $txt =~ s/\r\n/<BR>/g;
 
    if($txt =~ /^\s*&([^& ]+)\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
-      $$user{inattr} = $txt;
-   } elsif($txt =~ /^\s*([^& ]+)\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
+      printf("cmd_set: starting inattr: $txt\n");
+      $$user{inattr} = {
+         attr => $1,
+         object => $2,
+         content => [ $3 ]
+      };
+   } elsif($txt =~ /^\s*([^& ]+)\s*([^ ]+)\s*=\s*(.*?)\s*$/s) {
+      printf("WHOLE: '%s'\n",$3);
       cmd_set("$2/$1=$3");
    } elsif($txt =~ /^\s*([^ ]+)\s*([^ ]+)\s*$/) {
       cmd_set("$2/$1=");

@@ -152,6 +152,21 @@ sub lookup_command
 }
 
 
+sub add_telnet_data
+{
+   my($data,$txt) = @_;
+
+   @info{telnet} = {} if(!defined @info{telnet});
+   if(!defined @{@info{telnet}}{$$data{socket}}) {
+      @{@info{telnet}}{$$data{socket}} = {
+         obj_id => $$data{obj_id},
+         buffer => []
+      };
+   }
+   my $stack = @{@{@info{telnet}}{$$data{socket}}}{buffer};
+   push(@$stack,$txt);
+}
+
 #
 # server_process_line
 #
@@ -171,10 +186,11 @@ sub server_process_line
    my $data = @connected{$$hash{sock}};
 
    if($$data{raw}) {
+     add_telnet_data($data,$input);
      echo($data,"%s",$input);
    } else {
       eval {                                                  # catch errors
-         if($input =~ /^\s*([^ ]+)/) {
+         if($input =~ /^\s*([^ ]+)/ || $input =~ /^\s*$/) {
             $user = $hash;
             if(loggedin($hash) || hasflag($hash,"OBJECT")) {
                $$user{source} = 1;
@@ -233,7 +249,7 @@ sub server_handle_sockets
 {
    eval {
       # wait for IO or 1 second
-      my ($sockets) = IO::Select->select($readable,undef,undef,.1);
+      my ($sockets) = IO::Select->select($readable,undef,undef,.4);
       my $buf;
 
       if(!defined @info{server_start} || @info{server_start} =~ /^\s*$/) {

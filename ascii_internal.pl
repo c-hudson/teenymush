@@ -442,8 +442,13 @@ sub echo
    my $target = obj(shift);
    my ($fmt,@args) = @_;
    my $match = 0;
-   my $out = sprintf($fmt,@args);
 
+   if(!$$target{loggedin} && defined $$target{sock}) {
+      my $sock = $$target{sock};
+      return printf($sock $fmt,@args);
+   }
+
+   my $out = sprintf($fmt,@args);
    $out .= "\n" if($out !~ /\n$/);               # add return if none exists
    $out =~ s/\n/\r\n/g if($out !~ /\r/);                     # add linefeeds
    $out =~ tr/\x80-\xFF//d;
@@ -454,7 +459,8 @@ sub echo
    # handle objects set puppet
    if(!hasflag($target,"PLAYER")) {                         # handle objects
       if(defined $$target{raw} && $$target{raw} == 1) { # forward for ^listen
-         handle_object_listener($target,"%s",$out);
+#         handle_object_listener($target,"%s",$out);
+          echo($user,"ECHO: @{$$user{internal}}{prog}");
       }
       if(hasflag($target,"PUPPET")) {                    # forward if puppet
          for my $player (@{sql($db,
@@ -1473,11 +1479,17 @@ sub quota_left
 #
 sub get_segment
 {
-   my ($array,$end,$delim) = @_;
+   my ($array,$end,$delim,$toppings) = @_;
    my $start = $end;
+   my @depth;
 
    while($start > 0) {
-      if($$array[--$start] eq $delim) {
+      $start--;
+      if(defined $$toppings{$$array[$start]}) {
+         push(@depth,$$toppings{$$array[$start]});
+      } elsif($$array[$start] eq @depth[$#depth]) {
+         pop(@depth);
+      } elsif($$array[$start] eq $delim) {
          return $start,join('',@$array[$start .. $end]);
       }
    }
@@ -1502,7 +1514,7 @@ sub bannana_split                                          # balanced split
 
    for(my $i=$#array;$i >= 0;$i--) {                   # put matching pairs
       if(defined @toppings{@array[$i]}) {                   # back together
-         my ($start,$txt) = get_segment(\@array,$i,@toppings{@array[$i]});
+         my ($start,$txt) = get_segment(\@array,$i,@toppings{@array[$i]},\%toppings);
          if($start ne undef) {                                # match found
             delete @array[$start .. $i];                  # delete multiple
             @array[$start] = $txt;                      # put back combined

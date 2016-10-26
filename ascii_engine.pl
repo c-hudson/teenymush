@@ -33,6 +33,7 @@ sub mush_command
                 }) {
 
       $$hash{cmd} =~ s/\*/\(.*\)/g;
+      $$hash{txt} =~ s/\r|\n//g;
       if($cmd =~ /^$$hash{cmd}$/) {
          mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
       } else {
@@ -63,7 +64,20 @@ sub mushrun
    my ($hash,$cmd,@wildcard) = @_;
    my $prog;
 
-   if(defined $$hash{child}) {                        # add as child process
+   if(defined $$user{inattr}) {                               # handle inattr
+      my $hash = $$user{inattr};
+      my $stack = $$hash{content};
+      if($cmd =~ /^\s*$/) {
+         my $txt = "$$hash{attr} $$hash{object}=" . join("\r\n",@$stack);
+         delete @$user{inattr};
+         cmd_set2($txt);
+         return;
+      } else {
+         my $stack = @{$$user{inattr}}{content};
+         push(@$stack,$cmd);
+         return;
+      }
+   } elsif(defined $$hash{child}) {                   # add as child process
       $prog = $$hash{child};
       delete @$hash{child};
    } else {
@@ -85,10 +99,13 @@ sub mushrun
     if(defined $$hash{source} && $$hash{source} == 1) {
        unshift(@$stack,{ cmd => $cmd });
     } else {
+#       printf("---[Start]---\n");
        for my $i ( reverse bannana_split($cmd,';',1) ) {
+#          printf("ADD: '%s'\n",$i);
           my $stack=$$prog{stack};
           unshift(@$stack,{ cmd => $i });
        }
+#       printf("---[ End ]---\n");
     }
     delete @$hash{source};
 
@@ -113,21 +130,21 @@ sub spin
 
    my $start = Time::HiRes::gettimeofday();
 
-#   eval {
-#      ualarm(800_000);                                # die at 8 milliseconds
+   eval {
+      ualarm(800_000);                                # die at 8 milliseconds
 
       for my $pid (keys %{@info{engine}}) {
          my $thread = @{@info{engine}}{$pid};
 
          if($#$thread == -1) {                         # this program is done
-#            echo($user,"PID END: '%s'\n",@{@{@info{engine}}{$pid}}[0]);
             delete @{@info{engine}}{$pid};
          } else {
             my $program = @$thread[0];
             my $command = $$program{stack};
 
             if($#$command == -1) {                      # this thread is done
-               shift(@$thread);
+               my $prog = shift(@$thread);
+#             echo($user,"Total calls: %s - %s",$$prog{calls},$$user{source});
             } else {
                for(my $i=0;$#$command >= 0 && $i <= $$program{priority};$i++) {
                   $$program{calls}++;
@@ -135,10 +152,14 @@ sub spin
                   delete @$cmd{still_running};
                   spin_run(\%last,$program,$cmd,$command);
 
-#                  if(!defined $$cmd{still_running}) {
-#                     echo($user,"Count: '%s' -> '%s'",$$program{calls},$$cmd{cmd});
-#                  }
-
+                  #
+                  # command is still running, probably a sleep? Skip to the
+                  # next program as it won't finish any quicker by running
+                  # it again.
+                  #
+                  if($cmd eq @$command[0]) {
+                     next;
+                  }
                                                       # stop at 4 milliseconds
                   if(Time::HiRes::gettimeofday() - $start > 0.4) {
                      printf("Time slice ran long, exiting correctly\n");
@@ -149,8 +170,8 @@ sub spin
             }
          }
       }
-#      ualarm(0);                                              # cancel alarm
-#   };
+      ualarm(0);                                              # cancel alarm
+   };
 
    if($@) {
       printf("Time slice timed out (%2f) $@\n",Time::HiRes::gettimeofday() - 
@@ -177,8 +198,14 @@ sub spin_run
    my ($tmp_user,$tmp_enactor) = ($user,$enactor);
    ($user,$enactor) = ($$prog{user},$$prog{enactor});
    ($$last{user},$$last{enactor},$$last{cmd}) = ($user,$enactor,$cmd);
-   $$user{cmd_data} = $cmd;
-   $$user{command_data} = $command;
+
+   $$user{internal} = {                                   # internal data
+      cmd => $cmd,                                       # to pass around
+      command => $command,
+      user => $user,
+      enactor => $enactor,
+      prog => $prog
+   };
 
    if($$cmd{cmd} =~ /^\s*([^ ]+)(\s*)/) {
       my ($cmd_name,$arg) = lookup_command(\%command,$1,"$2$'",1);

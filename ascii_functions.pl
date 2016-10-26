@@ -4,14 +4,15 @@ use strict;
 
 my %fun = 
 (
-   substr => sub { return &fun_substr(@_);                                 },
-   cat    => sub { return &fun_cat(@_);                                    },
-   space  => sub { return &fun_space(@_);                                  },
-   repeat => sub { return &fun_repeat(@_);                                 },
-   time   => sub { return &fun_time(@_);                                   },
-   flags  => sub { return &fun_flags(@_);                                  },
-   quota  => sub { return quota_left($$user{obj_id})                       },
-   sql    => sub { return table(@_);                                       },
+   substr    => sub { return &fun_substr(@_);                           },
+   cat       => sub { return &fun_cat(@_);                              },
+   space     => sub { return &fun_space(@_);                            },
+   repeat    => sub { return &fun_repeat(@_);                           },
+   time      => sub { return &fun_time(@_);                             },
+   flags     => sub { return &fun_flags(@_);                            },
+   quota     => sub { return quota_left($$user{obj_id})                 },
+   sql       => sub { return table(@_);                                 },
+   input     => sub { return fun_input(@_);                             },
 );
 
 #
@@ -31,6 +32,56 @@ sub fun_substr
    }
 
    return substr($txt,$start,$end);
+}
+
+sub prog
+{
+    if(defined $$user{internal}) {
+       if(defined @{$$user{internal}}{prog}) {
+          return @{$$user{internal}}{prog};
+       }
+   }
+}
+
+sub fun_telnet
+{
+}
+#
+# fun_input
+#    Check to see if there is any input in the specified telnet buffer
+#    variable. If there is, return the data or return #-1 No Data Found
+# 
+sub fun_input
+{
+    my $txt = shift;
+
+    my $prog = prog();
+
+    if($txt =~ /^\s*([^ ]+)\s*$/) {
+       if(!defined @info{telnet} ||
+          !defined @{@info{telnet}}{$txt} ||
+          !ref(@{@info{telnet}}{$txt}) eq "HASH" ||
+          !defined @{@{@info{telnet}}{$txt}}{buffer}) {
+          return "#-1 Invalid Socket";
+       } elsif($#{@{@{@info{telnet}}{$txt}}{buffer}} == -1) {
+
+          my $con = one_val("select count(*) value " .
+                            "  from socket " .
+                            " where lower(sck_tag) = lower(?)",
+                            $1
+                           );
+          if($con == 0) {
+             return "#-1 Connection Closed",
+          } else {
+             return "#-1 No Data Found",
+          }
+       } else {
+          my $stack = @{@{@info{telnet}}{$txt}}{buffer};
+          return shift(@$stack);
+       }
+    } else {
+       return "#-1 Usage: [input(<socket>)]";
+    }
 }
 
 sub fun_flags

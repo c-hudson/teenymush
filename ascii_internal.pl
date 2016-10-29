@@ -151,6 +151,7 @@ sub table
 
    # determine the max column length for each column, and store the
    # output of the sql so it doesn't have to be run twice.
+   echo($user,"%s",$sql);
    for my $hash (@{sql($db,$sql,@args)}) {
       push(@data,$hash);                                     # store results
       for my $key (keys %$hash) {
@@ -1076,7 +1077,7 @@ sub print_var
 
 sub inuse_player_name
 {
-   my $name = shift;
+   my ($name,$target) = @_;
 
    my $result = one_val($db,
                   "select if(count(*) = 0,0,1) value " .
@@ -1084,8 +1085,10 @@ sub inuse_player_name
                   " where obj.obj_id = flg.obj_id " .
                   "   and flg.fde_flag_id = fde.fde_flag_id " .
                   "   and fde.fde_name = 'PLAYER' " .
-                  "   and lower(obj_name) = lower(?) ",
-                  $name
+                  "   and lower(obj_name) = lower(?) " .
+                  "   and obj.obj_id != ?",
+                  $name,
+                  $$target{obj_id}
                  );
    return $result;
 }

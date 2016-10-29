@@ -8,6 +8,9 @@
 
 
 
+
+
+
 use Time::HiRes "ualarm";
 
 sub mush_command
@@ -33,7 +36,7 @@ sub mush_command
                 }) {
 
       $$hash{cmd} =~ s/\*/\(.*\)/g;
-      $$hash{txt} =~ s/\r|\n//g;
+      $$hash{txt} =~ s/\r\s*|\n\s*//g;
       if($cmd =~ /^$$hash{cmd}$/) {
          mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
       } else {
@@ -113,7 +116,7 @@ sub mushrun
        if(defined @wildcard[$i]) {
           @{$$prog{var}}{$i} = @wildcard[$i];
        } else {
-          delete @{$$prog{var}}{$i};
+          @{$$prog{var}}{$i} = "";
        }
     }
 }
@@ -129,9 +132,10 @@ sub spin
    $SIG{ALRM} = \&spin_done;
 
    my $start = Time::HiRes::gettimeofday();
+   @info{engine} = {} if(!defined @info{engine});
 
-   eval {
-      ualarm(800_000);                                # die at 8 milliseconds
+#   eval {
+#      ualarm(800_000);                                # die at 8 milliseconds
 
       for my $pid (keys %{@info{engine}}) {
          my $thread = @{@info{engine}}{$pid};
@@ -170,10 +174,10 @@ sub spin
             }
          }
       }
-      ualarm(0);                                              # cancel alarm
-   };
+#   };
+#   ualarm(0);                                                 # cancel alarm
 
-   if($@) {
+   if($@ eq "ALARM") {
       printf("Time slice timed out (%2f) $@\n",Time::HiRes::gettimeofday() - 
          $start);
       if(defined @last{user} && defined @{@last{user}}{var}) {
@@ -184,7 +188,21 @@ sub spin
       } else {
          printf("   #%s: %s\n",@{@last{user}}{obj_id},@last{cmd});
       }
-   }
+   } elsif($@) {                               # oops., you sunk my battle ship
+         printf("# %s crashed the server with: %s\n%s",name($user),
+                @{@last{cmd}}{cmd},$@);
+         printf("LastSQL: '%s'\n",@info{sql_last});
+         printf("         '%s'\n",@info{sql_last_args});
+         rollback($db);
+
+         my $msg = sprintf("%s crashed the server with: %s",name($user),
+             @{@last{cmd}}{cmd});
+         echo($user,"%s",$msg);
+         if($msg ne $$user{crash}) {
+            echo_room($user,"%s",$msg);
+            $$user{crash} = $msg;
+         }
+      }
 }
 
 #
@@ -198,17 +216,24 @@ sub spin_run
    my ($tmp_user,$tmp_enactor) = ($user,$enactor);
    ($user,$enactor) = ($$prog{user},$$prog{enactor});
    ($$last{user},$$last{enactor},$$last{cmd}) = ($user,$enactor,$cmd);
+   $$prog{cmd_last} = $cmd;
 
-   $$user{internal} = {                                   # internal data
-      cmd => $cmd,                                       # to pass around
-      command => $command,
-      user => $user,
-      enactor => $enactor,
-      prog => $prog
-   };
+   if(!defined $$user{internal}) {
+      $$user{internal} = {                                   # internal data
+         cmd => $cmd,                                       # to pass around
+         command => $command,
+         user => $user,
+         enactor => $enactor,
+         prog => $prog
+      };
+   }
 
+   if(ref($$cmd{cmd}) eq "HASH") {
+      printf("%s",print_var($$cmd{cmd}));
+   }
    if($$cmd{cmd} =~ /^\s*([^ ]+)(\s*)/) {
       my ($cmd_name,$arg) = lookup_command(\%command,$1,"$2$'",1);
+#      printf("SPIN_RUN: '%s'\n",$cmd);
       &{@{@command{$cmd_name}}{fun}}($arg,$prog);
    }
    ($user,$enactor) = ($tmp_user,$tmp_enactor);

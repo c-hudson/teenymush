@@ -116,6 +116,8 @@ delete @command{keys %command};
                          fun  => sub { cmd_recall(@_); }};
 @command{"\@telnet"} ={ help => "open a connection to the internet",
                          fun  => sub { cmd_telnet(@_); }};
+@command{"\@reset"}  = { help => "Clear the telnet buffers",
+                         fun  => sub { cmd_reset(@_); }};
 @command{"\@send"}    ={ help => "Send data to a connected socket",
                          fun  => sub { cmd_send(@_); }};
 @command{"\@password"}={ help => "Change your password",
@@ -135,6 +137,8 @@ delete @command{keys %command};
                          fun  => sub { cmd_dolist(@_); }};
 @command{"\@while"}   ={ help => "Loop while an expression is true",
                          fun  => sub { cmd_while(@_); }};
+@command{"\@crash"}   ={ help => "Crash the MUSH",
+                         fun  => sub { my $foo; @{$$foo{crash}}; }};
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); }};
@@ -154,6 +158,12 @@ sub cmd_offline_huh { my $sock = $$user{sock};
                       printf($sock "%s ",getfile("login.txt"));          }
 sub cmd_version     { echo($user,"TeenyMUSH 0.1 [cmhudson\@gmail.com]"); }
 sub cmd_exec        { echo($user,"Exec: '%s'\n",@_[1]); }
+
+sub cmd_reset
+{
+   delete @info{io};
+    echo($user,"Telenet connections reset.");
+}
 
 #
 # BEGIN statement with including code, and most of socket_connect were
@@ -187,7 +197,7 @@ sub cmd_var
        @{$$prog{var}}{$1}--;
     } elsif($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
        $$prog{var} = {} if !defined $$prog{var};
-       @{$$prog{var}}{$1} = $2; 
+       @{$$prog{var}}{$1} = evaluate($2,$prog); 
     } else {
        echo($user,"usage: \@var <variable> = <variables>");
     }
@@ -226,7 +236,8 @@ sub cmd_ps
          if($#$stack < 0) {
             echo($user,"    cmd: %s\n",@{$$user{last}}{cmd});
          } else {
-            for my $i (0 .. (($#$stack <= 10) ? $#$stack : 10)) {
+#            for my $i (0 .. (($#$stack <= 10) ? $#$stack : 10)) {
+            for my $i (0 .. $#$stack) {
                my $cmd = @{$$stack[$i]}{cmd};
                if(length($cmd) > 67) {
                   echo($user,"    Cmd: %s...",substr($cmd,0,64));
@@ -266,6 +277,7 @@ sub cmd_while
 {
     my ($txt,$prog) = @_;
     my (%last,$first);
+    return 0;
 
     my $cmd = $$user{cmd_data};
     my $command = $$user{command_data};
@@ -279,11 +291,12 @@ sub cmd_while
         }
     } 
     $$cmd{while_count}++;
+#    printf("%s\n",print_var($prog));
 
     if($$cmd{while_count} >= 500) {
        return err("while exceeded maxium loop of 500, stopped");
     } elsif(test(evaluate($$cmd{while_test},$prog))) {
-       signal_still_running();
+       signal_still_running($prog);
        my $commands = $$cmd{while_cmd};
        for my $i (reverse 0 .. $#$commands) {
           $$user{child} = $prog;
@@ -397,11 +410,28 @@ sub cmd_password
 #    
 sub signal_still_running
 {
-    my $cmd = $$user{cmd_data};
-    my $command = $$user{command_data};
-    $$cmd{still_running} = 1;
+    my $prog = shift;
 
-    unshift(@$command,$cmd);
+    my $stack = $$prog{stack};
+    my $cmd = $$prog{cmd_last};
+
+    unshift(@$stack,$cmd);
+
+
+#    my $info = shift;
+#    my $cmd = $$user{cmd_data};
+#    my $command = $$user{command_data};
+#    $$cmd{still_running} = 1;
+#
+#"WHILE - @{$$prog{cmd_last}}{cmd}");
+#
+#    if(defined $$user{internal} &&
+#       defined @{$$user{internal}}{cmd} &&
+#       defined @{$$user{internal}}{command}) {
+#       my $stack = @{$$user{internal}}{command};
+#       printf("SIGNAL[%s]: '%s'\n",$info,@{@{$$user{internal}}{cmd}}{cmd});
+#       unshift(@$stack,@{$$user{internal}}{cmd});
+#    }
 }
 
 sub cmd_sleep
@@ -470,9 +500,10 @@ sub mush_split2
 sub cmd_switch
 {
     my (@list) = (bannana_split(shift,',',1));
+    my $prog = shift;
 
     my ($first,$second) = (get_segment2(shift(@list),"="));
-    $first = evaluate($first);
+    $first = evaluate($first,$prog);
     unshift(@list,$second);
 
     while($#list >= 0) {
@@ -480,9 +511,11 @@ sub cmd_switch
           my ($txt,$cmd) = (evaluate(shift(@list)),evaluate(shift(@list)));
           $txt =~ s/\*/\(.*\)/g;
 
-          return run_multiple($cmd) if($first =~ /^\s*$txt\s*$/);
+          $$user{child} = $prog;
+          return mushrun($user,$cmd) if($first =~ /^\s*$txt\s*$/);
        } else {
-          return run_multiple(@list[0]);
+          $$user{child} = $prog;
+          return mushrun($user,@list[0]);
        }
     }
 }
@@ -521,12 +554,19 @@ sub cmd_telnet
 {
    my $txt = shift;
    my $pending = 1;
-   return 0;
+#   return 0;
 
-   if(!hasflag($user,"SOCKET")) {
+   if(!hasflag($user,"SOCKET") && !hasflag($user,"WIZARD")) {
       return echo($user,"* Permission Denied *");
    } elsif($txt =~ /^\s*([^ ]+)\s*=\s*([^:]+)\s*:\s*(\d+)\s*$/ ||
            $txt =~ /^\s*([^ ]+)\s*=\s*([^:]+)\s* \s*(\d+)\s*$/) {
+      my $count = one_val("select count(*) value " .
+                          "  from socket " .
+                          " where lower(sck_tag) = lower( ? )",
+                          $1);
+      if($count != 0) {
+         return echo($user,"Telnet socket '$1' already exists");
+      }
       my $addr = inet_aton($2) ||
          return echo($user,"Invalid hostname '%s' specified.",$2);
       my $sock = IO::Socket::INET->new(Proto=>'tcp') ||
@@ -548,7 +588,8 @@ sub cmd_telnet
          socket    => $1,
          hostname  => $2,
          port      => $3, 
-         loggedin  => 0
+         loggedin  => 0,
+         opened    => time()
       };
 
       $readable->add($sock);
@@ -570,6 +611,8 @@ sub cmd_telnet
                $3
          );
        commit;
+#      @info{io} = {} if(!defined @info{io});
+#      delete @{@info{io}}{$1};
       echo($user,"Connection started to: %s:%s\n",$2,$3);
 #      printf($sock "QUIT\r\n");
    } else {
@@ -595,7 +638,7 @@ sub cmd_send
           echo($user,"Socket '%s' has closed.",$1);
        } else {
           my $sock=@{@connected{$$hash{sck_socket}}}{sock};
-          printf($sock "%s\r\n",evaluate($'));
+          printf($sock "\r\n%s\r\n",evaluate($'));
        }
     } else {
        echo($user,"Usage: \@send <socket>=<data>");
@@ -764,20 +807,22 @@ sub cmd_toad
 
 sub cmd_think
 {
-   my $txt = shift;
+   my ($txt,$prog) = @_;
 
-   echo($user,"%s",evaluate($txt));
+   echo($user,"%s",evaluate($txt,$prog));
 }
 
 sub cmd_pemit
 {
    my ($txt,$prog) = @_;
+   $prog = @{$$user{internal}}{prog} if($prog eq undef);
 
    if($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
       my $target = locate_object($user,$1,"local");
       if($target eq undef) {
          return echo($user,"I don't see that here");
       } 
+
       echo($target,"%s\n",evaluate($2,$prog));
    } else {
       echo($user,"syntax: \@pemit <object> = <message>");
@@ -841,7 +886,7 @@ sub cmd_name
          return echo($user,"I don't see that here.");
       my $name = trim($2);
 
-      if(hasflag($target,"PLAYER") && inuse_player_name($2)) {
+      if(hasflag($target,"PLAYER") && inuse_player_name($2,$target)) {
          return echo($user,"That name is already in use");
       } elsif($name =~ /^\s*(\#|\*)/) {
          return echo($user,"Invalid name. Names may not start with * or #");
@@ -856,7 +901,7 @@ sub cmd_name
           );
 
       if($$db{rows} == 1) {
-         echo_room($target,"%s is now known by %s\n",$2);
+         echo_room($target,"%s is now known by %s\n",$1,$2);
          echo($user,"Set.");
          $$target{obj_name} = $name;
          commit;
@@ -1852,14 +1897,12 @@ sub cmd_set2
 #   $txt =~ s/\r\n/<BR>/g;
 
    if($txt =~ /^\s*&([^& ]+)\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
-      printf("cmd_set: starting inattr: $txt\n");
       $$user{inattr} = {
          attr => $1,
          object => $2,
          content => [ $3 ]
       };
    } elsif($txt =~ /^\s*([^& ]+)\s*([^ ]+)\s*=\s*(.*?)\s*$/s) {
-      printf("WHOLE: '%s'\n",$3);
       cmd_set("$2/$1=$3");
    } elsif($txt =~ /^\s*([^ ]+)\s*([^ ]+)\s*$/) {
       cmd_set("$2/$1=");

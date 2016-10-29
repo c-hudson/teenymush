@@ -11,9 +11,19 @@ my %fun =
    time      => sub { return &fun_time(@_);                             },
    flags     => sub { return &fun_flags(@_);                            },
    quota     => sub { return quota_left($$user{obj_id})                 },
-   sql       => sub { return table(@_);                                 },
+#   sql       => sub { return &fun_sql(@_);                              },
    input     => sub { return fun_input(@_);                             },
 );
+
+sub fun_sql
+{
+    my (@txt) = @_;
+
+    my $sql = join(' ',@txt);
+    $sql =~ s/\_/%/g;
+#    printf("SQL: $sql\n");
+    table($sql);
+}
 
 #
 # fun_substr
@@ -43,12 +53,21 @@ sub prog
    }
 }
 
-sub fun_telnet
+sub has_socket
 {
+   my $txt = shift;
+
+   my $con = one_val("select count(*) value " .
+                     "  from socket " .
+                            " where lower(sck_tag) = lower(?)",
+                            $1
+                           );
+   return ($con == 0) ? 0 : 1;
 }
+
 #
 # fun_input
-#    Check to see if there is any input in the specified telnet buffer
+#    Check to see if there is any input in the specified input buffer
 #    variable. If there is, return the data or return #-1 No Data Found
 # 
 sub fun_input
@@ -56,32 +75,38 @@ sub fun_input
     my $txt = shift;
 
     my $prog = prog();
+    @info{io} = {} if !defined @info{io};
+    my $input = @info{io};
 
     if($txt =~ /^\s*([^ ]+)\s*$/) {
-       if(!defined @info{telnet} ||
-          !defined @{@info{telnet}}{$txt} ||
-          !ref(@{@info{telnet}}{$txt}) eq "HASH" ||
-          !defined @{@{@info{telnet}}{$txt}}{buffer}) {
-          return "#-1 Invalid Socket";
-       } elsif($#{@{@{@info{telnet}}{$txt}}{buffer}} == -1) {
+       if(!defined $$input{$1}) {
+          if(!has_socket($1)) {
+             return "#-1 Connection Closed",
+          } else {
+             return "#-1 NO Data Found - '$1'",
+          }
+       }
 
-          my $con = one_val("select count(*) value " .
-                            "  from socket " .
-                            " where lower(sck_tag) = lower(?)",
-                            $1
-                           );
-          if($con == 0) {
+       my $data = $$input{$1};
+
+       if(!defined $$data{buffer}) {
+          # shouldn't happen
+          delete @$input{$1};
+          if(!has_socket($1)) {
              return "#-1 Connection Closed",
           } else {
              return "#-1 No Data Found",
           }
+       } elsif($#{$$data{buffer}} == -1) {
+#          delete @$input{$1};
+          return "#-1 No Data Found",
        } else {
-          my $stack = @{@{@info{telnet}}{$txt}}{buffer};
-          return shift(@$stack);
+          my $buffer = $$data{buffer};
+          return shift(@$buffer);
        }
-    } else {
+   } else {
        return "#-1 Usage: [input(<socket>)]";
-    }
+   }
 }
 
 sub fun_flags
@@ -221,10 +246,12 @@ sub is_function
          $txt =~ /^\s*(.*?)(?<!(?<!\\)\\)(,|\)\s*])/)) {
 #         $txt =~ /^\s*([^,\)]*)\s*(,|\)\s*])/)) {
          ($seg,$txt) = ($1,$2 . $');
+#         printf("   SEG: '%s'\n",$seg);
       } elsif($end && ($txt =~ /^\s*"(.*?)(?<!(?<!\\)\\)"\s*(,|\)\s*)/ ||
          $txt =~ /^\s*(.*?)(?<!(?<!\\)\\)(,|\)\s*)/)) {
 #         $txt =~ /^\s*([^,\)]*)\s*(,|\)\s*)/)) {
          ($seg,$txt) = ($1,$2 . $');
+#         printf("   SEG: '%s'\n",$seg);
       } else {                                             # parse error
          return 0;
       }
@@ -255,6 +282,8 @@ sub evaluate_string
    my (%data,$out);
 
    while($txt =~ /\[([a-zA-Z_]+)\(/) {
+#      printf("IS: '%s'\n",is_function(\%data,$',undef,1));
+#       printf("    '%s'\n",$txt);
       if(is_function(\%data,$',undef,1)) {
          $txt = @data{txt};
          $out .= $` . exec_function($1,\%data);

@@ -1,4 +1,6 @@
 #!/usr/bin/perl
+
+
 #
 # add_last_info
 #
@@ -49,67 +51,6 @@ sub add_site_restriction
 }
 
 #
-# mush_command
-#    Search and run attributes that match the command that was typed in.
-sub mush_command2
-{
-   my ($data,$cmd) = @_;
-   my ($match,$count)=(0,0);
-     
-   # look for any attributes in the same room as the player
-   for my $hash (@{sql("select obj.obj_id, " .
-                       "       substr(atr_value,2,instr(atr_value,':')-2) cmd,".
-                       "       substr(atr_value,instr(atr_value,':')+1) txt ".
-                       "  from object obj, attribute atr, content con " .
-                       " where obj.obj_id = atr.obj_id " .
-                       "   and obj.obj_id = con.obj_id " .
-                       "   and ? like  " .
-                "replace(substr(atr_value,1,instr(atr_value,':')-1),'*','%')" .
-                       "   and con.con_source_id in ( ?, ? ) ",
-                       "\$" . lc($cmd),
-                       loc($user),
-                       $$user{obj_id}
-                      )
-                }) {
-      # run up to  150 commands
-      #
-      # improvements:
-      #     1. split commands apart better?
-      #     2. shove jobs into a queue to run later and nicer on mush
-      #     3. Remove arbitrary 150 command limit if needed?
-      #
-
-
-#      printf("# TXT: '$hash'\n");
-#      printf("# TXT: '%s'\n",print_var($hash));
-      ($$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
-       $$user{6},$$user{7},$$user{8},$$user{9}) =
-         (undef,undef,undef,undef,undef,undef,undef,undef);
-      if($$hash{cmd} ne $cmd) {
-         $$hash{cmd} =~ s/\*/\(.*\)/g;
-         if($cmd =~ /^$$hash{cmd}$/) {
-            ($$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
-             $$user{6},$$user{7},$$user{8},$$user{9}) =
-            ($1,$2,$3,$4,$5,$6,$7,$8,$9);
-         }
-      }
-      while($$hash{txt} ne undef && $count++ < 150) {
-         # look for unescaped semi-colons to split apart lines
-         if($$hash{txt} =~ /^(.*?)(?<!(?<!\\)\\);/) {
-            force($hash,trim($1 . " " . $2));
-            $$hash{txt} = trim($');
-         } else {                  # process all text if no semi-colon found
-            force($hash,trim($$hash{txt}));
-            $$hash{txt} = undef;
-         }
-     }
-     $match=1;                                   # signal mush command found
-   }
-   return $match;
-}
-
-
-#
 # lookup_command
 #    Try to find a internal command, exit, or mush command to run.
 #
@@ -156,15 +97,19 @@ sub add_telnet_data
 {
    my($data,$txt) = @_;
 
-   @info{telnet} = {} if(!defined @info{telnet});
-   if(!defined @{@info{telnet}}{$$data{socket}}) {
-      @{@info{telnet}}{$$data{socket}} = {
+   @info{io} = {} if(!defined @info{io});
+   my $io = @info{io};
+
+   if(!defined $$io{$$data{socket}}) {
+      $$io{$$data{socket}} = {
          obj_id => $$data{obj_id},
          buffer => []
       };
    }
-   my $stack = @{@{@info{telnet}}{$$data{socket}}}{buffer};
+   my $stack = @{$$io{$$data{socket}}}{buffer};
    push(@$stack,$txt);
+#   printf("SOCK[%s-%s]: '%s'\n",$stack,$#$stack,$txt);
+#     printf("%s",print_var($io));
 }
 
 #
@@ -187,7 +132,8 @@ sub server_process_line
 
    if($$data{raw}) {
      add_telnet_data($data,$input);
-     echo($data,"%s",$input);
+#     printf("%s",print_var($data));
+#     echo($data,"%s",$input);
    } else {
       eval {                                                  # catch errors
          if($input =~ /^\s*([^ ]+)/ || $input =~ /^\s*$/) {
@@ -247,7 +193,7 @@ sub server_hostname
 #
 sub server_handle_sockets
 {
-   eval {
+#   eval {
       # wait for IO or 1 second
       my ($sockets) = IO::Select->select($readable,undef,undef,.4);
       my $buf;
@@ -255,12 +201,6 @@ sub server_handle_sockets
       if(!defined @info{server_start} || @info{server_start} =~ /^\s*$/) {
          @info{server_start} = time();
       }
-
-      # all processing happens when there is I/O but certain things will
-      # have to happen when it should instead of when I/O happened. Add
-      # code here when whatever that is figured out.
-      # 
-      # server_tick()?
 
       # process any IO
       foreach my $s (@$sockets) {      # loop through active sockets [if any]
@@ -298,6 +238,9 @@ sub server_handle_sockets
                                                          # breakapart by line
             while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
                @{@connected{$s}}{buf} = $';                # store left overs
+               if(@{@connected{$s}}{raw} == 1) {
+                  printf("\$ %s\n",$`);
+               }
                server_process_line(@connected{$s},$`);         # process line
             }
          }
@@ -305,13 +248,13 @@ sub server_handle_sockets
 
       spin();
 
-   };
-   if($@){
-      printf("Server Crashed, minimal details [main_loop]\n");
-      printf("LastSQL: '%s'\n",@info{sql_last});
-      printf("         '%s'\n",@info{sql_last_args});
-      printf("%s\n---[end]-------\n",$@);
-   }
+#   };
+#   if($@){
+#      printf("Server Crashed, minimal details [main_loop]\n");
+#      printf("LastSQL: '%s'\n",@info{sql_last});
+#      printf("         '%s'\n",@info{sql_last_args});
+#      printf("%s\n---[end]-------\n",$@);
+#   }
 }
 
 #

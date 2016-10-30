@@ -365,7 +365,7 @@ sub handle_object_listener
 sub handle_listener
 {
    my ($target,$txt,@args) = @_;
-   my $count = 0;
+   my $match = 0;
 
    my $msg = sprintf($txt,@args);
 
@@ -394,38 +394,16 @@ sub handle_listener
                     "LISTENER"
                    )
                 }) {
-
-      # reset variables
-      ($$user{0},$$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
-       $$user{6},$$user{7},$$user{8},$$user{9}) =
-         (undef,undef,undef,undef,undef,undef,undef,undef,undef);
-
-      # determine %0 - %9
-      if($$hash{cmd} ne $msg) {
-         $$hash{cmd} =~ s/\*/\(.*\)/g;
-         if($msg =~ /^$$hash{cmd}$/) {
-            ($$user{0},$$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
-             $$user{6},$$user{7},$$user{8}) =
-            ($1,$2,$3,$4,$5,$6,$7,$8,$9);
-         }
+      $$hash{cmd} =~ s/\*/\(.*\)/g;
+      $$hash{txt} =~ s/\r\s*|\n\s*//g;
+      if($msg =~ /^$$hash{cmd}$/) {
+         mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
+      } else {
+         mushrun($hash,$$hash{txt});
       }
-
-      # split apart commands and run them
-      while($$hash{txt} ne undef && $count++ < 5) {
-         # look for unescaped semi-colons to split apart lines
-         if($$hash{txt} =~ /^(.*?)(?<!(?<!\\)\\);/) {
-            force($hash,trim($1 . " " . $2));
-            $$hash{txt} = trim($');
-         } else {                  # process all text if no semi-colon found
-            force($hash,trim($$hash{txt}));
-            $$hash{txt} = undef;
-         }
-      }
-      # reset variables
-      ($$user{0},$$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
-       $$user{6},$$user{7},$$user{8},$$user{9}) =
-         (undef,undef,undef,undef,undef,undef,undef,undef,undef);
+      $match=1;                                   # signal mush command found
    }
+   return $match;
 }
 
 #
@@ -459,27 +437,26 @@ sub echo
 
    # handle objects set puppet
    if(!hasflag($target,"PLAYER")) {                         # handle objects
-      if(defined $$target{raw} && $$target{raw} == 1) { # forward for ^listen
-#         handle_object_listener($target,"%s",$out);
-          echo($user,"ECHO: @{$$user{internal}}{prog}");
-      }
-      if(hasflag($target,"PUPPET")) {                    # forward if puppet
-         for my $player (@{sql($db,
-                               "select obj1.*, " .
-                               "       obj2.obj_name owner_name, " .
-                               "       sck_socket " .
-                               "  from socket sck, " .
-                               "       object obj1, " .
-                               "       object obj2 " .
-                               " where sck.obj_id = obj1.obj_id ".
-                               "   and obj1.obj_id =  obj2.obj_owner ".
-                               "   and obj2.obj_id = ? ",
-                               $$target{obj_id}
-                        )}) {
-            my $sock = @{@connected{$$player{sck_socket}}}{sock};
-            printf($sock "%s> %s",$$player{owner_name},$out);
-         }
-      }
+#      if(defined $$target{raw} && $$target{raw} == 1) { # forward for ^listen
+##         handle_object_listener($target,"%s",$out);
+#      }
+#      if(hasflag($target,"PUPPET")) {                    # forward if puppet
+#         for my $player (@{sql($db,
+#                               "select obj1.*, " .
+#                               "       obj2.obj_name owner_name, " .
+#                               "       sck_socket " .
+#                               "  from socket sck, " .
+#                               "       object obj1, " .
+#                               "       object obj2 " .
+#                               " where sck.obj_id = obj1.obj_id ".
+#                               "   and obj1.obj_id =  obj2.obj_owner ".
+#                               "   and obj2.obj_id = ? ",
+#                               $$target{obj_id}
+#                        )}) {
+#            my $sock = @{@connected{$$player{sck_socket}}}{sock};
+#            printf($sock "%s> %s",$$player{owner_name},$out);
+#         }
+#      }
    } elsif(ref($target) eq "IO::Socket::INET") {
       printf($target "%s",$out);
    } elsif(ref($target) eq "HASH" 
@@ -508,10 +485,11 @@ sub echo
           defined @connected{$$target{sck_socket}}) {          # exact socket
           my $sock = @{@connected{$$target{sck_socket}}}{sock};
           printf($sock "%s",$out);
-       } else {                                       # sockets used by obj_id
+      } else {                                       # sockets used by obj_id
           for my $sock (@{sql($db, 
                               "select * from socket " .
-                              " where obj_id = ?",
+                              " where obj_id = ? " .
+                              " and sck_tag is null",
                               $$target{obj_id})}) {
              my $sock = @{@connected{$$sock{sck_socket}}}{sock};
              printf($sock "%s",$out);
@@ -963,12 +941,10 @@ sub create_object
    my ($hash,$where);
    my $who = $$user{obj_name};
    my $owner = $$user{obj_id};
-   printf("# Got this far -1\n");
 
    # check quota
    return 0 if($type ne "PLAYER" && quota_left($$user{obj_id}) <= 0);
   
-   printf("# Got this far\n");
    if($type eq "PLAYER") {
       $where = 3;
       $who = $$user{hostname};
@@ -980,7 +956,6 @@ sub create_object
    } elsif($type eq "EXIT") {
       $where = -1;
    }
-   printf("# Got this far1\n");
 
    sql($db,
        " insert into object " .
@@ -990,24 +965,20 @@ sub create_object
        "values " .
        "   (?,password(?),?,?,now(),?)",
        $name,$pass,$owner,$who,$where);
-   printf("# Got this far2\n");
 
    if($$db{rows} != 1) {
       rollback($db);
       return undef;
    }
 
-   printf("# Got this far3\n");
    my $hash = one($db,"select last_insert_id() obj_id") ||
       return rollback($db);
 
-   printf("# Got this far4\n");
    set_flag($$hash{obj_id},$type,1);
    if($type eq "PLAYER" || $type eq "OBJECT") {
       move(fetch($$hash{obj_id}),fetch($where));
    }
 
-   printf("# Got this far4\n");
 e  return $$hash{obj_id};
 }
 

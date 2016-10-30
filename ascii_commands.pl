@@ -277,7 +277,6 @@ sub cmd_while
 {
     my ($txt,$prog) = @_;
     my (%last,$first);
-    return 0;
 
     my $cmd = $$user{cmd_data};
     my $command = $$user{command_data};
@@ -504,6 +503,7 @@ sub cmd_switch
 
     my ($first,$second) = (get_segment2(shift(@list),"="));
     $first = evaluate($first,$prog);
+    $first =~ s/[\r\n]//g;
     unshift(@list,$second);
 
     while($#list >= 0) {
@@ -512,7 +512,7 @@ sub cmd_switch
           $txt =~ s/\*/\(.*\)/g;
 
           $$user{child} = $prog;
-          return mushrun($user,$cmd) if($first =~ /^\s*$txt\s*$/);
+          return mushrun($user,$cmd) if($first =~ /^\s*$txt\s*$/i);
        } else {
           $$user{child} = $prog;
           return mushrun($user,@list[0]);
@@ -593,26 +593,26 @@ sub cmd_telnet
       };
 
       $readable->add($sock);
-      sql(e($db,1),
-          "insert into socket " . 
-          "(   obj_id, " .
-          "    sck_start_time, " .
-          "    sck_type, " . 
-          "    sck_socket, " .
-          "    sck_tag, " .
-          "    sck_hostname, " .
-          "    sck_port " .
-          ") values ( ? , now(), ?, ?, ?, ?, ? )",
-               $$user{obj_id},
-               2,
-               $sock,
-               $1,
-               $2,
-               $3
-         );
-       commit;
-#      @info{io} = {} if(!defined @info{io});
-#      delete @{@info{io}}{$1};
+       sql(e($db,1),
+           "insert into socket " . 
+           "(   obj_id, " .
+           "    sck_start_time, " .
+           "    sck_type, " . 
+           "    sck_socket, " .
+           "    sck_tag, " .
+           "    sck_hostname, " .
+           "    sck_port " .
+           ") values ( ? , now(), ?, ?, ?, ?, ? )",
+                $$user{obj_id},
+                2,
+                $sock,
+                $1,
+                $2,
+                $3
+          );
+        commit;
+      @info{io} = {} if(!defined @info{io});
+      delete @{@info{io}}{$1};
       echo($user,"Connection started to: %s:%s\n",$2,$3);
 #      printf($sock "QUIT\r\n");
    } else {
@@ -638,7 +638,7 @@ sub cmd_send
           echo($user,"Socket '%s' has closed.",$1);
        } else {
           my $sock=@{@connected{$$hash{sck_socket}}}{sock};
-          printf($sock "\r\n%s\r\n",evaluate($'));
+          printf($sock "%s\r\n",evaluate($'));
        }
     } else {
        echo($user,"Usage: \@send <socket>=<data>");
@@ -1913,7 +1913,7 @@ sub cmd_set2
 
 sub cmd_say
 {
-   my $txt = evaluate(shift);
+   my $txt = evaluate(shift,shift);
 
    echo($user,"You say, \"%s\"",$txt);
    echo_room($user,"%s says, \"%s\"",name($user),$txt);

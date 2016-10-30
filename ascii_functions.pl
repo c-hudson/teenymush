@@ -13,7 +13,14 @@ my %fun =
    quota     => sub { return quota_left($$user{obj_id})                 },
 #   sql       => sub { return &fun_sql(@_);                              },
    input     => sub { return fun_input(@_);                             },
+   strlen    => sub { return &fun_strlen(@_)                            },
 );
+
+sub fun_strlen
+{
+    my $prog = prog();
+    return length(evaluate(shift,$prog));
+}
 
 sub fun_sql
 {
@@ -65,6 +72,17 @@ sub has_socket
    return ($con == 0) ? 0 : 1;
 }
 
+sub socket_status
+{
+   my ($tag) = @_;
+
+   if(!has_socket($tag)) {
+      return "#-1 Connection Closed",
+   } else {
+      return "#-1 NO Data Found",
+   }
+}
+
 #
 # fun_input
 #    Check to see if there is any input in the specified input buffer
@@ -79,27 +97,17 @@ sub fun_input
     my $input = @info{io};
 
     if($txt =~ /^\s*([^ ]+)\s*$/) {
-       if(!defined $$input{$1}) {
-          if(!has_socket($1)) {
-             return "#-1 Connection Closed",
-          } else {
-             return "#-1 NO Data Found - '$1'",
-          }
-       }
+       return socket_status($1) if(!defined $$input{$1});
 
        my $data = $$input{$1};
 
        if(!defined $$data{buffer}) {
           # shouldn't happen
           delete @$input{$1};
-          if(!has_socket($1)) {
-             return "#-1 Connection Closed",
-          } else {
-             return "#-1 No Data Found",
-          }
+          return socket_status($1);
        } elsif($#{$$data{buffer}} == -1) {
-#          delete @$input{$1};
-          return "#-1 No Data Found",
+          delete @$input{$1};
+          return socket_status($1);
        } else {
           my $buffer = $$data{buffer};
           return shift(@$buffer);

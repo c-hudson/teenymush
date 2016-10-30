@@ -108,8 +108,6 @@ sub add_telnet_data
    }
    my $stack = @{$$io{$$data{socket}}}{buffer};
    push(@$stack,$txt);
-#   printf("SOCK[%s-%s]: '%s'\n",$stack,$#$stack,$txt);
-#     printf("%s",print_var($io));
 }
 
 #
@@ -132,19 +130,13 @@ sub server_process_line
 
    if($$data{raw}) {
      add_telnet_data($data,$input);
-#     printf("%s",print_var($data));
-#     echo($data,"%s",$input);
    } else {
       eval {                                                  # catch errors
          if($input =~ /^\s*([^ ]+)/ || $input =~ /^\s*$/) {
             $user = $hash;
             if(loggedin($hash) || hasflag($hash,"OBJECT")) {
                $$user{source} = 1;
-#               echo($user,"----[start]---");
                mushrun($user,$input);
-#               echo($user,"----[ end ]---");
-#               my ($cmd,$arg) = lookup_command(\%command,$1,$',1);
-#               &{@{@command{$cmd}}{fun}}($arg);                  # invoke cmd
                add_last_info($input);                                   #logit
             } else {
                my ($cmd,$arg) = lookup_command(\%offline,$1,$',0);
@@ -193,7 +185,7 @@ sub server_hostname
 #
 sub server_handle_sockets
 {
-#   eval {
+   eval {
       # wait for IO or 1 second
       my ($sockets) = IO::Select->select($readable,undef,undef,.4);
       my $buf;
@@ -233,28 +225,29 @@ sub server_handle_sockets
          } else {                                          # socket has input
             $buf =~ s/\r//g;                                 # remove returns
             $buf =~ tr/\x80-\xFF//d;
+            $buf =~ s/\e\[[\d;]*[a-zA-Z]//g;
             @{@connected{$s}}{buf} .= $buf;                     # store input
           
                                                          # breakapart by line
             while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
                @{@connected{$s}}{buf} = $';                # store left overs
-               if(@{@connected{$s}}{raw} == 1) {
-                  printf("\$ %s\n",$`);
-               }
+#               if(@{@connected{$s}}{raw} == 1) {
+#                  printf("\$ %s\n",$`);
+#               }
                server_process_line(@connected{$s},$`);         # process line
             }
          }
       }
 
-      spin();
+     spin();
 
-#   };
-#   if($@){
-#      printf("Server Crashed, minimal details [main_loop]\n");
-#      printf("LastSQL: '%s'\n",@info{sql_last});
-#      printf("         '%s'\n",@info{sql_last_args});
-#      printf("%s\n---[end]-------\n",$@);
-#   }
+   };
+   if($@){
+      printf("Server Crashed, minimal details [main_loop]\n");
+      printf("LastSQL: '%s'\n",@info{sql_last});
+      printf("         '%s'\n",@info{sql_last_args});
+      printf("%s\n---[end]-------\n",$@);
+   }
 }
 
 #

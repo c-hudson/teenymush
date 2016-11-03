@@ -1,6 +1,8 @@
 #!/usr/bin/perl
 
 delete @command{keys %command};
+delete @offline{keys %offline};
+delete @honey{keys %honey};
 
 @offline{connect}     = sub { return cmd_connect(@_);                    };
 @offline{who}         = sub { return cmd_who(@_);                        };
@@ -8,6 +10,18 @@ delete @command{keys %command};
 @offline{quit}        = sub { return cmd_quit(@_);                       };
 @offline{huh}         = sub { return cmd_offline_huh(@_);                };
 # ------------------------------------------------------------------------#
+@honey{who}           = sub { return honey_who(@_);                      };
+@honey{connect}       = sub { return honey_connect(@_);                  };
+@honey{quit}          = sub { return cmd_quit(@_);                       };
+@honey{honey_off}     = sub { return honey_off(@_);                      };
+@honey{huh}           = sub { return honey_huh(@_);                      };
+@honey{look}          = sub { return honey_look(@_);                     };
+@honey{go}            = sub { return honey_go(@_);                       };
+@honey{page}          = sub { return honey_page(@_);                     };
+@honey{help}          = sub { return honey_help(@_);                     };
+# ------------------------------------------------------------------------#
+@command{"\@honey"}   = { help => "Put a user into the HoneyPot",
+                         fun  => sub { return &cmd_honey(@_); }          };
 @command{say}        = { help => "Broadcast a message to everyone in the room",
                          fun  => sub { return &cmd_say(@_); }            };
 @command{"\""}       = { help => @{@command{say}}{help},
@@ -27,7 +41,10 @@ delete @command{keys %command};
                          fun  => sub { return &cmd_pose(@_); },
                          nsp  => 1                                       };
 @command{";"}        = { help => "Posing without a space after your name",
-                         fun  => sub { return &cmd_pose(@_,1); },
+                         fun  => sub { return &cmd_pose(@_[0],@_[1],1); },
+                         nsp  => 1                                       };
+@command{"emote"}    = { help => "Posing without a space after your name",
+                         fun  => sub { return &cmd_pose(@_[0],@_[1],1); },
                          nsp  => 1                                       };
 @command{who}        = { help => "Display online users",
                          fun  => sub { return &cmd_who(@_); }            };
@@ -187,6 +204,215 @@ BEGIN {
    }
 }
 
+sub hecho
+{
+   my ($fmt,@args) = @_;
+   my $sock = $$user{sock};
+   my $txt = sprintf("$fmt",@args);
+
+   $txt =~ s/\r\n/\n/g;
+   $txt =~ s/\n/\r\n/g;
+
+   if($txt =~ /\n$/) {
+      printf($sock "%s",$txt);
+   } else {
+      printf($sock "%s\r\n",$txt);
+   }
+}
+
+# ------------------------------------------------------------------------#
+# HoneyPot Commands
+#
+#     You could ban someone, but why not have a little fun with them?
+#
+# ------------------------------------------------------------------------#
+
+
+#
+# honey_page
+#    Put some words into the mouth of any poor soals who get honeypotted.
+#
+sub honey_page
+{
+   my $txt = shift;
+   my $r = int(rand(5));
+
+   if($txt =~ /^\s*([^ ]+)\s*=\s*/) {
+      if($r == 1) {
+         hecho("You page %s, \"How do I connect, please help\"");
+         hecho("%s pages, \"You're already connected.\"",ucfirst(lc($1)));
+      } elsif($r == 2) {
+         hecho("You page %s, \"How do I get \@toaded?\"",$1);
+      } elsif($r == 3) {
+         hecho("You page %s, \"What is a HoneyPot?\"",$1);
+      } elsif($r == 4) {
+         hecho("You page %s, \"%s\"",$');
+      } elsif($r == 0) {
+         hecho("You page %s, \"\@TOAD ME \@TOAD ME \@TOAD ME!\"",$1);
+         hecho("%s pages, \"Ookay!\"",ucfirst(lc($1)));
+         cmd_quit();
+      }
+   } else {
+      hecho("Usage: page <user> = <message>");
+   }
+}
+
+#
+# honey_off
+#    Just for testing purposes?
+#
+sub honey_off
+{
+   $$user{site_restriction} = 4;
+}
+
+#
+# honey_huh
+#
+#    Show the login screen or the huh message depending on if the
+#    person is connected or not.
+#
+sub honey_huh
+{
+   my $sock = $$user{sock};
+   if(!defined $$user{honey}) {
+      hecho("%s",getfile("honey.txt"));
+   } else {
+      hecho("%s","Huh?  (Type \"help\" for help.)");
+   }
+}
+
+#
+# honey_connect
+#
+#    Let the honeypotted feel like they've connected.
+#
+sub honey_connect
+{
+   my $txt = shift;
+
+   my $sock = $$user{sock};
+
+   if($txt =~ /^\s*([^ ]+)/i) {
+      $$user{honey} = $1;
+   } else {
+      $$user{honey} = "Honey";
+   }
+
+   printf($sock "%s\n",<<__EOF__);
+   -----------------------------------------------------------------------
+
+       Get your free HONEY. Page Adrick for details
+
+   -----------------------------------------------------------------------
+__EOF__
+   honey_look();
+}
+
+sub honey_look
+{
+   if(defined $$user{honey}) {
+   hecho("%s",<<__EOF__);
+Honey Tree(#7439RJs)
+   In an open place in the middle of the forest, and in the middle of this place is a large oak-tree, and from the top of the tree, there comes a loud buzzing-noise. The large tree is big enough for a small bear to climb. A branch leans over towards a Bee's nest.
+   That buzzing-noise means something. You don't get a buzzing-noise like that, just buzzing and buzzing, without its meaning something. If there's a buzzing-noise, somebody's making a buzzing-noise, and the only reason for making a buzzing-noise that I know of is because you're a bee. And the only reason for being a bee that I know of is making honey!
+Contents:
+Magic Blue Ballon
+Honey Pot
+Obvious exits:
+House
+__EOF__
+   } else {
+      honey_huh();
+   }
+}
+
+#
+# honey_who
+#    Simulate some connected people.
+#
+sub honey_who
+{
+   hecho("%s","Player Name        On For Idle  \@doing");
+
+   if(defined $$user{honey}) {
+      hecho("%-16s     0:03   0s  HoneyPot User",substr($$user{honey},0,16));
+   }
+   hecho("%s",<<__EOF__);
+Phantom              0:11  11m  
+Quartz               5:07   5h  Something that is better left unspoken.
+Sorad                6:11   5h  
+Rowex            1d 01:21   1m  
+Swift            2d 10:38   2m  
+Adrick           2d 16:47   0s                               
+Wolf             3d 13:35   3d  
+Tyr              4d 19:15   4d  
+Paiige          11d 22:19   1d  
+Rince           11d 22:19   1d  
+draith          43d 17:11   1h  
+feem            46d 21:09   5d  
+Ian             53d 17:59   4w  
+Draken-Korin    66d 23:46   2s  
+Ambrosia        69d 01:41   2M  There is no cow level.
+Brazil         128d 16:08   4m  
+nails          138d 00:46   3M  
+Oleo           157d 19:27  26m  Just a friendly butter-substitute Wiz
+18 Players logged in, 73 record, no maximum.
+__EOF__
+}
+
+#
+# honey_go
+#    Simulate the go command, but not very well
+#
+sub honey_go
+{
+   my $r = int(rand(5));
+
+   if(defined $$user{honey}) {
+      if($r == 0) {
+         hecho("The door seems jammed, try it again.");
+      } elsif($r == 1) {
+         hecho("The door moves forward but stops, try it again.");
+      } elsif($r == 2) {
+         hecho("The door opens but slams shut, try it again.");
+      } elsif($r == 3) {
+         hecho("The door opens but you get bored and slam it shut.");
+      } elsif($r == 4) {
+         hecho("Thats not a exit, its a frog");
+      }
+   }
+}
+
+# ---[ End HoneyPot Commands ]--------------------------------------------#
+
+sub cmd_honey
+{
+   my $txt = shift;
+   my $match = 0;
+   my $name;
+
+   if($txt =~ /^\s*([^ ]+)\s*$/) {
+      for my $who (@{sql("select obj_name, sck_socket " .
+                          "  from socket sck, object obj " .
+                          " where obj.obj_id = sck.obj_id " .
+                          "   and lower(obj.obj_name) = lower(?) ",
+                          $txt)}) {
+         @{@connected{$$who{sck_socket}}}{site_restriction} = 69;
+         @{@connected{$$who{sck_socket}}}{honey} = $$who{obj_name};
+         $match++;
+         $name = $$who{obj_name};
+      }
+   }
+
+   if($match == 0) {
+      echo($user,"No one is connected by that name");
+   } else {
+      echo($user,"%d connections have been HoneyPotted for %s",$match,$name);
+   }
+   
+}
+
 sub cmd_var
 {
     my ($txt,$prog) = @_;
@@ -282,7 +508,7 @@ sub cmd_while
     my $command = $$user{command_data};
     if(!defined $$cmd{while_test}) {                 # initialize "loop"
         $first = 1;
-        if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/) {
+        if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/s) {
            ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
            $$cmd{while_cmd} = [ bannana_split($2,";",1) ];
         } else {
@@ -468,9 +694,9 @@ sub get_segment2
 {
    my ($txt,$delim) = @_;
 
-    if($txt =~ /^\s*"(.+?)(?<!(?<!\\)\\)"($delim|$)/ ||
-       $txt =~ /^\s*{(.+?)(?<!(?<!\\)\\)}($delim|$)/ ||
-       $txt =~ /^(.+?)($delim|$)/) {
+    if($txt =~ /^\s*"(.+?)(?<!(?<!\\)\\)"($delim|$)/s ||
+       $txt =~ /^\s*{(.+?)(?<!(?<!\\)\\)}($delim|$)/s ||
+       $txt =~ /^(.+?)($delim|$)/s) {
        return ($1,$');
     } else {
        return ($txt,undef);
@@ -508,10 +734,17 @@ sub cmd_switch
 
     while($#list >= 0) {
        if($#list >= 1) {
-          my ($txt,$cmd) = (evaluate(shift(@list)),evaluate(shift(@list)));
+          my ($txt,$cmd) = (evaluate(shift(@list),$prog),
+                            evaluate(shift(@list),$prog));
           $txt =~ s/\*/\(.*\)/g;
+          $txt =~ s/^\s+|\s+$//g;
 
           $$user{child} = $prog;
+#          if($first =~ /^\s*$txt\s*$/i) {
+#             printf(" MATCH: %s == %s\n",$first,$txt);
+#          } else {
+#             printf("!MATCH: %s == %s\n",$first,$txt);
+#          }
           return mushrun($user,$cmd) if($first =~ /^\s*$txt\s*$/i);
        } else {
           $$user{child} = $prog;
@@ -622,7 +855,7 @@ sub cmd_telnet
 
 sub cmd_send
 {
-    my $txt = shift;
+    my ($txt,$prog) = @_;
 
     if($txt =~ /^\s*([^ ]+)\s*=/) {
        my $hash = one($db,
@@ -638,7 +871,7 @@ sub cmd_send
           echo($user,"Socket '%s' has closed.",$1);
        } else {
           my $sock=@{@connected{$$hash{sck_socket}}}{sock};
-          printf($sock "%s\r\n",evaluate($'));
+          printf($sock "%s\r\n",evaluate($',$prog));
        }
     } else {
        echo($user,"Usage: \@send <socket>=<data>");
@@ -818,6 +1051,7 @@ sub cmd_pemit
    $prog = @{$$user{internal}}{prog} if($prog eq undef);
 
    if($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
+      printf("TARGET: '$1'\n");
       my $target = locate_object($user,$1,"local");
       if($target eq undef) {
          return echo($user,"I don't see that here");
@@ -831,9 +1065,9 @@ sub cmd_pemit
 
 sub cmd_emit
 {
-   my $txt = shift;
+   my ($txt,$prog) = @_;
 
-   my $txt = evaluate($txt);
+   my $txt = evaluate($txt,$prog);
    echo($user,"%s",$txt);
    echo_room($user,"%s",$txt);
 }
@@ -1885,10 +2119,10 @@ sub cmd_look
 
 sub cmd_pose
 {
-   my ($txt,$flag) = evaluate(@_[0]),@_[1];
-
-   echo($user,"%s%s%s",name($user),$flag ? "" : " ",$txt);
-   echo_room($user,"%s %s",name($user),$txt);
+   my ($txt,$prog,$flag) = @_;
+   my $space = ($flag) ? "" : " ";
+   echo($user,"%s%s%s",name($user),$space,evaluate($txt,$prog));
+   echo_room($user,"%s%s%s",name($user),$space,evaluate($txt,$prog));
 }
 
 sub cmd_set2
@@ -2019,6 +2253,9 @@ sub who
 
       # determine idle details
       my $extra = @connected{$$hash{sck_socket}};
+
+      next if($$extra{site_restriction} == 69);
+
       if(defined $$extra{last}) {
          $idle = date_split(time() - @{$$extra{last}}{time});
       } else {

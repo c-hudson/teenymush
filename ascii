@@ -13,6 +13,7 @@ my (%command,                       # commands for after player has connected
     %offline,                      # commands for before player has connected
     %connected,                                # connected socket information
     %connected_user,                                        # users connected
+    %honey,                                                   # honeypot cmds
     $readable,                                 # sockets to wait for input on
     $listener,                                                 # port details
     %code,                                   #  loaded perl files w/mod times

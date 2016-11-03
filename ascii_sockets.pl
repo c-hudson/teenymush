@@ -82,6 +82,8 @@ sub lookup_command
       }
       if($match ne undef) {                                  # found match
          return ($match,trim($txt));
+      } elsif($$user{site_restriction} == 69) {
+         return ('huh',trim($txt));
       } elsif($txt =~ /^\s*$/ && $type && locate_exit($cmd)) {  # exit match
          return ("go",$cmd);
       } elsif(mush_command($hash,trim($cmd . " " . $txt,1))) { # mush command
@@ -134,7 +136,10 @@ sub server_process_line
       eval {                                                  # catch errors
          if($input =~ /^\s*([^ ]+)/ || $input =~ /^\s*$/) {
             $user = $hash;
-            if(loggedin($hash) || hasflag($hash,"OBJECT")) {
+            if($$user{site_restriction} == 69) {
+               my ($cmd,$arg) = lookup_command(\%honey,$1,$',0);
+               &{@honey{$cmd}}($arg);                            # invoke cmd
+            } elsif(loggedin($hash) || hasflag($hash,"OBJECT")) {
                $$user{source} = 1;
                mushrun($user,$input);
                add_last_info($input);                                   #logit
@@ -216,6 +221,8 @@ sub server_handle_sockets
                      printf($new "%s",getfile("badsite.txt"));
                   }
                   server_disconnect(@{@connected{$new}}{sock});
+               } elsif($$hash{site_restriction} == 69) {
+                  printf($new "%s",getfile("honey.txt"));
                } else {
                   printf($new "%s",getfile("login.txt"));   #  show login
                }
@@ -234,6 +241,7 @@ sub server_handle_sockets
 #               if(@{@connected{$s}}{raw} == 1) {
 #                  printf("\$ %s\n",$`);
 #               }
+
                server_process_line(@connected{$s},$`);         # process line
             }
          }

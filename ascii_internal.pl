@@ -89,6 +89,7 @@ sub evaluate
              $out .= $` . $$var{$1};                # defined variable
           } else {
              $out .= $` . "%{$1}";                  # undefed variable
+#             $out .= $`;                           # undefed variable
           }
        }
        $txt = $out . $txt;
@@ -440,23 +441,23 @@ sub echo
 #      if(defined $$target{raw} && $$target{raw} == 1) { # forward for ^listen
 ##         handle_object_listener($target,"%s",$out);
 #      }
-#      if(hasflag($target,"PUPPET")) {                    # forward if puppet
-#         for my $player (@{sql($db,
-#                               "select obj1.*, " .
-#                               "       obj2.obj_name owner_name, " .
-#                               "       sck_socket " .
-#                               "  from socket sck, " .
-#                               "       object obj1, " .
-#                               "       object obj2 " .
-#                               " where sck.obj_id = obj1.obj_id ".
-#                               "   and obj1.obj_id =  obj2.obj_owner ".
-#                               "   and obj2.obj_id = ? ",
-#                               $$target{obj_id}
-#                        )}) {
-#            my $sock = @{@connected{$$player{sck_socket}}}{sock};
-#            printf($sock "%s> %s",$$player{owner_name},$out);
-#         }
-#      }
+      if(hasflag($target,"PUPPET")) {                    # forward if puppet
+         for my $player (@{sql($db,
+                               "select obj1.*, " .
+                               "       obj2.obj_name owner_name, " .
+                               "       sck_socket " .
+                               "  from socket sck, " .
+                               "       object obj1, " .
+                               "       object obj2 " .
+                               " where sck.obj_id = obj1.obj_id ".
+                               "   and obj1.obj_id =  obj2.obj_owner ".
+                               "   and obj2.obj_id = ? ",
+                               $$target{obj_id}
+                        )}) {
+            my $sock = @{@connected{$$player{sck_socket}}}{sock};
+            printf($sock "%s> %s",$$player{owner_name},$out);
+         }
+      }
    } elsif(ref($target) eq "IO::Socket::INET") {
       printf($target "%s",$out);
    } elsif(ref($target) eq "HASH" 

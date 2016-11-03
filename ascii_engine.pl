@@ -51,7 +51,7 @@ sub mush_command
 sub priority
 {
    if(hasflag($user,"WIZARD") || hasflag($user,"GOD")) {
-      return 5;
+      return 10;
    } else {
       return 1;
    }
@@ -82,7 +82,6 @@ sub mushrun
       }
    } elsif(defined $$hash{child}) {                   # add as child process
       $prog = $$hash{child};
-      delete @$hash{child};
    } else {
       $prog = {                                      # add as parent process
          stack => [ ],
@@ -102,23 +101,23 @@ sub mushrun
     if(defined $$hash{source} && $$hash{source} == 1) {
        unshift(@$stack,{ cmd => $cmd });
     } else {
-#       printf("---[Start]---\n");
        for my $i ( reverse bannana_split($cmd,';',1) ) {
-#          printf("ADD: '%s'\n",$i);
           my $stack=$$prog{stack};
           unshift(@$stack,{ cmd => $i });
        }
-#       printf("---[ End ]---\n");
     }
-    delete @$hash{source};
 
-    for my $i (0 .. 9) {                              # copy over %0 .. %9
-       if(defined @wildcard[$i]) {
-          @{$$prog{var}}{$i} = @wildcard[$i];
-       } else {
-          @{$$prog{var}}{$i} = "";
+    if(!defined $$hash{child}) {
+       for my $i (0 .. 9) {                              # copy over %0 .. %9
+          if(defined @wildcard[$i]) {
+             @{$$prog{var}}{$i} = @wildcard[$i];
+          } else {
+             @{$$prog{var}}{$i} = "";
+          }
        }
     }
+    delete @$hash{child};
+    delete @$hash{source};
 }
 
 #
@@ -218,6 +217,8 @@ sub spin_run
    ($$last{user},$$last{enactor},$$last{cmd}) = ($user,$enactor,$cmd);
    $$prog{cmd_last} = $cmd;
 
+   $$cmd{cmd} =~ s/^\s*{//;
+
    if(!defined $$user{internal}) {
       $$user{internal} = {                                   # internal data
          cmd => $cmd,                                       # to pass around
@@ -233,7 +234,7 @@ sub spin_run
    }
    if($$cmd{cmd} =~ /^\s*([^ ]+)(\s*)/) {
       my ($cmd_name,$arg) = lookup_command(\%command,$1,"$2$'",1);
-#      printf("SPIN_RUN: '%s'\n",$cmd);
+#      printf("SPIN_RUN: '%s'\n",$$cmd{cmd});
       &{@{@command{$cmd_name}}{fun}}($arg,$prog);
    }
    ($user,$enactor) = ($tmp_user,$tmp_enactor);

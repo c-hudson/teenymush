@@ -1445,12 +1445,12 @@ sub cmd_teleport
       }
    }
    
-   echo_room($user,"%s has left.",name($user));
+   echo_room($target,"%s has left.",name($target));
 
    move($target,$location) ||
       return echo("Fatal error, unable to teleport to that location");
 
-   echo_room($user,"%s has arrived.",name($user));
+   echo_room($target,"%s has arrived.",name($target));
 
    force($target,"look");
 }
@@ -2055,67 +2055,95 @@ sub cmd_inventory
     }
 }
 
+
+#
+# cmd_look
+#
+#    Show the player what is around it.
+#
 sub cmd_look
 {
    my $txt = shift;
-   my ($flag,$hash,@exit);
+   my ($flag,$target,@exit);
 
-#   printf("%s",print_var($user));
-   my $perm = hasperm($user,"LOOK");
 
-   if($txt =~ /^\s*(.+?)\s*$/) {
-      if(!($hash = locate_object($user,$1))) {
-         return echo($user,"I don't see that here.");
-      }
-   } else {
-      $hash = loc_obj($user);
+   if($txt =~ /^\s*$/) {
+      $target = loc_obj($user);
+   } elsif(!($target = locate_object($user,$txt))) {
+      return echo($user,"I don't see that here.");
    }
 
-   echo($user,"%s",obj_name($hash,$perm));
-   if((my $desc = get($$hash{obj_id},"DESCRIPTION"))) {
+   echo($user,"%s",obj_name($target));
+   if((my $desc = get($$target{obj_id},"DESCRIPTION"))) {
       echo($user,"%s",evaluate($desc)) if $desc ne undef;
    }
 
-   for my $hash (@{sql($db,"  SELECT con.obj_id, obj_name " .
-                           "    FROM content con, object obj, " .
-                           "         flag flg, flag_definition fde ".
-                           "   WHERE obj.obj_id = con.obj_id " .
-                           "     AND flg.obj_id = obj.obj_id ".
-                           "     AND flg.fde_flag_id = fde.fde_flag_id ".
-                           "     AND con_source_id = ?  " .
-                           "     AND fde.fde_name in ('OBJECT','PLAYER') " .
-                           "ORDER BY con.con_created_date",
-                           $$hash{obj_id}
-                          )}) {
-#      printf("WHO %s: loggedin='%s',same='%s',player='%s'\n",
-#         $$hash{obj_name},loggedin($hash),!same($user,$hash),player($hash));
-      if((loggedin($hash) && !same($user,$hash)) || !player($hash)) {
-         if($flag eq undef) {
-            echo($user,"Contents:");
-            $flag = 1;
-         }
-         echo($user,obj_name($hash,$perm));
-      }
+   for my $hash (@{sql($db,
+       "select   group_concat(distinct fde_letter " .
+       "                      order by fde_order " .
+       "                      separator '') flags, " .
+       "         obj.obj_id," .
+       "         min(obj.obj_name) obj_name, " .
+       "         min(" .
+       "             case " .
+       "                when fde_name in ('EXIT','OBJECT','PLAYER') then " .
+       "                   fde_name  " .
+       "             END " .
+       "            ) obj_type, " .
+       "         case  " .
+       "            when min(sck.sck_socket) is null then " .
+       "               'N' " .
+       "            else " .
+       "               'Y' " .
+       "         END online" .
+       "    from content con, " .
+       "         (  select fde.fde_order, obj_id, fde_letter, fde_name " .
+       "              from flag flg, flag_definition fde " .
+       "             where fde.fde_flag_id = flg.fde_flag_id " .
+       "             union all " .
+       "            select 99 fde_order, obj_id, 'c' fde_letter, " .
+       "                   'CONNECTED' fde_name ".
+       "              from socket sck " .
+       "         ) flg, " .
+       "         object obj left join (socket sck) " .
+       "            on ( obj.obj_id = sck.obj_id)  " .
+       "   where con.obj_id = obj.obj_id " .
+       "     and flg.obj_id = con.obj_id " .
+       "     and con.con_source_id = ? ".
+       "     and con.obj_id != ? " .
+       "group by con.obj_id " .
+       "order by con_created_date",
+       $$target{obj_id},
+       $$user{obj_id}
+      )}) {
+
+       # skip non-connected players
+       next if($$hash{obj_type} eq "PLAYER" && $$hash{online} eq "N");
+
+       if($$hash{obj_type} eq "EXIT") {                   # store exits for
+          if($$hash{flag} !~ /D/) {                                 # later
+             push(@exit,first($$hash{obj_name}));
+          }
+       } elsif($$hash{obj_type} =~ /^(PLAYER|OBJECT)$/) {
+          echo($user,"Contents:") if(++$flag == 1);
+          if(controls($user,$hash)) {                    # add object info?
+             echo($user,"%s(#%s%s)",$$hash{obj_name},$$hash{obj_id},
+                $$hash{flags});
+          } else {
+             echo($user,"%s",$$hash{obj_name});
+          }
+       }
    }
-   for my $hash (@{sql($db,"  SELECT obj_name " .
-                           "    FROM content con, object obj, " . 
-                           "         flag flg, flag_definition fde ".
-                           "   WHERE con.obj_id = obj.obj_id " .
-                           "     AND flg.obj_id = obj.obj_id ".
-                           "     AND flg.fde_flag_id = fde.fde_flag_id ".
-                           "     AND con_source_id = ?  " .
-                           "     AND fde.fde_name = 'EXIT' " .
-                           "ORDER BY con_created_date",
-                           $$hash{obj_id}
-                      )}) {
-      push(@exit,first($$hash{obj_name}));
-   }
-   if($#exit >= 0) {
+   if($#exit >= 0) {                                    # add exits if any
       echo($user,"Exits:");
       echo($user,join("  ",@exit));
    }
-   force($hash,get($hash,"ADESCRIBE"));
+   force($target,get($target,"ADESCRIBE"));                 # handle adesc
 }
+
+
+
+
 
 sub cmd_pose
 {

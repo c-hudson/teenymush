@@ -52,6 +52,10 @@ sub sql
    $sql =~ s/\s{2,999}/ /g;
    @info{sql_last} = $sql;
    @info{sql_last_args} = join(',',@args);
+#   if($sql =~ /flag_permission/i) {
+#   printf("SQL: '%s'\n",$sql);
+#   printf("     '%s'\n",$info{sql_last_args});
+#   }
 
    # connected/reconnect to DB if needed
    if(!defined $$con{db} || !$$con{db}->ping) {

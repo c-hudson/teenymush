@@ -50,7 +50,7 @@ sub mush_command
 
 sub priority
 {
-   if(hasflag($user,"WIZARD") || hasflag($user,"GOD")) {
+   if(perm($user,"HIGH_PRORITY")) {
       return 10;
    } else {
       return 1;

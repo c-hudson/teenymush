@@ -20,7 +20,7 @@ delete @honey{keys %honey};
 @honey{page}          = sub { return honey_page(@_);                     };
 @honey{help}          = sub { return honey_help(@_);                     };
 # ------------------------------------------------------------------------#
-@command{"\@honey"}   = { help => "Put a user into the HoneyPot",
+@command{"\@honey"}  = { help => "Put a user into the HoneyPot",
                          fun  => sub { return &cmd_honey(@_); }          };
 @command{say}        = { help => "Broadcast a message to everyone in the room",
                          fun  => sub { return &cmd_say(@_); }            };
@@ -100,7 +100,7 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_describe(@_); }};
 @command{"\@pemit"}  = { help => "Send a mesage to an object or person",
                          fun  => sub { cmd_pemit(@_); }};
-@command{"\@emit"}  = { help => "Send a mesage to an object or person",
+@command{"\@emit"}   = { help => "Send a mesage to an object or person",
                          fun  => sub { cmd_emit(@_); }};
 @command{"think"}    = { help => "Send a mesage to just yourself",
                          fun  => sub { cmd_think(@_); }};
@@ -108,34 +108,32 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_version(@_); }};
 @command{"\@link"}   = { help => "Set the destination location of an exit",
                          fun  => sub { cmd_link(@_); }};
-@command{"\@teleport"}={ help => "Teleport an object somehwere else",
+@command{"\@teleport"}={ help => "Teleport an object somewhere else",
                          fun  => sub { cmd_teleport(@_); }};
 @command{"\@open"}   = { help => "Open an exit to another room",
                          fun  => sub { cmd_open(@_); }};
-@command{"\@exec"}   = { help => "Open an exit to another room",
-                         fun  => sub { cmd_exec(@_); }};
 @command{"\@uptime"} = { help => "Display the uptime of this server",
                          fun  => sub { cmd_uptime(@_); }};
 @command{"\@destroy"}= { help => "Destroy an object",
                          fun  => sub { cmd_destroy(@_); }};
-@command{"\@toad"} =   { help => "Destroy an player",
+@command{"\@toad"}   = { help => "Destroy an player",
                          fun  => sub { cmd_toad(@_); }};
-@command{"\@sleep"} =   { help => "Destroy an player",
+@command{"\@sleep"}  = { help => "Pause the a program for X seconds",
                          fun  => sub { cmd_sleep(@_); }};
 #@command{"\@update_hostname"} =   { help => "Perform hostname lookups on any connected player as needed",
 #                         fun  => sub { cmd_update_hostname(@_); }};
-@command{"\@list"}  =  { help => "List internal server data",
+@command{"\@list"}   = { help => "List internal server data",
                          fun  => sub { cmd_list(@_); }};
-@command{"score"}   =  { help => "Lists how many pennies you have",
+@command{"score"}    = { help => "Lists how many pennies you have",
                          fun  => sub { echo($user,"You have 0 pennies."); }};
 
-@command{"\@recall"}=  { help => "Recall output sent to you",
+@command{"\@recall"} = { help => "Recall output sent to you",
                          fun  => sub { cmd_recall(@_); }};
-@command{"\@telnet"} ={ help => "open a connection to the internet",
+@command{"\@telnet"} = { help => "open a connection to the internet",
                          fun  => sub { cmd_telnet(@_); }};
 @command{"\@reset"}  = { help => "Clear the telnet buffers",
                          fun  => sub { cmd_reset(@_); }};
-@command{"\@send"}    ={ help => "Send data to a connected socket",
+@command{"\@send"}   = { help => "Send data to a connected socket",
                          fun  => sub { cmd_send(@_); }};
 @command{"\@password"}={ help => "Change your password",
                          fun  => sub { cmd_password(@_); }};
@@ -147,7 +145,7 @@ delete @honey{keys %honey};
 @command{"\@ps"}      ={ help => "Provide details about the engine queue",
                          fun  => sub { cmd_ps(@_); }};
 @command{"\@kill"}  ={ help => "Kill a process",
-                         fun  => sub { cmd_kill(@_); }};
+                         fun  => sub { cmd_killpid(@_); }};
 @command{"\@var"}     ={ help => "Set a local variable",
                          fun  => sub { cmd_var(@_); }};
 @command{"\@dolist"}  ={ help => "Loop through a list of variables",
@@ -156,14 +154,22 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_while(@_); }};
 @command{"\@crash"}   ={ help => "Crash the MUSH",
                          fun  => sub { my $foo; @{$$foo{crash}}; }};
+@command{"\@\@"}     = { help => "A comment, will be ignored ",
+                         fun  => sub { return;}                          };
 # --[ aliases ]-----------------------------------------------------------#
 
-@command{"\@version"}= { fun  => sub { cmd_version(@_); }};
-@command{e}          = { fun  => sub { cmd_ex(@_); }                     };
-@command{p}          = { fun  => sub { cmd_page(@_); }                   };
-@command{"huh"}      = { fun  => sub { return cmd_huh(@_); }             };
-@command{w}          = { fun  => sub { return &cmd_whisper(@_); }        };
-@command{i}          = { fun  => sub { return &cmd_inventory(@_); }      };
+@command{"\@version"}= { fun  => sub { cmd_version(@_); },
+                         alias=> 1                                       };
+@command{e}          = { fun  => sub { cmd_ex(@_); },                       
+                         alias=> 1                                       };
+@command{p}          = { fun  => sub { cmd_page(@_); },
+                         alias=> 1                                       };
+@command{"huh"}      = { fun  => sub { return cmd_huh(@_); },
+                         alias=> 1                                       };
+@command{w}          = { fun  => sub { return &cmd_whisper(@_); },
+                         alias=> 1                                       };
+@command{i}          = { fun  => sub { return &cmd_inventory(@_); },
+                         alias=> 1                                       };
 @command{"\@\@"}     = { fun  => sub { return;}                          };
 
  
@@ -174,12 +180,15 @@ sub cmd_huh         { echo($user,"Huh?  (Type \"help\" for help.)");     }
 sub cmd_offline_huh { my $sock = $$user{sock};
                       printf($sock "%s ",getfile("login.txt"));          }
 sub cmd_version     { echo($user,"TeenyMUSH 0.1 [cmhudson\@gmail.com]"); }
-sub cmd_exec        { echo($user,"Exec: '%s'\n",@_[1]); }
 
 sub cmd_reset
 {
-   delete @info{io};
-    echo($user,"Telenet connections reset.");
+   if(!perm($user,"RESET")) {
+     return err("Permission Denied.");
+   } else {
+     delete @info{io};
+     echo($user,"Telenet connections reset.");
+  }
 }
 
 #
@@ -392,7 +401,9 @@ sub cmd_honey
    my $match = 0;
    my $name;
 
-   if($txt =~ /^\s*([^ ]+)\s*$/) {
+   if(!perm($user,"HONEY")) {
+      return err("Permission Denied.");
+   } elsif($txt =~ /^\s*([^ ]+)\s*$/) {
       for my $who (@{sql("select obj_name, sck_socket " .
                           "  from socket sck, object obj " .
                           " where obj.obj_id = sck.obj_id " .
@@ -429,13 +440,15 @@ sub cmd_var
     }
 }
 
-sub cmd_kill
+sub cmd_killpid
 {
    my ($txt,$prog) = @_;
 
    my $engine = @info{engine};
 
-   if($txt =~ /^\s*(\d+)\s*$/) {
+   if(!perm($user,"KILLPID")) {
+      return err("Permission Denied.");
+   } elsif($txt =~ /^\s*(\d+)\s*$/) {
       if(defined $$engine{$1}) {
          delete @$engine{$1};
          echo($user,"PID '%s' has been killed",$1);
@@ -504,6 +517,7 @@ sub cmd_while
     my ($txt,$prog) = @_;
     my (%last,$first);
 
+    return err("Permission Denied.") if(!perm($user,"WHILE"));
     my $cmd = $$user{cmd_data};
     my $command = $$user{command_data};
     if(!defined $$cmd{while_test}) {                 # initialize "loop"
@@ -540,6 +554,8 @@ sub cmd_dolist
 {
     my ($txt,$prog) = @_;
     my %last;
+
+    return err("Permission Denied.") if(!perm($user,"DOLIST"));
 
     my $cmd = $$user{cmd_data};
     if(!defined $$cmd{dolist_list}) {                 # initialize "loop"
@@ -598,7 +614,9 @@ sub cmd_password
 {
    my $txt = shift;
 
-   if($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*$/) {
+   if(!perm($user,"PASSWORD")) {
+      return err("Permission Denied.");
+   } elsif($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*$/) {
 
       good_password($2) || return;
 
@@ -727,6 +745,9 @@ sub cmd_switch
     my (@list) = (bannana_split(shift,',',1));
     my $prog = shift;
 
+    if(!perm($user,"SWITCH")) {
+       return err("Permission Denied.");
+    }
     my ($first,$second) = (get_segment2(shift(@list),"="));
     $first = evaluate($first,$prog);
     $first =~ s/[\r\n]//g;
@@ -758,7 +779,9 @@ sub cmd_newpassword
 {
    my $txt = shift;
 
-   if($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*$/) {
+   if(!perm($user,"NEWPASSWORD")) {
+     return err("Permission Denied.");
+   } elsif($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*$/) {
 
       my $player = locate_player($1) ||
          return err("Unknown player '%s' specified",$1);
@@ -789,7 +812,9 @@ sub cmd_telnet
    my $pending = 1;
 #   return 0;
 
-   if(!hasflag($user,"SOCKET") && !hasflag($user,"WIZARD")) {
+   if(!perm($user,"TELNET")) {
+      return err("Permission Denied.");
+   } elsif(!hasflag($user,"SOCKET") && !hasflag($user,"WIZARD")) {
       return echo($user,"* Permission Denied *");
    } elsif($txt =~ /^\s*([^ ]+)\s*=\s*([^:]+)\s*:\s*(\d+)\s*$/ ||
            $txt =~ /^\s*([^ ]+)\s*=\s*([^:]+)\s* \s*(\d+)\s*$/) {
@@ -857,7 +882,9 @@ sub cmd_send
 {
     my ($txt,$prog) = @_;
 
-    if($txt =~ /^\s*([^ ]+)\s*=/) {
+    if(!perm($user,"SEND")) {
+       return err("Permission Denied.");
+    } elsif($txt =~ /^\s*([^ ]+)\s*=/) {
        my $hash = one($db,
                         "select * " .
                         "  from socket ".
@@ -929,7 +956,9 @@ sub cmd_force
 {
     my $txt = shift;
 
-    if($txt =~ /^\s*([^ ]+)\s*=\s*/) {
+    if(!perm($user,"FORCE")) {
+       return err("Permission Denied.");
+    } elsif($txt =~ /^\s*([^ ]+)\s*=\s*/) {
       my $target = locate_object($user,$1,"LOCAL") ||
          return echo($user,"I can't find that");
 
@@ -956,7 +985,9 @@ sub cmd_list
 {
    my $txt = shift;
 
-   if($txt =~ /^\s*site.*$/) {
+   if(!perm($user,"LIST")) {
+      return err("Permission Denied.");
+   } elsif($txt =~ /^\s*site.*$/) {
        echo($user,"%s",table("select ste_id Id, " .
                         "       ste_pattern Pattern, " .
                         "       vao_value Type,".
@@ -977,8 +1008,10 @@ sub cmd_destroy
 {
    my $txt = shift;
 
-   if($txt =~ /^\s*$/) {
-       return echo($user,"syntax: \@destroy <object>");
+   if(!perm("DESTROY")) {
+       return err("Permission Denied.");
+   } elsif($txt =~ /^\s*$/) {
+       return err("syntax: \@destroy <object>");
    }
 
    my $target = locate_object($user,$txt,"LOCAL") ||
@@ -1016,7 +1049,7 @@ sub cmd_toad
 
    if(!hasflag($target,"PLAYER")) {
       return echo($user,"Only Players can be \@toaded");
-   } elsif(!hasflag($user,"WIZARD")) {
+   } elsif(!perm($user,"TOAD")) {
       return echo($user,"Permission Denied.");
    }
 
@@ -1050,8 +1083,9 @@ sub cmd_pemit
    my ($txt,$prog) = @_;
    $prog = @{$$user{internal}}{prog} if($prog eq undef);
 
-   if($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
-      printf("TARGET: '$1'\n");
+   if(!perm($user,"PEMIT")) {
+      return err("Permission Denied.");
+   } elsif($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
       my $target = locate_object($user,$1,"local");
       if($target eq undef) {
          return echo($user,"I don't see that here");
@@ -1066,6 +1100,8 @@ sub cmd_pemit
 sub cmd_emit
 {
    my ($txt,$prog) = @_;
+
+   return err("Permission Denied.") if(!perm($user,"EMIT"));
 
    my $txt = evaluate($txt,$prog);
    echo($user,"%s",$txt);
@@ -1093,6 +1129,9 @@ sub cmd_take
 {
    my $txt = shift;
 
+   if(!perm($user,"TAKE")) {
+      return err("Permission Denied.");
+   }
    my $target = locate_object($user,$txt,"LOCAL") ||
       return echo($user,"I don't see that here.");
 
@@ -1115,7 +1154,9 @@ sub cmd_name
 {
    my $txt = shift;
 
-   if($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*$/) {
+   if(!perm($user,"NAME")) {
+      return err("Permission Denied.");
+   } elsif($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*$/) {
       my $target = locate_object($user,$1,"LOCAL") ||
          return echo($user,"I don't see that here.");
       my $name = trim($2);
@@ -1152,6 +1193,9 @@ sub cmd_enter
 {
    my $txt = shift;
 
+   if(!perm($user,"ENTER")) {
+      return err("Permission Denied.");
+   }
    my $target = locate_object($user,$txt,"LOCAL") ||
       return echo($user,"I don't see that here.");
 
@@ -1286,33 +1330,47 @@ sub cmd_last
       $what = $$user{obj_id};
    }
 
-   if($what eq $$user{obj_id} || hasflag($user,"WIZARD")) {
-      $hostname = "con_hostname Hostname,";
+   if($what eq $$user{obj_id} || perm($user,"LAST")) {
+      $hostname = "skh_hostname Hostname,";
    }
 
    # show target's total connections
    echo($user,"%s",
-              table("  select obj_name Name, " .
+              table("  select obj_name Name," .
                     "         $hostname " .
-                    "         min(case " .
-                    "                when con_type = 1 then " .
-                    "                   con_timestamp " .
-                    "         end) Connect, ".
-                    "         min(case " .
-                    "                when con_type = 2 then " .
-                    "                   con_timestamp " .
-                    "         end) Disconnect ".
-                    "    from connect con, object obj, valid_option " .
-                    "   where con.obj_id = obj.obj_id " .
-                    "     and obj.obj_id = ? ".
-                    "     and vao_table = 'connect' " .
-                    "     and vao_code = con_type " .
-                    "group by obj_name, con_hostname, con_socket ".
-                    "order by con_timestamp desc " .
-                    "   limit 10",
+                    "         skh_start_time End," .
+                    "         skh_end_time Start" .
+                    "    from socket_history skh, " .
+                    "         object obj " .
+                    "   where skh_success = 1" .
+                    "     and skh.obj_id = ? " .
+                    "     and skh.obj_id = obj.obj_id " .
+                    "order by skh_start_time desc " .
+                    "limit 10",
                     $what
                    )
-        );
+        );;
+#              table("  select obj_name Name, " .
+#                    "         $hostname " .
+#                    "         min(case " .
+#                    "                when con_type = 1 then " .
+#                    "                   con_timestamp " .
+#                    "         end) Connect, ".
+#                    "         min(case " .
+#                    "                when con_type = 2 then " .
+#                    "                   con_timestamp " .
+#                    "         end) Disconnect ".
+#                    "    from connect con, object obj, valid_option " .
+#                    "   where con.obj_id = obj.obj_id " .
+#                    "     and obj.obj_id = ? ".
+#                    "     and vao_table = 'connect' " .
+#                    "     and vao_code = con_type " .
+#                    "group by obj_name, con_hostname, con_socket ".
+#                    "order by con_timestamp desc " .
+#                    "   limit 10",
+#                    $what
+#                   )
+#        );
  
    if((my $val=one_val("select count(*) value " .
                        "  from connect " .
@@ -1464,7 +1522,7 @@ sub cmd_print
    my $txt = shift;
    $txt =~ s/^\s+|\s+$//g;
 
-   if(!hasflag($user,"WIZARD")) {
+   if(!perm($user,"PRINT")) {
       echo($user,"Permission denied");
    } elsif($txt eq "connected") {
       echo($user,"%s",print_var(\%connected));
@@ -1481,7 +1539,7 @@ sub cmd_clear
 
    if($txt ne undef) {
       echo($user,"\@clear expect no arguments");
-   } elsif(hasperm($user,"CLEAR")) {
+   } elsif(!perm($user,"CLEAR")) {
       $| = 1;
       print "\033[2J";    #clear the screen
       print "\033[0;0H"; #jump to 0,0
@@ -1510,7 +1568,7 @@ sub cmd_code
 
 sub cmd_commit
 {
-   if(hasperm($user,"COMMIT")) {
+   if(perm($user,"COMMIT")) {
       echo($user,"You force a commit to the database");
       commit($db);
    } else {
@@ -1529,14 +1587,24 @@ sub cmd_quit
 sub cmd_help
 {
    my $txt = shift;
+   my %permalias = (
+      '&' => 'set',
+      '@cls' => 'clear'
+   );
+
 
    if($txt eq undef) {
       echo($user,"HELP\n\n");
       echo($user,"   This is the Ascii Server online help system\n\n");
 
       for my $key (sort keys %command) {
-         if(defined @{@command{$key}}{help}) {
-            echo($user,"   %-10s : %s\n",$key,@{@command{$key}}{help});
+         if(defined @{@command{$key}}{alias}) {
+            # ignore
+         } elsif((defined @permalias{$key} &&
+            perm($user,@permalias{$key})) ||
+            (!defined @permalias{$key} &&
+            perm($user,$key))) {
+            echo($user,"   %-10s : %s",$key,@{@command{$key}}{help});
          }
       }
    } elsif(defined @command{trim(lc($txt))}) {
@@ -1586,7 +1654,9 @@ sub cmd_create
 {
    my $txt = shift;
 
-   if(quota_left($user) <= 0) {
+   if(!perm($user,"CREATE")) {
+      return err("Permission Denied");
+   } elsif(quota_left($user) <= 0) {
       return err("You are out of QUOTA to create objects.");
    }
 
@@ -1603,7 +1673,9 @@ sub cmd_link
    my $txt = shift;
    my ($exit_name,$exit,$dest);
 
-   if($txt =~ /^\s*([^ ]+)\s*=\s*here\s*$/i) {
+   if(!perm($user,"LINK")) {
+      return err("Permission Denied");
+   } elsif($txt =~ /^\s*([^ ]+)\s*=\s*here\s*$/i) {
       ($exit_name,$dest) = ($1,loc($user));
    } elsif($txt =~ /^\s*([^ ]+)\s*=\s*#(\d+)\s*$/) {
       ($exit_name,$dest) = ($1,$2);
@@ -1651,7 +1723,9 @@ sub cmd_dig
       return;
    }
 
-   if($in ne undef && $out ne undef && quota_left($user) < 3) {
+   if(!perm($user,"DIG")) {
+      return err("Permission denied.");
+   } elsif($in ne undef && $out ne undef && quota_left($user) < 3) {
       return err("You need a quota of 3 or better to complete this \@dig");
    } elsif(($in ne undef || $out ne undef) && quota_left($user) < 2) {
       return err("You need a quota of 2 or better to complete this \@dig");
@@ -1705,7 +1779,9 @@ sub cmd_open
    my $txt = shift;
    my ($exit,$destination);
   
-   if($txt =~ /^\s*([^=]+)\s*=\s*([^ ]+)\s*$/ ||
+   if(!perm($user,"OPEN")) {
+     return err("Permission Denied.");
+   } elsif($txt =~ /^\s*([^=]+)\s*=\s*([^ ]+)\s*$/ ||
       $txt =~ /^\s*([^ ]+)\s*$/) {
       ($exit,$destination) = ($1,$2);
    } else {
@@ -1754,9 +1830,13 @@ sub cmd_connect
    my $sock = @$user{sock};
    my $hash;
  
-   if($txt =~ /^\s*([^ ]+) ([^ ]+)\s*$/) {              #parse player password
+   if($txt =~ /^\s*([^ ]+) ([^ ]+)\s*$/ ||              #parse player password
+      $txt =~ /^\s*([^ ]+)\s*$/) {
+ 
       if(($hash=one($db,"select * from object where lower(obj_name) = ?",$1))) {
-         if(one($db,"select obj_password ".
+
+         if(hasflag($hash,"GUEST") ||
+            one($db,"select obj_password ".
                     "  from object " .
                     " where obj_id = ? " .
                     "   and obj_password = password(?)",
@@ -1886,7 +1966,9 @@ sub cmd_set
    my $txt = shift;
    my ($target,$attr,$value,$flag);
 
-   if($txt =~ /^\s*([^ ]+)\/\s*([^ ]+)\s*=\s*(.*?)\s*$/s) { # attribute
+   if(!perm($user,"SET")) {
+      return err("Permission Denied.");
+   } elsif($txt =~ /^\s*([^ ]+)\/\s*([^ ]+)\s*=\s*(.*?)\s*$/s) { # attribute
       ($target,$attr,$value) = (locate_object($user,$1),$2,$3);
       return echo($user,"Unknown object '%s'",$1) if !$target;
       controls($user,$target) || return echo($user,"Permission denied");
@@ -2021,7 +2103,6 @@ sub inventory
 {
    my $obj = ($#_ == -1) ? $user : shift;
    my @result;
-    my $perm = hasperm($user,"INVENTORY");
 
    for my $hash (@{sql($db,"  SELECT con.obj_id, obj_name " .
                            "    FROM content con, object obj, " .
@@ -2035,7 +2116,7 @@ sub inventory
                            $$obj{obj_id}
                           )}) {
       if((loggedin($hash) && !same($user,$hash)) || !player($hash)) {
-         push(@result,obj_name($hash,$perm));
+         push(@result,obj_name($hash));
       }
    }
    return \@result;
@@ -2158,7 +2239,9 @@ sub cmd_set2
    my $txt = shift;
 #   $txt =~ s/\r\n/<BR>/g;
 
-   if($txt =~ /^\s*&([^& ]+)\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
+   if(!perm($user,"SET")) {
+      return err("Permission Denied.");
+   } elsif($txt =~ /^\s*&([^& ]+)\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
       $$user{inattr} = {
          attr => $1,
          object => $2,
@@ -2183,7 +2266,7 @@ sub cmd_say
 
 sub cmd_reload_code
 {
-   if(hasperm($user,"LOAD_CODE")) {
+   if(perm($user,"RELOAD")) {
       my $result = load_all_code($user);
 
       if($result eq undef) {
@@ -2215,7 +2298,9 @@ sub nvl
 
 sub short_hn
 {
-   if(@_[0] =~ /[A-Za-z]/ && @_[0] =~ /\.([^\.]+)\.([^\.]+)$/) {
+   if(@_[0] =~ /^\s*([0-9\.]+)\s*$/) {
+      return $1;
+   } elsif(@_[0] =~ /[A-Za-z]/ && @_[0] =~ /\.([^\.]+)\.([^\.]+)$/) {
       return "*.$1.$2";
    } else {
       return @_[0];
@@ -2243,7 +2328,7 @@ sub who
 {
    my $flag = shift;
    my ($max,@who,$idle,$count,$out) = (2);
-   my $hasperm = (hasperm($user,"WHO") && !$flag) ? 1 : 0;
+   my $hasperm = (perm($user,"WHO") && !$flag) ? 1 : 0;
 
    # query the database for connected user, location, and socket
    # details.

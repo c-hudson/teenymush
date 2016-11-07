@@ -152,7 +152,7 @@ sub table
 
    # determine the max column length for each column, and store the
    # output of the sql so it doesn't have to be run twice.
-   echo($user,"%s",$sql);
+#   echo($user,"%s",$sql);
    for my $hash (@{sql($db,$sql,@args)}) {
       push(@data,$hash);                                     # store results
       for my $key (keys %$hash) {
@@ -285,10 +285,8 @@ sub controls
       return 1;
    } elsif($$target{obj_owner} eq $$enactor{obj_id}) {   # is owned by object
       return 1;
-   } elsif(hasflag($enactor,"WIZARD")) {                   # i have the power
+   } elsif(perm($enactor,"CONTROLS")) {                    # i have the power
       return 1;                                                      # He-man
-   } elsif(hasflag($enactor,"GOD")) {
-      return 1;                                            # no-atheists here
    } else {
       return 0;                                                    # skeletor
    }
@@ -841,27 +839,21 @@ sub set_flag
     my $who = $$user{obj_name};;
     my ($remove,$count);
 
-    if($flag eq "PLAYER" && $who eq undef) {
-       $who = "CREATE_USER";
-    }
-
-    if($flag =~ /^\s*!\s*/) {                        # remove flag or add it
-       $flag = $';
-       $remove = 1;
-    }
+    $who = "CREATE_USER" if($flag eq "PLAYER" && $who eq undef);
+    ($flag,$remove) = ($',1) if($flag =~ /^\s*!\s*/);         # remove flag 
 
     # lookup flag info
     my $hash = one($db,
-                   "select fde1.fde_flag_id, " .
-                   "       fde1.fde_name, " .
-                   "       fde2.fde_name fde_permission_name," .
-                   "       fde1.fde_permission" .
-                   "       from flag_definition fde1," .
-                   "            flag_definition fde2 " .
-                   " where fde1.fde_permission = fde2.fde_flag_id " .
-                   "   and fde1.fde_name=upper(?)",
-                   $flag
-                 );
+        "select fde1.fde_flag_id, " .
+        "       fde1.fde_name, " .
+        "       fde2.fde_name fde_permission_name," .
+        "       fde1.fde_permission" .
+        "       from flag_definition fde1," .
+        "            flag_definition fde2 " .
+        " where fde1.fde_permission = fde2.fde_flag_id " .
+        "   and fde1.fde_name=upper(?)",
+        $flag
+       );
 
     if($hash eq undef || !defined $$hash{fde_flag_id} ||
        $$hash{fde_name} eq "ANYONE") {       # unknown flag?
@@ -869,7 +861,9 @@ sub set_flag
     }
 
     if($override || $$hash{fde_permission_name} eq "ANYONE" ||
-       ($$hash{fde_permission} >= 0 && hasflag($user,$$hash{fde_name}))) {
+       ($$hash{fde_permission} >= 0 && 
+        hasflag($user,$$hash{fde_permission_name})
+       )) {
 
        # check if the flag is already set
        my $count = one_val($db,"select count(*) value from flag ".
@@ -909,17 +903,35 @@ sub set_flag
     }
 }
 
-sub hasperm
+sub perm
 {
    my ($target,$perm) = @_;
 
-   return one_val($db,"select if(count(*) > 0,1,0) value " .
-                      "  from flag flg, flag_definition fde " .
-                      " where flg.fde_flag_id = fde.fde_flag_id " .
-                      "   and flg.obj_id = ? " .
-                      "   and fde_name in ( ? ,'WIZARD')",
-                      $$target{obj_id},
-                      uc($perm));
+   $perm =~ s/@//;
+   my $result = one_val($db,
+                  "select min(fpr_permission) value " .
+                  "  from flag_permission fpr1, ".
+                  "       flag flg1 " .
+                  " where fpr1.fde_flag_id = flg1.fde_flag_id " .
+                  "   and flg1.obj_id = ? " .
+                  "   and fpr1.fpr_name in ('ALL', upper(?) )" .
+                  "   and not exists ( " .
+                  "      select 1 " .
+                  "        from flag_permission fpr2, flag flg2 " .
+                  "       where fpr1.fpr_priority > fpr2.fpr_priority " .
+                  "         and flg2.fde_flag_id = fpr2.fde_flag_id " .
+                  "         and flg2.fde_flag_id = flg1.fde_flag_id " .
+                  "         and flg2.obj_id = flg1.obj_id " .
+                  "   ) " .
+                  "group by obj_id, fpr_name",
+                  $$target{obj_id},
+                  $perm
+                 );
+    if($result eq undef) {
+       return 1;
+    } else {
+       return $result - 1;
+    }
 }
 
 sub hasflag
@@ -1363,14 +1375,32 @@ sub getfile
 
 sub lastsite
 {
-   my $id = shift;
+   my $target = obj(shift);
 
-   return one_val($db,"SELECT con_hostname value" .
-                      "  FROM connect " .
-                      " WHERE con_connect_id = (SELECT max(con_connect_id) " .
-                      "                           FROM connect " .
-                      "                          WHERE obj_id = ?)",
-                      $id) || return "N/A";
+   return one_val($db,
+                  "SELECT skh_hostname value " .
+                  "  from socket_history skh1 " .
+                  " where obj_id = ? " .
+                  "   and skh_id = (select max(skh_id) " .
+                  "                   from socket_history skh2 " .
+                  "                  where skh1.obj_id = skh2.obj_id )",
+                  $$target{obj_id}
+                 );
+}
+
+sub firstsite
+{
+   my $target = obj(shift);
+
+   return one_val($db,
+                  "SELECT skh_hostname value " .
+                  "  from socket_history skh1 " .
+                  " where obj_id = ? " .
+                  "   and skh_id = (select min(skh_id) " .
+                  "                   from socket_history skh2 " .
+                  "                  where skh1.obj_id = skh2.obj_id )",
+                  $$target{obj_id}
+                 );
 }
 
 #
@@ -1432,9 +1462,9 @@ sub quota_left
 {
    my $obj = obj(shift);
 
-#   if(hasflag($obj,"WIZARD")) {
-#      return 1;
-#   } else {
+   if(perm($obj,"QUOTA")) {
+      return 10;
+   } else {
       return one_val($db,
                      "select max(if(obj_id=?,obj_quota,0)) - count(*) value " .
                      "  from object " .
@@ -1444,7 +1474,7 @@ sub quota_left
                      $$obj{obj_id},
                      $$obj{obj_id}
                     );
-#   }
+   }
 }
 
 #

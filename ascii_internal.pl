@@ -313,10 +313,12 @@ sub handle_object_listener
                     "   and obj.obj_id = ? " .
                     "   and ? like replace(substr(atr_value,1," .
                     "                      instr(atr_value,':')-1),'*','%')" .
+                    "   and flg.atr_id is null " .
+                    "   and fde_type = 1 " .
                     "   and fde_name = ? ",
                     $$target{obj_id},
                     "\!" . lc($msg),
-                    "SOCKET"
+                    "SOCKET_PUPPET"
                    )
                 }) {
       ($$user{0},$$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
@@ -369,9 +371,11 @@ sub handle_listener
    my $msg = sprintf($txt,@args);
 
    # search the $$user's location for things that listen
+#   printf("LISTEN: '%s'\n",$msg);
    for my $hash (@{sql("select obj.obj_id, " .
                     "       substr(atr_value,2,instr(atr_value,':')-2) cmd,".
-                    "       substr(atr_value,instr(atr_value,':')+1) txt ".
+                    "       substr(atr_value,instr(atr_value,':')+1) txt, ".
+                    "       atr.atr_id " .
                     "  from object obj, " .
                     "       attribute atr, " .
                     "       content con1," .
@@ -387,6 +391,8 @@ sub handle_listener
                     "   and con1.obj_id != con2.obj_id " .
                     "   and ? like replace(substr(atr_value,1," .
                     "                      instr(atr_value,':')-1),'*','%')" .
+                    "   and flg.atr_id is null " .
+                    "   and fde_type = 1 " .
                     "   and fde_name = ? ",
                     $$target{obj_id},
                     "\^" . lc($msg),
@@ -395,9 +401,21 @@ sub handle_listener
                 }) {
       $$hash{cmd} =~ s/\*/\(.*\)/g;
       $$hash{txt} =~ s/\r\s*|\n\s*//g;
-      if($msg =~ /^$$hash{cmd}$/) {
+
+      if(atr_hasflag($$hash{atr_id},"CASE")) {
+         #
+         # the select should really do the case comparison, but it would make
+         # a very messy select... so the code will just weed it out here
+         #
+         printf("CASE MATCH\n");
+         if($msg =~ /^$$hash{cmd}$/) {
+            mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
+         }
+      } elsif($msg =~ /^$$hash{cmd}$/i) {
+         printf("CASE !MATCH '$$hash{atr_id}'\n");
          mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
       } else {
+         printf("CASE !MATCH 2\n");
          mushrun($hash,$$hash{txt});
       }
       $match=1;                                   # signal mush command found
@@ -436,9 +454,9 @@ sub echo
 
    # handle objects set puppet
    if(!hasflag($target,"PLAYER")) {                         # handle objects
-#      if(defined $$target{raw} && $$target{raw} == 1) { # forward for ^listen
-##         handle_object_listener($target,"%s",$out);
-#      }
+      if(defined $$target{raw} && $$target{raw} == 1) { # forward for ^listen
+         handle_object_listener($target,"%s",$out);
+      }
       if(hasflag($target,"PUPPET")) {                    # forward if puppet
          for my $player (@{sql($db,
                                "select obj1.*, " .
@@ -662,7 +680,10 @@ sub flag_list
    for my $hash (@{sql($db,"select fde_name, fde_letter" .
                            "  from flag flg, flag_definition fde " . 
                            " where flg.fde_flag_id = fde.fde_flag_id " .
-                           "   and obj_id = ?",
+                           "   and obj_id = ? " .
+                           "   and flg.atr_id is null " .
+                           "   and fde_type = 1 " .
+                           "order by fde_order",
                            $$obj{obj_id}
                           )}) {
       push(@list,$$hash{$flag ? "fde_name" : "fde_letter"});
@@ -691,6 +712,8 @@ sub locate_player
                      "where obj.obj_id = flg.obj_id " .
                      "  and fde.fde_flag_id = flg.fde_flag_id " .
                      "  and fde_name = 'PLAYER' " .
+                     "  and flg.atr_id is null " .
+                     "  and fde_type = 1 " .
                      "  and obj.obj_id = ? ") ||
           return undef;
       return $target;
@@ -717,6 +740,8 @@ sub locate_player
                        " where obj.obj_id = flg.obj_id " .
                        "   and flg.fde_flag_id = fde.fde_flag_id " .
                        "   and fde.fde_name = 'PLAYER' " .
+                       "   and flg.atr_id is null " .
+                       "   and fde_type = 1 " .
                        "   and upper(obj_name) = upper(?) ",
                        $name
                       ) ||
@@ -760,7 +785,9 @@ sub locate_object
                            "   and flg.fde_flag_id = fde.fde_flag_id " .
                            "   and con.obj_id = obj.obj_id ".
                            "   and fde.fde_name in ('PLAYER','OBJECT', 'EXIT')".
-                           "   and upper(substr(obj_name,1,length(?)))=upper(?)".
+                           "  and upper(substr(obj_name,1,length(?)))=upper(?)".
+                           "   and atr_id is null " .
+                           "   and fde_type = 1 " .
                            "   and $where",
                     $name,
                     $name,
@@ -805,6 +832,8 @@ sub locate_exit
                       "   and con1.obj_id = obj.obj_id ".
                       "   and con1.con_source_id = con2.con_source_id " .
                       "   and fde.fde_name = 'EXIT' " .
+                      "   and atr_id is null " .
+                      "   and fde_type = 1 " .
                       "   and con2.obj_id = ? ",
                       $$user{obj_id}
                    )}) { 
@@ -851,13 +880,21 @@ sub set_flag
         "       from flag_definition fde1," .
         "            flag_definition fde2 " .
         " where fde1.fde_permission = fde2.fde_flag_id " .
+        "   and fde1.atr_id is null " .
+        "   and fde2.atr_id is null " .
+        "   and fde1.fde_type = 1 " .
+        "   and fde2.fde_type = 1 " .
         "   and fde1.fde_name=upper(?)",
         $flag
        );
 
     if($hash eq undef || !defined $$hash{fde_flag_id} ||
        $$hash{fde_name} eq "ANYONE") {       # unknown flag?
-       return "#-1 Unknown Flag";
+       return "#-1 Unknown Flag.";
+    }
+
+    if(!perm($object,$$hash{fde_name})) {
+       return "#-1 Permission Denied.";
     }
 
     if($override || $$hash{fde_permission_name} eq "ANYONE" ||
@@ -868,7 +905,8 @@ sub set_flag
        # check if the flag is already set
        my $count = one_val($db,"select count(*) value from flag ".
                                " where obj_id = ? " .
-                               "   and fde_flag_id = ?",
+                               "   and fde_flag_id = ?" .
+                               "   and atr_id is null ",
                                $$object{obj_id},
                                $$hash{fde_flag_id});
 
@@ -903,6 +941,108 @@ sub set_flag
     }
 }
 
+#
+# set_atr_flag
+#   Add a flag to an object. Verify that the object does not already have
+#   the flag first.
+#
+sub set_atr_flag
+{
+    my ($object,$atr,$flag,$override) = (obj($_[0]),$_[1],$_[2],$_[3]);
+    my $who = $$user{obj_name};
+    my ($remove,$count);
+
+    $who = "CREATE_USER" if($flag eq "PLAYER" && $who eq undef);
+    ($flag,$remove) = ($',1) if($flag =~ /^\s*!\s*/);         # remove flag 
+    
+
+    # lookup flag info
+    my $hash = one($db,
+        "select fde1.fde_flag_id, " .
+        "       fde1.fde_name, " .
+        "       fde2.fde_name fde_permission_name," .
+        "       fde1.fde_permission" .
+        "       from flag_definition fde1," .
+        "            flag_definition fde2 " .
+        " where fde1.fde_permission = fde2.fde_flag_id " .
+        "   and fde1.fde_type = 2 " .
+        "   and fde1.fde_name=upper(?)",
+        $flag
+       );
+
+    if($hash eq undef || !defined $$hash{fde_flag_id} ||
+       $$hash{fde_name} eq "ANYONE") {       # unknown flag?
+       return "#-1 Unknown Flag.";
+    }
+
+    if(!perm($object,$$hash{fde_name})) {
+       return "#-1 Permission Denied.";
+    }
+
+    if($override || $$hash{fde_permission_name} eq "ANYONE" ||
+       ($$hash{fde_permission} >= 0 && 
+        hasflag($user,$$hash{fde_permission_name})
+       )) {
+
+       # check if the flag is already set
+
+       my $atr_id = one_val($db,
+                     "select atr.atr_id value " .
+                     "  from attribute atr left join  " .
+                     "       (flag flg) on (flg.atr_id = atr.atr_id) " .
+                     " where atr.obj_id = ? " .
+                     "   and atr_name = upper(?) ",
+                     $$object{obj_id},
+                     $atr
+                    );
+
+       if($atr_id eq undef) {
+          return "#-1 Unknown attribute on object";
+       }
+
+       # see if flag is already set
+       my $flag = one_val($db,
+                          "select ofg_id value " .
+                          "  from flag " .
+                          " where atr_id = ? " .
+                          "   and fde_flag_id = ?",
+                          $atr_id,
+                          $$hash{fde_flag_id}
+                         );
+                               
+       # add flag to the object/user
+       if($flag ne undef && $remove) {
+          sql($db,
+              "delete from flag " .
+              " where ofg_id= ? ",
+              $flag
+             );
+          commit;
+          return "Flag Removed.";
+       } elsif($remove) {
+          return "Flag not set.";
+       } elsif($flag ne undef) {
+          return "Already Set.";
+       } else {
+          sql($db,
+              "insert into flag " .
+              "   (obj_id,ofg_created_by,ofg_created_date,fde_flag_id,atr_id)" .
+              "values " .
+              "   (?,?,now(),?,?)",
+              $$object{obj_id},
+              $who,
+              $$hash{fde_flag_id},
+              $atr_id);
+          commit;
+          return "#-1 Flag note removed [Internal Error]" if($$db{rows} != 1);
+          return "Set.";
+       }
+    } else {
+       return "#-1 Permission Denied.";
+    }
+}
+
+
 sub perm
 {
    my ($target,$perm) = @_;
@@ -915,6 +1055,7 @@ sub perm
                   " where fpr1.fde_flag_id = flg1.fde_flag_id " .
                   "   and flg1.obj_id = ? " .
                   "   and fpr1.fpr_name in ('ALL', upper(?) )" .
+                  "   and atr_id is null " .
                   "   and not exists ( " .
                   "      select 1 " .
                   "        from flag_permission fpr2, flag flg2 " .
@@ -934,18 +1075,43 @@ sub perm
     }
 }
 
+#
+# hasflag
+#    Return if an object has a flag or not
+#
 sub hasflag
 {
-   my ($target,$flag) = @_;
+   my ($target,$flag) = (obj(@_[0]),@_[1]);
 
-   $target = { obj_id => $target } if (ref($target) ne "HASH");
    return one_val($db,"select if(count(*) > 0,1,0) value " . 
                       "  from flag flg, flag_definition fde " .
                       " where flg.fde_flag_id = fde.fde_flag_id " .
+                      "   and atr_id is null ".
+                      "   and fde_type = 1 " .
                       "   and obj_id = ? " .
                       "   and fde_name = ? ",
                       $$target{obj_id},
                       uc($flag));
+}
+
+#
+# atr_hasflag
+#    Return if an object's attriubte has a flag or not
+#
+sub atr_hasflag
+{
+   my ($attribute,$flag) = @_;
+
+   return one_val($db,
+                 "select if(count(*) > 0,1,0) value " .
+                 "  from flag flg, flag_definition fde " .
+                 " where flg.fde_flag_id = fde.fde_flag_id " .
+                 "   and fde_type = 2 " .
+                 "   and atr_id = ? " .
+                 "   and fde_name = upper(?) ",
+                 $attribute,
+                 $flag
+                );
 }
 
 sub create_object
@@ -1069,6 +1235,8 @@ sub inuse_player_name
                   " where obj.obj_id = flg.obj_id " .
                   "   and flg.fde_flag_id = fde.fde_flag_id " .
                   "   and fde.fde_name = 'PLAYER' " .
+                  "   and atr_id is null " .
+                  "   and fde_type = 1 " .
                   "   and lower(obj_name) = lower(?) " .
                   "   and obj.obj_id != ?",
                   $name,
@@ -1541,5 +1709,19 @@ sub bannana_split                                          # balanced split
       }
    }
    return @result;
+}
+
+sub isatrflag
+{
+    my $txt = shift;
+    $txt = $' if($txt =~ /^\s*!/);
+
+    return one_val($db,
+                   "select count(*) value " .
+                   "  from flag_definition " .
+                   " where fde_name = upper(trim(?)) " .
+                   "   and fde_type = 2",
+                   $txt
+                   );
 }
 

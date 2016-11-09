@@ -170,6 +170,8 @@ delete @honey{keys %honey};
                          alias=> 1                                       };
 @command{i}          = { fun  => sub { return &cmd_inventory(@_); },
                          alias=> 1                                       };
+@command{"\@tel"}    = { fun  => sub { return &cmd_teleport(@_); },
+                         alias=> 1                                       };
 @command{"\@\@"}     = { fun  => sub { return;}                          };
 
  
@@ -812,10 +814,13 @@ sub cmd_telnet
    my $pending = 1;
 #   return 0;
 
-   if(!perm($user,"TELNET")) {
-      return err("Permission Denied.");
-   } elsif(!hasflag($user,"SOCKET") && !hasflag($user,"WIZARD")) {
-      return echo($user,"* Permission Denied *");
+   return err("Permission Denied.") if(!perm($user,"TELNET"));
+
+   my $puppet = hasflag($user,"SOCKET_PUPPET");
+   my $input = hasflag($user,"SOCKET_INPUT");
+
+   if(!$input && !$puppet) {
+      return echo($user,"Permission Denied.");
    } elsif($txt =~ /^\s*([^ ]+)\s*=\s*([^:]+)\s*:\s*(\d+)\s*$/ ||
            $txt =~ /^\s*([^ ]+)\s*=\s*([^:]+)\s* \s*(\d+)\s*$/) {
       my $count = one_val("select count(*) value " .
@@ -849,6 +854,15 @@ sub cmd_telnet
          loggedin  => 0,
          opened    => time()
       };
+
+      if($puppet) {
+         @{@connected{$sock}}{raw} = 1;
+      } elsif($input) {
+         @{@connected{$sock}}{raw} = 2;
+      } else {                                          # shouldn't happen
+         $sock->close;
+         return err("Internal Error, wrong data type found");
+      }
 
       $readable->add($sock);
        sql(e($db,1),
@@ -1539,7 +1553,7 @@ sub cmd_clear
 
    if($txt ne undef) {
       echo($user,"\@clear expect no arguments");
-   } elsif(!perm($user,"CLEAR")) {
+   } elsif(perm($user,"CLEAR")) {
       $| = 1;
       print "\033[2J";    #clear the screen
       print "\033[0;0H"; #jump to 0,0
@@ -1969,11 +1983,18 @@ sub cmd_set
    if(!perm($user,"SET")) {
       return err("Permission Denied.");
    } elsif($txt =~ /^\s*([^ ]+)\/\s*([^ ]+)\s*=\s*(.*?)\s*$/s) { # attribute
+
       ($target,$attr,$value) = (locate_object($user,$1),$2,$3);
       return echo($user,"Unknown object '%s'",$1) if !$target;
       controls($user,$target) || return echo($user,"Permission denied");
-      set($target,$attr,$value);
+
+      if(isatrflag($value)) {
+         echo($user,set_atr_flag($target,$attr,$value));
+      } else {
+         set($target,$attr,$value);
+      }
       commit($db);
+
    } elsif($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) { # flag?
       ($target,$flag) = (locate_object($user,$1),$2);
       return echo($user,"Unknown object '%s'",$1) if !$target;
@@ -2027,16 +2048,44 @@ sub cmd_ex
           );
    }
 
+#    if($perm) {
+#        for my $hash (@{sql($db,"select * from attribute atr " .
+#                                " where obj_id = ? ".
+#                                "  and atr_name not in ('DESCRIPTION') ".
+#                                " order by atr_name ",
+#                                $$target{obj_id}
+#                     )}) {
+#           echo($user,"%s%s: %s\n",$$hash{atr_name},
+#              atr_flag_list($$hash{atr_id}),
+#              $$hash{atr_value});
+#        }
+#    }
    if($perm) {
-       for my $hash (@{sql($db,"select * from attribute atr " .
-                               " where obj_id = ? ".
-                               "  and atr_name not in ('DESCRIPTION') ".
-                               " order by atr_name ",
-                               $$target{obj_id}
-                    )}) {
-          echo($user,"%s: %s\n",$$hash{atr_name},$$hash{atr_value});
-       }
+      for my $hash (@{sql($db,
+          "   select atr_name, " .
+          "          atr_value, " .
+          "          group_concat(distinct fde_letter order by fde_order " .
+          "             separator '') atr_flag " .
+          "     from attribute atr left join ( " .
+          "             select atr_id, fde_letter, fde_order " .
+          "               from flag flg, flag_definition fde " .
+          "              where flg.fde_flag_id = fde.fde_flag_id " .
+          "                and fde_type = 2 " .
+          "           ) flg on (atr.atr_id = flg.atr_id) " .
+          "    where atr.obj_id = ? " .
+          "      and atr_name != 'DESCRIPTION' " .
+          " group by atr.atr_id, atr_name " .
+          "order by atr.atr_name",
+          $$target{obj_id})}) { 
+          if($$hash{atr_flag} eq undef) {
+             echo($user,"%s: %s",$$hash{atr_name},$$hash{atr_value});
+          } else {
+             echo($user,"%s[%s]: %s",@$hash{atr_name},$$hash{atr_flag},
+                 $$hash{atr_value});
+          }
+      }
    }
+
 
    for my $hash (@{sql($db," SELECT con.obj_id, obj_name " .
                            "    FROM content con, object obj, flag flg, " .
@@ -2046,6 +2095,8 @@ sub cmd_ex
                            "     AND fde.fde_flag_id = flg.fde_flag_id " .
                            "     AND con_source_id = ?  " .
                            "     AND fde.fde_name in ('PLAYER','OBJECT') " .
+                           "     AND fde.fde_type = 1 " .
+                           "     AND atr_id is null " .
                            "ORDER BY con.con_created_date",
                            $$target{obj_id}
                           )}) {
@@ -2082,6 +2133,8 @@ sub cmd_ex
                            "     AND flg.obj_id = obj.obj_id " . 
                            "     AND fde.fde_flag_id = flg.fde_flag_id " .
                            "     AND con_source_id = ?  " .
+                           "     AND atr_id is null " .
+                           "     and fde_type = 1 " .
                            "     AND fde.fde_name = 'EXIT' " .
                            "ORDER BY con_created_date",
                            $$target{obj_id}
@@ -2111,6 +2164,8 @@ sub inventory
                            "     AND flg.obj_id = obj.obj_id ".
                            "     AND flg.fde_flag_id = fde.fde_flag_id ".
                            "     AND con_source_id = ?  " .
+                           "     and atr_id is null " .
+                           "     and fde_type = 1 " .
                            "     AND fde.fde_name in ('OBJECT','PLAYER') " .
                            "ORDER BY con.con_created_date",
                            $$obj{obj_id}
@@ -2159,61 +2214,67 @@ sub cmd_look
       echo($user,"%s",evaluate($desc)) if $desc ne undef;
    }
 
-   for my $hash (@{sql($db,
-       "select   group_concat(distinct fde_letter " .
-       "                      order by fde_order " .
-       "                      separator '') flags, " .
-       "         obj.obj_id," .
-       "         min(obj.obj_name) obj_name, " .
-       "         min(" .
-       "             case " .
-       "                when fde_name in ('EXIT','OBJECT','PLAYER') then " .
-       "                   fde_name  " .
-       "             END " .
-       "            ) obj_type, " .
-       "         case  " .
-       "            when min(sck.sck_socket) is null then " .
-       "               'N' " .
-       "            else " .
-       "               'Y' " .
-       "         END online" .
-       "    from content con, " .
-       "         (  select fde.fde_order, obj_id, fde_letter, fde_name " .
-       "              from flag flg, flag_definition fde " .
-       "             where fde.fde_flag_id = flg.fde_flag_id " .
-       "             union all " .
-       "            select 99 fde_order, obj_id, 'c' fde_letter, " .
-       "                   'CONNECTED' fde_name ".
-       "              from socket sck " .
-       "         ) flg, " .
-       "         object obj left join (socket sck) " .
-       "            on ( obj.obj_id = sck.obj_id)  " .
-       "   where con.obj_id = obj.obj_id " .
-       "     and flg.obj_id = con.obj_id " .
-       "     and con.con_source_id = ? ".
-       "     and con.obj_id != ? " .
-       "group by con.obj_id " .
-       "order by con_created_date",
-       $$target{obj_id},
-       $$user{obj_id}
-      )}) {
-
-       # skip non-connected players
-       next if($$hash{obj_type} eq "PLAYER" && $$hash{online} eq "N");
-
-       if($$hash{obj_type} eq "EXIT") {                   # store exits for
-          if($$hash{flag} !~ /D/) {                                 # later
-             push(@exit,first($$hash{obj_name}));
+   if(!hasflag($target,"ROOM") ||
+      (hasflag($target,"ROOM") && !hasflag($target,"DARK"))) {
+      for my $hash (@{sql($db,
+          "select   group_concat(distinct fde_letter " .
+          "                      order by fde_order " .
+          "                      separator '') flags, " .
+          "         obj.obj_id," .
+          "         min(obj.obj_name) obj_name, " .
+          "         min(" .
+          "             case " .
+          "                when fde_name in ('EXIT','OBJECT','PLAYER') then " .
+          "                   fde_name  " .
+          "             END " .
+          "            ) obj_type, " .
+          "         case  " .
+          "            when min(sck.sck_socket) is null then " .
+          "               'N' " .
+          "            else " .
+          "               'Y' " .
+          "         END online" .
+          "    from content con, " .
+          "         (  select fde.fde_order, obj_id, fde_letter, fde_name " .
+          "              from flag flg, flag_definition fde " .
+          "             where fde.fde_flag_id = flg.fde_flag_id " .
+          "               and flg.atr_id is null " .
+          "               and fde_type = 1 " .
+          "             union all " .
+          "            select 99 fde_order, obj_id, 'c' fde_letter, " .
+          "                   'CONNECTED' fde_name ".
+          "              from socket sck " .
+          "         ) flg, " .
+          "         object obj left join (socket sck) " .
+          "            on ( obj.obj_id = sck.obj_id)  " .
+          "   where con.obj_id = obj.obj_id " .
+          "     and flg.obj_id = con.obj_id " .
+          "     and con.con_source_id = ? ".
+          "     and con.obj_id != ? " .
+          "group by con.obj_id " .
+          "order by con_created_date",
+          $$target{obj_id},
+          $$user{obj_id}
+         )}) {
+   
+          # skip non-connected players
+          next if($$hash{obj_type} eq "PLAYER" && $$hash{online} eq "N");
+   
+          if($$hash{obj_type} eq "EXIT") {                   # store exits for
+             if($$hash{flag} !~ /D/) {                                 # later
+                push(@exit,first($$hash{obj_name}));
+             }
+          } elsif($$hash{obj_type} =~ /^(PLAYER|OBJECT)$/ && 
+                 $$hash{flags} !~ /D/){
+             echo($user,"Contents:") if(++$flag == 1);
+             if(controls($user,$hash)) {                    # add object info?
+                echo($user,"%s(#%s%s)",$$hash{obj_name},$$hash{obj_id},
+                   $$hash{flags});
+             } else {
+                echo($user,"%s",$$hash{obj_name});
+             }
           }
-       } elsif($$hash{obj_type} =~ /^(PLAYER|OBJECT)$/) {
-          echo($user,"Contents:") if(++$flag == 1);
-          if(controls($user,$hash)) {                    # add object info?
-             echo($user,"%s(#%s%s)",$$hash{obj_name},$$hash{obj_id},
-                $$hash{flags});
-          } else {
-             echo($user,"%s",$$hash{obj_name});
-          }
-       }
+      }
    }
    if($#exit >= 0) {                                    # add exits if any
       echo($user,"Exits:");

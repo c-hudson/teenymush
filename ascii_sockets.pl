@@ -130,7 +130,9 @@ sub server_process_line
 #   }
    my $data = @connected{$$hash{sock}};
 
-   if($$data{raw}) {
+   if(defined $$data{raw} && $$data{raw} == 1) {
+      handle_object_listener($data,"%s",$input);
+   } elsif(defined $$data{raw} && $$data{raw} == 2) {
      add_telnet_data($data,$input);
    } else {
       eval {                                                  # catch errors
@@ -271,7 +273,7 @@ sub server_disconnect
    if(defined @connected{$id}) {
       my $hash = @connected{$id};
 
-      if(defined $$hash{raw} && $$hash{raw} == 1) {            # MUSH Socket
+      if(defined $$hash{raw} && $$hash{raw} > 0) {             # MUSH Socket
          echo($hash,"[ Connection closed ]");
          sql($db,                             # delete socket table row
              "delete from socket " .

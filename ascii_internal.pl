@@ -65,15 +65,24 @@ sub evaluate
     }
 
     # convert %0 - %8
-    $txt =~ s/(?<!(?<!\\)\\)%0/$$user{0}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%1/$$user{1}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%2/$$user{2}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%3/$$user{3}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%4/$$user{4}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%5/$$user{5}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%6/$$user{6}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%7/$$user{7}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%8/$$user{8}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%\{0\}/$$user{0}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%\{1\}/$$user{1}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%\{2\}/$$user{2}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%\{3\}/$$user{3}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%\{4\}/$$user{4}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%\{5\}/$$user{5}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%\{6\}/$$user{6}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%\{7\}/$$user{7}/g;
+    $txt =~ s/(?<!(?<!\\)\\)%\{8\}/$$user{8}/g;
+#    $txt =~ s/(?<!(?<!\\)\\)%0/$$user{0}/g;
+#    $txt =~ s/(?<!(?<!\\)\\)%1/$$user{1}/g;
+#    $txt =~ s/(?<!(?<!\\)\\)%2/$$user{2}/g;
+#    $txt =~ s/(?<!(?<!\\)\\)%3/$$user{3}/g;
+#    $txt =~ s/(?<!(?<!\\)\\)%4/$$user{4}/g;
+#    $txt =~ s/(?<!(?<!\\)\\)%5/$$user{5}/g;
+#    $txt =~ s/(?<!(?<!\\)\\)%6/$$user{6}/g;
+#    $txt =~ s/(?<!(?<!\\)\\)%7/$$user{7}/g;
+#    $txt =~ s/(?<!(?<!\\)\\)%8/$$user{8}/g;
 
     if(defined $$user{cmd_data} && defined @{$$user{cmd_data}}{"##"}) {
        $txt =~ s/(?<!(?<!\\)\\)##/@{$$user{cmd_data}}{"##"}/g;
@@ -96,8 +105,11 @@ sub evaluate
     }
 
     if(defined $$user{raw_raw} && $$user{raw_raw} == 1) {
-       $txt =~ s/(?<!(?<!\\)\\)%hostname/$$user{raw_hostname}/ig;
-       $txt =~ s/(?<!(?<!\\)\\)%socket/$$user{raw_socket}/ig;
+       $enactor = $$user{raw_enactor};
+       $txt =~ s/(?<!(?<!\\)\\)%\{hostname\}/$$user{raw_hostname}/ig;
+       $txt =~ s/(?<!(?<!\\)\\)%\{socket\}/$$user{raw_socket}/ig;
+       $txt =~ s/(?<!(?<!\\)\\)%\{socket\}/$$user{raw_socket}/ig;
+       $txt =~ s/(?<!(?<!\\)\\)%\{enactor\}/$$enactor{obj_name}/ig;
     }
 #    $txt =~ s/(?<!(?<!\\)\\)%9/$$user{9}/g;
 
@@ -327,6 +339,7 @@ sub handle_object_listener
       $$hash{raw_hostname} = $$target{hostname};
       $$hash{raw_raw} = $$target{raw};
       $$hash{raw_socket} = $$target{socket};
+      $$hash{raw_enactor} = $$target{enactor};
 
       # determine %0 - %9
       if($$hash{cmd} ne $msg) {
@@ -407,15 +420,12 @@ sub handle_listener
          # the select should really do the case comparison, but it would make
          # a very messy select... so the code will just weed it out here
          #
-         printf("CASE MATCH\n");
          if($msg =~ /^$$hash{cmd}$/) {
             mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
          }
       } elsif($msg =~ /^$$hash{cmd}$/i) {
-         printf("CASE !MATCH '$$hash{atr_id}'\n");
          mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
       } else {
-         printf("CASE !MATCH 2\n");
          mushrun($hash,$$hash{txt});
       }
       $match=1;                                   # signal mush command found
@@ -880,8 +890,8 @@ sub set_flag
         "       from flag_definition fde1," .
         "            flag_definition fde2 " .
         " where fde1.fde_permission = fde2.fde_flag_id " .
-        "   and fde1.atr_id is null " .
-        "   and fde2.atr_id is null " .
+#        "   and fde1.atr_id is null " .
+#        "   and fde2.atr_id is null " .
         "   and fde1.fde_type = 1 " .
         "   and fde2.fde_type = 1 " .
         "   and fde1.fde_name=upper(?)",

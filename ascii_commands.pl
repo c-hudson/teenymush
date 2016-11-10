@@ -852,7 +852,8 @@ sub cmd_telnet
          hostname  => $2,
          port      => $3, 
          loggedin  => 0,
-         opened    => time()
+         opened    => time(),
+         enactor   => $enactor
       };
 
       if($puppet) {

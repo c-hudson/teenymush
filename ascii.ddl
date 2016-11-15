@@ -34,7 +34,7 @@ CREATE TABLE `attribute` (
   PRIMARY KEY (`atr_id`),
   UNIQUE KEY `attribute_unq` (`obj_id`,`atr_name`),
   CONSTRAINT `attribute_ibfk_1` FOREIGN KEY (`obj_id`) REFERENCES `object` (`obj_id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=322 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=336 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -100,7 +100,7 @@ CREATE TABLE `flag` (
   KEY `fde_flag_id` (`fde_flag_id`),
   CONSTRAINT `flag_ibfk_1` FOREIGN KEY (`obj_id`) REFERENCES `object` (`obj_id`) ON DELETE CASCADE,
   CONSTRAINT `flag_ibfk_2` FOREIGN KEY (`fde_flag_id`) REFERENCES `flag_definition` (`fde_flag_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=183 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=190 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -122,7 +122,7 @@ CREATE TABLE `flag_definition` (
   `fde_order` int(11) NOT NULL,
   `fde_type` int(11) NOT NULL,
   PRIMARY KEY (`fde_flag_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=14 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=15 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -201,7 +201,7 @@ CREATE TABLE `output` (
   `out_source` int(11) DEFAULT NULL,
   `out_destination` int(11) DEFAULT NULL,
   PRIMARY KEY (`out_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=97459 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=100074 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -241,7 +241,7 @@ CREATE TABLE `socket` (
   `sck_port` int(11) DEFAULT NULL,
   `sck_tag` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`sck_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=270 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=340 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -260,7 +260,7 @@ CREATE TABLE `socket_history` (
   `skh_end_time` datetime DEFAULT NULL,
   `skh_success` int(11) NOT NULL,
   PRIMARY KEY (`skh_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=213 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=223 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -288,4 +288,4 @@ CREATE TABLE `valid_option` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2016-11-10 16:29:31
+-- Dump completed on 2016-11-15  5:00:01

@@ -64,26 +64,6 @@ sub evaluate
        $txt =~ s/%n/$$user{obj_name}/g;
     }
 
-    # convert %0 - %8
-    $txt =~ s/(?<!(?<!\\)\\)%\{0\}/$$user{0}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%\{1\}/$$user{1}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%\{2\}/$$user{2}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%\{3\}/$$user{3}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%\{4\}/$$user{4}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%\{5\}/$$user{5}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%\{6\}/$$user{6}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%\{7\}/$$user{7}/g;
-    $txt =~ s/(?<!(?<!\\)\\)%\{8\}/$$user{8}/g;
-#    $txt =~ s/(?<!(?<!\\)\\)%0/$$user{0}/g;
-#    $txt =~ s/(?<!(?<!\\)\\)%1/$$user{1}/g;
-#    $txt =~ s/(?<!(?<!\\)\\)%2/$$user{2}/g;
-#    $txt =~ s/(?<!(?<!\\)\\)%3/$$user{3}/g;
-#    $txt =~ s/(?<!(?<!\\)\\)%4/$$user{4}/g;
-#    $txt =~ s/(?<!(?<!\\)\\)%5/$$user{5}/g;
-#    $txt =~ s/(?<!(?<!\\)\\)%6/$$user{6}/g;
-#    $txt =~ s/(?<!(?<!\\)\\)%7/$$user{7}/g;
-#    $txt =~ s/(?<!(?<!\\)\\)%8/$$user{8}/g;
-
     if(defined $$user{cmd_data} && defined @{$$user{cmd_data}}{"##"}) {
        $txt =~ s/(?<!(?<!\\)\\)##/@{$$user{cmd_data}}{"##"}/g;
     }
@@ -433,6 +413,16 @@ sub handle_listener
    return $match;
 }
 
+sub nospoof
+{
+   my $dest = obj(@_[0]);
+
+   if(hasflag($dest,"NOSPOOF")) {
+      return "[".obj_name($user) . "] ";
+   }
+   return undef;
+}
+
 #
 # echo
 #     Send a message to only the specified target using a printf type
@@ -460,7 +450,7 @@ sub echo
    $out =~ tr/\x80-\xFF//d;
 
    my $txt = $out;                     # don't store returns in output table
-   $txt =~ s/\r|\n//g; 
+   $txt =~ s/\r$|\n$//g; 
 
    # handle objects set puppet
    if(!hasflag($target,"PLAYER")) {                         # handle objects
@@ -481,7 +471,7 @@ sub echo
                                $$target{obj_id}
                         )}) {
             my $sock = @{@connected{$$player{sck_socket}}}{sock};
-            printf($sock "%s> %s",$$player{owner_name},$out);
+            printf($sock "%s%s> %s",nospoof($player),$$player{owner_name},$out);
          }
       }
    } elsif(ref($target) eq "IO::Socket::INET") {
@@ -511,7 +501,7 @@ sub echo
        if(defined $$target{sck_socket} && 
           defined @connected{$$target{sck_socket}}) {          # exact socket
           my $sock = @{@connected{$$target{sck_socket}}}{sock};
-          printf($sock "%s",$out);
+          printf($sock "%s%s",nospoof($target),$out);
       } else {                                       # sockets used by obj_id
           for my $sock (@{sql($db, 
                               "select * from socket " .
@@ -519,7 +509,7 @@ sub echo
                               " and sck_tag is null",
                               $$target{obj_id})}) {
              my $sock = @{@connected{$$sock{sck_socket}}}{sock};
-             printf($sock "%s",$out);
+             printf($sock "%s%s",nospoof($target),$out);
           }
        }
     }
@@ -825,7 +815,7 @@ sub locate_object
 sub locate_exit
 {
    my ($name,$type) = @_;
-   my $match;
+   my @partial;
 
    if($name =~ /^\s*#(\d+)\s*$/) {
       return fetch($1);
@@ -847,21 +837,20 @@ sub locate_exit
                       "   and con2.obj_id = ? ",
                       $$user{obj_id}
                    )}) { 
-      if($$hash{obj_name} =~ /(^|;)\s*$name\s*([^;]*)\s*(;|$)/i) {
-         if($2 eq undef) {
-            return $hash;
-         } else {
-            if(length($$match{obj_name}) < length($$hash{obj_name})) {
-               $match = $hash;
-            }
+
+      for my $item (split(';',$$hash{obj_name})) {       # exits have multiple 
+         if(lc($item) eq lc($name)) {                     # ; seperated names
+            return $hash;                                  # found exact match
+         } elsif(substr(lc($item),0,length($name)) eq lc($name)) {
+            push(@partial,$hash);                              # partial match
          }
       }
    }
 
-   if($type = "EXACT") {
-      return undef;
-   } else {
-      return $match;
+   if($#partial != 0 || $type eq "EXACT") {            # if too many matches, 
+      return undef;                                     # or need exact match
+   } else {                                          
+      return @partial[0];                            # single partial is good
    }
 }
 
@@ -928,12 +917,20 @@ sub set_flag
                   $$object{obj_id},
                   $$hash{fde_flag_id});
           commit;
+          if($flag =~ /^\s*(PUPPET|MONITOR)\s*$/i) {
+             echo_room($object,"%s is no longer listening.",
+                $$object{obj_name});
+          }
           return "Flag Removed.";
        } elsif($remove) {
           return "Flag not set.";
        } elsif($count > 0) {
           return "Already Set.";
        } else {
+          if($flag =~ /^\s*(PUPPET|MONITOR)\s*$/i) {
+             echo_room($object,"%s is now listening.",
+                $$object{obj_name});
+          }
           sql($db,
               "insert into flag " .
               "   (obj_id,ofg_created_by,ofg_created_date,fde_flag_id)" .
@@ -1364,6 +1361,7 @@ sub obj_name
 {
    my $obj = obj_ref(shift);
    
+   $obj = fetch($obj) if(!defined $$obj{obj_name});
    if(controls($user,$obj)) {
       return $$obj{obj_name} . "(#" . $$obj{obj_id} . flag_list($obj) . ")";
    } else {

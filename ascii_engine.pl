@@ -51,7 +51,7 @@ sub mush_command
 sub priority
 {
    if(perm($user,"HIGH_PRORITY")) {
-      return 10;
+      return 50;
    } else {
       return 1;
    }
@@ -127,6 +127,7 @@ sub mushrun
 sub spin
 {
    my (%last);
+   my $count = 0;
 
    $SIG{ALRM} = \&spin_done;
 
@@ -154,6 +155,7 @@ sub spin
                   my $cmd = shift(@$command);
                   delete @$cmd{still_running};
                   spin_run(\%last,$program,$cmd,$command);
+                  $count++;
 
                   #
                   # command is still running, probably a sleep? Skip to the
@@ -164,7 +166,7 @@ sub spin
                      next;
                   }
                                                       # stop at 4 milliseconds
-                  if(Time::HiRes::gettimeofday() - $start > 0.4) {
+                  if(Time::HiRes::gettimeofday() - $start > .4) {
                      printf("Time slice ran long, exiting correctly\n");
                      ualarm(0);
                      return;
@@ -175,6 +177,7 @@ sub spin
       }
 #   };
 #   ualarm(0);                                                 # cancel alarm
+#   printf("Count: $count\n");
 
    if($@ eq "ALARM") {
       printf("Time slice timed out (%2f) $@\n",Time::HiRes::gettimeofday() - 

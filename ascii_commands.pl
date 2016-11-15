@@ -131,6 +131,8 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_recall(@_); }};
 @command{"\@telnet"} = { help => "open a connection to the internet",
                          fun  => sub { cmd_telnet(@_); }};
+@command{"\@close"} = { help => "close a connection to the internet",
+                         fun  => sub { cmd_close(@_); }};
 @command{"\@reset"}  = { help => "Clear the telnet buffers",
                          fun  => sub { cmd_reset(@_); }};
 @command{"\@send"}   = { help => "Send data to a connected socket",
@@ -898,6 +900,33 @@ sub cmd_send
     my ($txt,$prog) = @_;
 
     if(!perm($user,"SEND")) {
+       return err("Permission Denied.");
+    } elsif($txt =~ /^\s*([^ ]+)\s*=/) {
+       my $hash = one($db,
+                        "select * " .
+                        "  from socket ".
+                        " where lower(sck_tag) = lower(?) ",
+                        $1
+                   );
+
+       if($hash eq undef) {
+          echo($user,"Unknown socket '%s' requested",$1);
+       } elsif(!defined @connected{$$hash{sck_socket}}) {
+          echo($user,"Socket '%s' has closed.",$1);
+       } else {
+          my $sock=@{@connected{$$hash{sck_socket}}}{sock};
+          printf($sock "%s\r\n",evaluate($',$prog));
+       }
+    } else {
+       echo($user,"Usage: \@send <socket>=<data>");
+    }
+}
+
+sub cmd_close
+{
+    my ($txt,$prog) = @_;
+
+    if(!perm($user,"CLOSE")) {
        return err("Permission Denied.");
     } elsif($txt =~ /^\s*([^ ]+)\s*=/) {
        my $hash = one($db,

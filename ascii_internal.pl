@@ -48,10 +48,17 @@ sub first
 #
 sub evaluate
 {
-    my ($txt,$prog) = @_;
+    my ($txt,$prog,$target) = @_;
+
+    my $tmp = $enactor;
+
+    if($target ne undef) {
+       $enactor = $user;
+       $user = $target;
+    } 
 
     # convert %r [return], %b [space], and %t [tab]
-    $txt =~ s/%r/\n/ig;
+#    $txt =~ s/%r/\n/ig;
     $txt =~ s/%b/ /ig;
     $txt =~ s/%t/\t/ig;
 
@@ -100,6 +107,12 @@ sub evaluate
     # remove any escaped characters
     $result =~ s/\\(.)/\1/g;
 
+    if($target ne undef) {
+       $user = $enactor;
+       $enactor = $tmp;
+    }
+
+    $result =~ s/%r/\n/ig;
     return $result;
 }
 

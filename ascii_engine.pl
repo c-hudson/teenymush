@@ -134,8 +134,8 @@ sub spin
    my $start = Time::HiRes::gettimeofday();
    @info{engine} = {} if(!defined @info{engine});
 
-#   eval {
-#      ualarm(800_000);                                # die at 8 milliseconds
+   eval {
+      ualarm(800_000);                                # die at 8 milliseconds
 
       for my $pid (keys %{@info{engine}}) {
          my $thread = @{@info{engine}}{$pid};
@@ -167,7 +167,7 @@ sub spin
                   }
                                                       # stop at 4 milliseconds
                   if(Time::HiRes::gettimeofday() - $start > .4) {
-                     printf("Time slice ran long, exiting correctly\n");
+#                     printf("Time slice ran long, exiting correctly\n");
                      ualarm(0);
                      return;
                   }
@@ -175,13 +175,13 @@ sub spin
             }
          }
       }
-#   };
-#   ualarm(0);                                                 # cancel alarm
+   };
+   ualarm(0);                                                 # cancel alarm
 #   printf("Count: $count\n");
 
-   if($@ eq "ALARM") {
-      printf("Time slice timed out (%2f) $@\n",Time::HiRes::gettimeofday() - 
-         $start);
+   if(uc($@) eq "ALARM") {
+      printf("Time slice timed out (%2f w/%s cmd) $@\n",
+         Time::HiRes::gettimeofday() - $start,$count);
       if(defined @last{user} && defined @{@last{user}}{var}) {
          my $var = @{@last{user}}{var};
          printf("   #%s: %s (%s,%s,%s,%s,%s,%s,%s,%s,%s)\n",

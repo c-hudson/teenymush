@@ -34,6 +34,7 @@ sub sql
    my $con = (ref(@_[0]) eq "HASH") ? shift : $db;
    my ($sql,@args) = @_;
    my (@result,$sth);
+   @info{sqldone} = 0;
 
    delete @$con{rows};
 #   # reconnect if we've been idle for an hour. Shouldn't be needed?
@@ -100,6 +101,7 @@ sub sql
 
    # clean up and return the results
    $sth->finish();
+   @info{sqldone} = 1;
    return \@result;
 }
 

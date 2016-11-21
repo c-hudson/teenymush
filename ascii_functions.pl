@@ -11,10 +11,25 @@ my %fun =
    time      => sub { return &fun_time(@_);                             },
    flags     => sub { return &fun_flags(@_);                            },
    quota     => sub { return quota_left($$user{obj_id})                 },
-#   sql       => sub { return &fun_sql(@_);                              },
-   input     => sub { return fun_input(@_);                             },
-   strlen    => sub { return &fun_strlen(@_)                            },
+#  sql       => sub { return &fun_sql(@_);                              },
+   input     => sub { return &fun_input(@_);                            },
+   strlen    => sub { return &fun_strlen(@_);                           },
+   lattr     => sub { return &fun_lattr(@_);                            },
+   iter      => sub { return &fun_iter(@_);                             },
+   huh       => sub { return "#-1 Undefined function";                  },
+   ljust     => sub { return &fun_ljust(@_);                            },
 );
+
+sub fun_ljust
+{
+   if(@_[1] =~ /^\s*$/) {
+      return @_[0];
+   } elsif(@_[1] =~ /^\s*(\d+)\s*$/) {
+      return sprintf("%-*s",@_[1],evaluate(@_[0]));
+   } else {
+      return "#-1 Ljust expects a numeric value for the second argument";
+   }
+}
 
 sub fun_strlen
 {
@@ -147,8 +162,10 @@ sub fun_space
     return " " x $count ;
 }
 
+# [repeat(^'+.\,.+',6)]
+
 #
-# fun_space
+# fun_repeat
 #
 sub fun_repeat
 {
@@ -193,92 +210,143 @@ sub fun_cat
 }
 
 
-#
-# exec_function
-#    is_function has succesfully parsed the function, now the function
-#    needs to be "run". Variables are evalutated before being passed to
-#    the function (this sounds good, is it?)
-#
-sub exec_function
+sub mysql_pattern
 {
-   my ($name,$hash) = @_;
-   my $out;
+   my $txt = shift;
 
-   if(defined @fun{$name}) {
-      my $stack = $$hash{stack};
-      for my $i (0 .. $#$stack) {
-         $$stack[$i] = $$stack[$i];
-      }
-      return &{@fun{$name}}(@{$$hash{stack}});
+   $txt =~ s/^\s+|\s+$//g;
+   $txt =~ tr/\x80-\xFF//d;
+   $txt =~ s/[\;\%\/\\]//g;
+   $txt =~ s/\*/\%/g;
+   return $txt;
+}
+
+sub fun_lattr
+{
+   my $txt = shift;
+   my ($obj,$atr,@list);
+
+
+   if($txt =~ /\s*\/\s*/) {
+      ($obj,$atr) = ($`,$');
    } else {
-      return "#-1 Undefined Function";
+      ($obj,$atr) = ($txt ,"*");
    }
+
+   $txt = "me" if $txt eq undef;
+   my $target = locate_object($user,$obj,"LOCAL");
+   return "#-1 Unknown object" if $target eq undef;
+#   printf("%s\n",print_var($user));
+
+   for my $attr (@{sql($db,
+                       "  select atr_name " .
+                       "    from attribute " .
+                       "   where obj_id = ? " .
+                       "     and atr_name like upper(?) " .
+                       "order by atr_name",
+                       $$target{obj_id},
+                       mysql_pattern($atr)
+                      )}) {
+      push(@list,$$attr{atr_name});
+   }
+   return join(' ',@list);
 }
 
-sub cleanup_stack
+sub fun_iter
 {
-   my $data = shift;
+   my @result;
 
-   my $stack = $$data{stack};
-   for my $i (reverse 0 .. $#$stack) {
-      if($$stack[$i] =~ /^\s*$/) {
-         delete @$stack[$i];
-      } else {
-         return;
-      }
+   for my $item (split(/ /,evaluate(@_[0]))) {
+       my $new = @_[1];
+       $new =~ s/##/$item/g;
+       push(@result,evaluate($new));
    }
+
+   return join((@_[2] eq undef) ? " " : @_[2],@result);
 }
 
 #
-# is_function
+# escaped
+#    Determine if the current position is escaped or not
 #
-#    This function tears apart the arguments to a function to determine
-#    if it is a valid function or not. If any errors occure, there was a
-#    parse error that signals this is not a valid function.
-#
-sub is_function
+sub escaped
 {
-   my ($data,$txt,$end,$depth) = @_;
-   my ($seg,$rest, $function, %result);
-   $data = {} if(ref($data) ne "HASH");
+   my ($array,$pos) = @_;
+   my $count = 0;
+   my $p = $pos;
 
-   delete @$data{keys %$data};
-   @$data{stack} = [];
-  
-   while($txt) {
-      if($txt =~ /^\s*([a-zA-Z_]+)\(/ && is_function(\%result,$',1,$depth+1)) {
-          push(@{$$data{stack}},exec_function($1,\%result));
-          $txt = @result{txt};
-          $function = 1;
-      } elsif(!$end && ($txt =~ /^\s*"(.*?)(?<!(?<!\\)\\)"\s*(,|\)\s*])/ ||
-         $txt =~ /^\s*(.*?)(?<!(?<!\\)\\)(,|\)\s*])/)) {
-#         $txt =~ /^\s*([^,\)]*)\s*(,|\)\s*])/)) {
-         ($seg,$txt) = ($1,$2 . $');
-#         printf("   SEG: '%s'\n",$seg);
-      } elsif($end && ($txt =~ /^\s*"(.*?)(?<!(?<!\\)\\)"\s*(,|\)\s*)/ ||
-         $txt =~ /^\s*(.*?)(?<!(?<!\\)\\)(,|\)\s*)/)) {
-#         $txt =~ /^\s*([^,\)]*)\s*(,|\)\s*)/)) {
-         ($seg,$txt) = ($1,$2 . $');
-#         printf("   SEG: '%s'\n",$seg);
-      } else {                                             # parse error
-         return 0;
-      }
+   # count number of escape characters
+   for($pos--;$pos > -1 && $$array[$pos] eq "\\";$pos--) {
+      $count++;
+   }
 
-      if((!$end && $txt =~ /^\s*\)\s*]/) ||
-         ($end && $txt =~ /^\s*\)/)) {
-         push(@{$$data{stack}},$seg);
-         $$data{txt} = $';
-         cleanup_stack($data);
-         return 1;
-      } elsif($txt =~ /\s*,\s*/) {
-         $txt = $';
-         push(@{$$data{stack}},$seg);
-         $txt = $';
-      } else {
-         return 0;
-      }
+   # if odd, the current position is escape. If even its not.
+   return ($count % 2 == 0) ? 0 : 1;
+}
+
+sub fun_lookup
+{
+   my $fun = shift;
+
+   if(defined @fun{lc($fun)}) {
+      return lc($fun);
+   } else {
+      return "huh";
    }
 }
+
+#
+# function_walk
+#    Traverse the string till the end of the function is reached.
+#    Keep track of the depth of {}[]"s so that the function is
+#    not split in the wrong place.
+#
+sub function_walk
+{
+   my ($fun,$txt,$type,$last,$i,@stack,@depth) = (shift,shift,shift,0,0);
+   my %pair = ( '(' => ')', '{' => '}', '"' => '"',);
+
+   my @array = grep {!/^$/} split(/([\\\[\]\{\}\(\),"])/,$txt);
+   while(++$i <= $#array) {
+      if(@array[$i] eq undef || length(@array[$i]) > 1 || escaped(\@array,$i)) {
+         # skippable
+      } elsif($#depth >=0 && @{@depth[$#depth]}{ch} eq @array[$i]) {
+         pop(@depth);                                      # found pair match
+      } elsif(defined @pair{@array[$i]}) {
+         push(@depth,{  ch    => @pair{@array[$i]},      # found special char
+                        last  => $last,
+                        i     => $i,
+                        stack => $#stack+1
+                     });
+      } elsif($#depth == -1 && @array[$i] eq ",") {    # comma at right depth
+         push(@stack,join('',@array[$last .. ($i-1)]));
+         $last = $i+1;
+      } elsif($#depth == -1 && @array[$i] eq ")") {         # end of function
+         push(@stack,join('',@array[$last .. ($i-1)]));
+         $last = $i+1;
+         $i = $#array;
+      }
+
+      if($i > $#array && $#depth > -1) {                      # missing match
+         my $hash = pop(@depth);
+         delete @stack[$$hash{stack} .. $#stack];      # rollback to starting
+         $last = $$hash{last};                                    # character
+         $i = $$hash{i} + 1;
+      }
+   }
+
+
+   my $left = join('',@array[$last .. $#array]);
+   if($#depth != -1) {
+      return { err => 1 };
+   } elsif(($type == 1 && $left =~ /^\s*]/) || 
+           ($type == 2 && $left =~ /^\s*$/)) {
+      return { err  => 0, left => $', stack => \@stack };
+   } else {
+      return { err => 1 };
+   }
+}
+
 
 #
 # evaluate_string
@@ -287,23 +355,27 @@ sub is_function
 sub evaluate_string
 {
    my $txt = shift;
-   my (%data,$out);
+   my $out;
+   my $orig = $txt;
 
-   while($txt =~ /\[([a-zA-Z_]+)\(/) {
-#      printf("IS: '%s'\n",is_function(\%data,$',undef,1));
-#       printf("    '%s'\n",$txt);
-      if(is_function(\%data,$',undef,1)) {
-         $txt = @data{txt};
-         $out .= $` . exec_function($1,\%data);
-      } else {
-         $out .= $` . "[" . $1 . "(";
-         $txt = $';
+   if($txt =~ /^([a-zA-Z_]+)\(/) {
+      my $result = function_walk($1,$',2);
+      if(!$$result{err}) {
+        return &{@fun{fun_lookup($1)}}(@{$$result{stack}});
       }
    }
 
-   if($txt ne undef) {
-      return $out . $txt;
-   } else {
-      return $out;
+   while($txt =~ /\[([a-zA-Z_]+)\(/) {
+      $out .= $`;
+      my $result = function_walk($1,$',1);
+
+      if($$result{error}) {
+         $txt = $';
+         $out .= "[" . $1 . "(";
+      } else {
+         $txt = $$result{left};
+         $out .= &{@fun{fun_lookup($1)}}(@{$$result{stack}}),
+      }
    }
+   return $out . $txt;
 }

@@ -2229,7 +2229,7 @@ sub cmd_inventory
 #
 sub cmd_look
 {
-   my $txt = shift;
+   my ($txt,$prog) = @_;
    my ($flag,$target,@exit);
 
 
@@ -2241,7 +2241,7 @@ sub cmd_look
 
    echo($user,"%s",obj_name($target));
    if((my $desc = get($$target{obj_id},"DESCRIPTION"))) {
-      echo($user,"%s",evaluate($desc)) if $desc ne undef;
+      echo($user,"%s",evaluate($desc,$prog,$target)) if $desc ne undef;
    }
 
    if(!hasflag($target,"ROOM") ||

@@ -430,7 +430,7 @@ sub cmd_honey
 
 sub cmd_var
 {
-    my ($txt,$prog) = @_;
+    my $txt = shift;
 
     if($txt =~ /^\s*([^ ]+)\+\+\s*$/) {
        @{$$prog{var}}{$1}++;
@@ -438,7 +438,7 @@ sub cmd_var
        @{$$prog{var}}{$1}--;
     } elsif($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
        $$prog{var} = {} if !defined $$prog{var};
-       @{$$prog{var}}{$1} = evaluate($2,$prog); 
+       @{$$prog{var}}{$1} = evaluate($2); 
     } else {
        echo($user,"usage: \@var <variable> = <variables>");
     }
@@ -446,7 +446,7 @@ sub cmd_var
 
 sub cmd_killpid
 {
-   my ($txt,$prog) = @_;
+   my $txt = shift;
 
    my $engine = @info{engine};
 
@@ -518,7 +518,7 @@ sub test
 #
 sub cmd_while
 {
-    my ($txt,$prog) = @_;
+    my $txt = shift;
     my (%last,$first);
 
     return err("Permission Denied.") if(!perm($user,"WHILE"));
@@ -534,12 +534,11 @@ sub cmd_while
         }
     } 
     $$cmd{while_count}++;
-#    printf("%s\n",print_var($prog));
 
     if($$cmd{while_count} >= 500) {
        return err("while exceeded maxium loop of 500, stopped");
-    } elsif(test(evaluate($$cmd{while_test},$prog))) {
-       signal_still_running($prog);
+    } elsif(test(evaluate($$cmd{while_test}))) {
+       signal_still_running();
        my $commands = $$cmd{while_cmd};
        for my $i (reverse 0 .. $#$commands) {
           $$user{child} = $prog;
@@ -556,7 +555,7 @@ sub cmd_while
 #
 sub cmd_dolist
 {
-    my ($txt,$prog) = @_;
+    my $txt = shift;
     my %last;
 
     return err("Permission Denied.") if(!perm($user,"DOLIST"));
@@ -657,33 +656,15 @@ sub cmd_password
 #    
 sub signal_still_running
 {
-    my $prog = shift;
-
     my $stack = $$prog{stack};
     my $cmd = $$prog{cmd_last};
 
     unshift(@$stack,$cmd);
-
-
-#    my $info = shift;
-#    my $cmd = $$user{cmd_data};
-#    my $command = $$user{command_data};
-#    $$cmd{still_running} = 1;
-#
-#"WHILE - @{$$prog{cmd_last}}{cmd}");
-#
-#    if(defined $$user{internal} &&
-#       defined @{$$user{internal}}{cmd} &&
-#       defined @{$$user{internal}}{command}) {
-#       my $stack = @{$$user{internal}}{command};
-#       printf("SIGNAL[%s]: '%s'\n",$info,@{@{$$user{internal}}{cmd}}{cmd});
-#       unshift(@$stack,@{$$user{internal}}{cmd});
-#    }
 }
 
 sub cmd_sleep
 {
-    my ($txt,$prog) = @_;
+    my $txt = shift;
 
     my $cmd = $$user{cmd_data};
 
@@ -747,29 +728,23 @@ sub mush_split2
 sub cmd_switch
 {
     my (@list) = (bannana_split(shift,',',1));
-    my $prog = shift;
 
     if(!perm($user,"SWITCH")) {
        return err("Permission Denied.");
     }
     my ($first,$second) = (get_segment2(shift(@list),"="));
-    $first = evaluate($first,$prog);
+    $first = evaluate($first);
     $first =~ s/[\r\n]//g;
     unshift(@list,$second);
 
     while($#list >= 0) {
        if($#list >= 1) {
-          my ($txt,$cmd) = (evaluate(shift(@list),$prog),
-                            evaluate(shift(@list),$prog));
+          my ($txt,$cmd) = (evaluate(shift(@list)),
+                            evaluate(shift(@list)));
           $txt =~ s/\*/\(.*\)/g;
           $txt =~ s/^\s+|\s+$//g;
 
           $$user{child} = $prog;
-#          if($first =~ /^\s*$txt\s*$/i) {
-#             printf(" MATCH: %s == %s\n",$first,$txt);
-#          } else {
-#             printf("!MATCH: %s == %s\n",$first,$txt);
-#          }
           return mushrun($user,$cmd) if($first =~ /^\s*$txt\s*$/i);
        } else {
           $$user{child} = $prog;
@@ -897,7 +872,7 @@ sub cmd_telnet
 
 sub cmd_send
 {
-    my ($txt,$prog) = @_;
+    my $txt = shift;
 
     if(!perm($user,"SEND")) {
        return err("Permission Denied.");
@@ -915,7 +890,7 @@ sub cmd_send
           echo($user,"Socket '%s' has closed.",$1);
        } else {
           my $sock=@{@connected{$$hash{sck_socket}}}{sock};
-          printf($sock "%s\r\n",evaluate($',$prog));
+          printf($sock "%s\r\n",evaluate($'));
        }
     } else {
        echo($user,"Usage: \@send <socket>=<data>");
@@ -924,7 +899,7 @@ sub cmd_send
 
 sub cmd_close
 {
-    my ($txt,$prog) = @_;
+    my $txt = shift;
 
     if(!perm($user,"CLOSE")) {
        return err("Permission Denied.");
@@ -942,7 +917,7 @@ sub cmd_close
           echo($user,"Socket '%s' has closed.",$1);
        } else {
           my $sock=@{@connected{$$hash{sck_socket}}}{sock};
-          printf($sock "%s\r\n",evaluate($',$prog));
+          printf($sock "%s\r\n",evaluate($'));
        }
     } else {
        echo($user,"Usage: \@send <socket>=<data>");
@@ -1117,15 +1092,14 @@ sub cmd_toad
 
 sub cmd_think
 {
-   my ($txt,$prog) = @_;
+   my $txt = shift;
 
-   echo($user,"%s",evaluate($txt,$prog));
+   echo($user,"%s",evaluate($txt));
 }
 
 sub cmd_pemit
 {
-   my ($txt,$prog) = @_;
-   $prog = @{$$user{internal}}{prog} if($prog eq undef);
+   my $txt = shift;
 
    if(!perm($user,"PEMIT")) {
       return err("Permission Denied.");
@@ -1135,7 +1109,7 @@ sub cmd_pemit
          return echo($user,"I don't see that here");
       } 
 
-      echo($target,"%s\n",evaluate($2,$prog));
+      echo($target,"%s\n",evaluate($2));
    } else {
       echo($user,"syntax: \@pemit <object> = <message>");
    }
@@ -1143,11 +1117,11 @@ sub cmd_pemit
 
 sub cmd_emit
 {
-   my ($txt,$prog) = @_;
+   my $txt = shift;
 
    return err("Permission Denied.") if(!perm($user,"EMIT"));
 
-   my $txt = evaluate($txt,$prog);
+   my $txt = evaluate($txt);
    echo($user,"%s",$txt);
    echo_room($user,"%s",$txt);
 }
@@ -2229,7 +2203,7 @@ sub cmd_inventory
 #
 sub cmd_look
 {
-   my ($txt,$prog) = @_;
+   my $txt = shift; 
    my ($flag,$target,@exit);
 
 
@@ -2241,7 +2215,7 @@ sub cmd_look
 
    echo($user,"%s",obj_name($target));
    if((my $desc = get($$target{obj_id},"DESCRIPTION"))) {
-      echo($user,"%s",evaluate($desc,$prog,$target)) if $desc ne undef;
+      echo($user,"%s",evaluate($desc,$target)) if $desc ne undef;
    }
 
    if(!hasflag($target,"ROOM") ||
@@ -2319,10 +2293,10 @@ sub cmd_look
 
 sub cmd_pose
 {
-   my ($txt,$prog,$flag) = @_;
+   my ($txt,$flag) = @_;
    my $space = ($flag) ? "" : " ";
-   echo($user,"%s%s%s",name($user),$space,evaluate($txt,$prog));
-   echo_room($user,"%s%s%s",name($user),$space,evaluate($txt,$prog));
+   echo($user,"%s%s%s",name($user),$space,evaluate($txt));
+   echo_room($user,"%s%s%s",name($user),$space,evaluate($txt));
 }
 
 sub cmd_set2

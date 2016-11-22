@@ -38,8 +38,10 @@ sub mush_command
       $$hash{cmd} =~ s/\*/\(.*\)/g;
       $$hash{txt} =~ s/\r\s*|\n\s*//g;
       if($cmd =~ /^$$hash{cmd}$/) {
+         printf("CMD: '$1,$2,$3,$4,$5,$6,$7,$8,$9'\n");
          mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
       } else {
+         printf("CMD: 'N/A'\n");
          mushrun($hash,$$hash{txt});
       }
       $match=1;                                   # signal mush command found
@@ -65,7 +67,6 @@ sub priority
 sub mushrun
 {
    my ($hash,$cmd,@wildcard) = @_;
-   my $prog;
 
    if(defined $$user{inattr}) {                               # handle inattr
       my $hash = $$user{inattr};
@@ -145,6 +146,7 @@ sub spin
          } else {
             my $program = @$thread[0];
             my $command = $$program{stack};
+            @info{program} = @$thread[0];
 
             if($#$command == -1) {                      # this thread is done
                my $prog = shift(@$thread);

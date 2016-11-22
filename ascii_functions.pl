@@ -18,7 +18,58 @@ my %fun =
    iter      => sub { return &fun_iter(@_);                             },
    huh       => sub { return "#-1 Undefined function";                  },
    ljust     => sub { return &fun_ljust(@_);                            },
+   extract   => sub { return &fun_extract(@_);                          },
+   get       => sub { return &fun_get(@_);                              },
 );
+
+sub fun_get
+{
+   my $txt = shift;
+   my ($obj,$atr);
+
+   if($txt =~ /\//) {
+      ($obj,$atr) = ($`,$');
+   } else {
+      ($obj,$atr) = ($txt,@_[0]);
+   }
+
+   my $target = locate_object($user,$obj,"LOCAL");
+
+   if($target eq undef ) {
+      return "#-1 Unknown object";
+   } elsif(!controls($user,$target)) {
+      return "#-1 Permission Denied";
+   }
+
+   return get($target,$atr);
+}
+
+
+sub fun_extract
+{
+   my ($txt,$first,$length,$idelim,$odelim) = @_;
+   my (@list,$last);
+   $idelim = " " if($idelim eq undef);
+   $odelim = " " if($odelim eq undef);
+   $first--;
+
+   if($first !~ /^\s*\d+\s*$/) {
+      return "#-1 Expected numberic value for second argument";
+   } elsif($length !~ /^\s*\d+\s*$/) {
+      return "#-1 Expected numberic value for third argument";
+   } 
+   my $text = evaluate($txt);
+   $text =~ s/\r//g;
+   $text =~ s/\n/<RETURN>/g;
+   @list = split(/$idelim/,$text);
+   if($first + $length > $#list) {
+      $last = $#list;
+   } else {
+      $last = $first + $length;
+   }
+
+   return join($odelim,@list[$first .. $last]);
+}
 
 sub fun_ljust
 {
@@ -33,8 +84,7 @@ sub fun_ljust
 
 sub fun_strlen
 {
-    my $prog = prog();
-    return length(evaluate(shift,$prog));
+    return length(evaluate(shift));
 }
 
 sub fun_sql
@@ -64,15 +114,6 @@ sub fun_substr
    }
 
    return substr($txt,$start,$end);
-}
-
-sub prog
-{
-    if(defined $$user{internal}) {
-       if(defined @{$$user{internal}}{prog}) {
-          return @{$$user{internal}}{prog};
-       }
-   }
 }
 
 sub has_socket
@@ -107,7 +148,6 @@ sub fun_input
 {
     my $txt = shift;
 
-    my $prog = prog();
     @info{io} = {} if !defined @info{io};
     my $input = @info{io};
 

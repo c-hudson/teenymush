@@ -48,7 +48,7 @@ sub first
 #
 sub evaluate
 {
-    my ($txt,$prog,$target) = @_;
+    my ($txt,$target) = @_;
 
     my $tmp = $enactor;
 
@@ -76,6 +76,7 @@ sub evaluate
     }
     
     if(ref($prog) eq "HASH") {                     # handle local variables
+       printf("PROG: %s\n",print_var($prog));
        my $var = $$prog{var};
        my $out;
 
@@ -326,9 +327,6 @@ sub handle_object_listener
                     "SOCKET_PUPPET"
                    )
                 }) {
-      ($$user{0},$$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
-       $$user{6},$$user{7},$$user{8}) =
-         (undef,undef,undef,undef,undef,undef,undef,undef);
       $$hash{raw_hostname} = $$target{hostname};
       $$hash{raw_raw} = $$target{raw};
       $$hash{raw_socket} = $$target{socket};
@@ -338,30 +336,12 @@ sub handle_object_listener
       if($$hash{cmd} ne $msg) {
          $$hash{cmd} =~ s/\*/\(.*\)/g;
          if($msg =~ /^$$hash{cmd}$/) {
-            ($$user{0},$$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
-             $$user{6},$$user{7},$$user{8}) =
-            ($1,$2,$3,$4,$5,$6,$7,$8,$9);
+            mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
+         } else {
+            mushrun($hash,$$hash{txt});
          }
       }
-
-
-      # split apart commands and run them
-      while($$hash{txt} ne undef && $count++ < 5) {
-         # look for unescaped semi-colons to split apart lines
-         if($$hash{txt} =~ /^(.*?)(?<!(?<!\\)\\);/) {
-            force($hash,trim($1 . " " . $2));
-            $$hash{txt} = trim($');
-         } else {                  # process all text if no semi-colon found
-            force($hash,trim($$hash{txt}));
-            $$hash{txt} = undef;
-         }
-      }
-      # reset variables
-      ($$user{0},$$user{1},$$user{2},$$user{3},$$user{4},$$user{5},
-       $$user{6},$$user{7},$$user{8}) =
-         (undef,undef,undef,undef,undef,undef,undef,undef);
    }
-    
 }
 
 #
@@ -417,8 +397,10 @@ sub handle_listener
             mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
          }
       } elsif($msg =~ /^$$hash{cmd}$/i) {
+         printf("Cmd: '$1,$2,$3,$4,$5,$6,$7,$8,$9'\n");
          mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
       } else {
+         printf("Cmd: 'N/A'\n");
          mushrun($hash,$$hash{txt});
       }
       $match=1;                                   # signal mush command found
@@ -1310,7 +1292,7 @@ sub set
 
 sub get
 {
-   my ($obj,$attribute) = @_;
+   my ($obj,$attribute) = (obj(@_[0]),$_[1]);
    my $hash;
 
    $obj = { obj_id => $obj } if ref($obj) ne "HASH";

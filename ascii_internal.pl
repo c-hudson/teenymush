@@ -195,37 +195,6 @@ sub table
    return $out;
 }
 
-sub run_single
-{
-   my $cmd = shift;
-
-   if($cmd =~ /^\s*([^ ]+)(\s*)/) {
-      my ($cmd,$arg) = lookup_command(\%command,$1,"$2$'",1);
-      return -3 if $cmd eq 'huh';
-
-      &{@{@command{$cmd}}{fun}}($arg);
-   } 
-}
-
-sub run_multiple
-{
-   my $cmd = shift;
-   my $count = 0;
-
-   if($cmd =~ /^\s*{\s*(.*?)\s*}\s*$/) {
-      $cmd = $1;
-   }
-   
-   while($cmd ne undef && $count++ < 150) {
-      if($cmd =~ /^(.*?)(?<!(?<!\\)\\);/) {
-         run_single(trim($1 . " " . $2));
-         $cmd = trim($');
-      } else {                  # process all text if no semi-colon found
-         run_single(trim($cmd));
-         return;
-      }
-   }
-}
 
 #
 # force

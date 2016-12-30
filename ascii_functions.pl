@@ -257,24 +257,28 @@ sub mysql_pattern
    return $txt;
 }
 
+#
+# fun_lattr
+#    Return a list of attributes on an object or the enactor.
+#
 sub fun_lattr
 {
    my $txt = shift;
    my ($obj,$atr,@list);
 
 
-   if($txt =~ /\s*\/\s*/) {
-      ($obj,$atr) = ($`,$');
+   if($txt =~ /\s*\/\s*/) {                               # input has a slash 
+      ($obj,$atr) = ($`,$');                          # designating a pattern
    } else {
-      ($obj,$atr) = ($txt ,"*");
+      ($obj,$atr) = ($txt ,"*");                   # no slash, match anything
    }
 
-   $txt = "me" if $txt eq undef;
+   $txt = "me" if $txt eq undef;                # default to searching enactor
    my $target = locate_object($user,$obj,"LOCAL");
-   return "#-1 Unknown object" if $target eq undef;
+   return "#-1 Unknown object" if $target eq undef;  # oops, can't find object
 #   printf("%s\n",print_var($user));
 
-   for my $attr (@{sql($db,
+   for my $attr (@{sql($db,                     # query db for attribute names
                        "  select atr_name " .
                        "    from attribute " .
                        "   where obj_id = ? " .
@@ -303,7 +307,9 @@ sub fun_iter
 
 #
 # escaped
-#    Determine if the current position is escaped or not
+#    Determine if the current position is escaped or not by
+#    counting backwards to see if the number of slashes are
+#    odd or even.
 #
 sub escaped
 {
@@ -320,15 +326,14 @@ sub escaped
    return ($count % 2 == 0) ? 0 : 1;
 }
 
+#
+# fun_lookup
+#    See if the function exists or not. Return "huh" if only to be
+#    consistent with the command lookup
+#
 sub fun_lookup
 {
-   my $fun = shift;
-
-   if(defined @fun{lc($fun)}) {
-      return lc($fun);
-   } else {
-      return "huh";
-   }
+   return (defined @fun{lc($_[0])}) ? lc($_[0]) : "huh";
 }
 
 #
@@ -386,32 +391,35 @@ sub function_walk
 
 #
 # evaluate_string
-#    Take a string and parse any functions or variables
+#    Take a string and parse/run any functions in the string.
 #
 sub evaluate_string
 {
    my $txt = shift;
    my $out;
-   my $orig = $txt;
 
+   #
+   # handle string containing a single non []'ed function
+   #
    if($txt =~ /^([a-zA-Z_]+)\(/) {
       my $result = function_walk($1,$',2);
-      if(!$$result{err}) {
-        return &{@fun{fun_lookup($1)}}(@{$$result{stack}});
-      }
+      return &{@fun{fun_lookup($1)}}(@{$$result{stack}}) if(!$$result{error});
    }
 
+   #
+   # pick functions out of string when enclosed in []'s 
+   #
    while($txt =~ /\[([a-zA-Z_]+)\(/) {
       $out .= $`;
       my $result = function_walk($1,$',1);
 
-      if($$result{error}) {
+      if($$result{error}) {                    # found error, copy verbatium
          $txt = $';
          $out .= "[" . $1 . "(";
-      } else {
+      } else {                                       # good function, run it
          $txt = $$result{left};
          $out .= &{@fun{fun_lookup($1)}}(@{$$result{stack}}),
       }
    }
-   return $out . $txt;
+   return $out . $txt;                           # return results + leftovers
 }

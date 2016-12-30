@@ -498,21 +498,16 @@ sub test
 {
    my $txt = shift;
 
-   if($txt      =~ / <= /)    { return ($` <= $') ? 1 : 0;  }
-   elsif($txt =~ / == /)      { 
-#      echo($user,"Found '$`' == '$''");
-      return ($` == $') ? 1 : 0;  }
-   elsif($txt =~ / >= /)      { return ($` >= $') ? 1 : 0;  }
-   elsif($txt =~ / > /)       { return ($` > $') ? 1 : 0;   }
-   elsif($txt =~ / < /)       { return ($` < $') ? 1 : 0;   }
-   elsif($txt =~ / eq /)      { return ($` eq $') ? 1 : 0;  }
-   elsif($txt =~ / ne /)      { return ($` ne $') ? 1 : 0;  }
-   else {
-      return 0;
-   }
+   if($txt =~ / <= /)     { return (trim($`) <= trim($')) ? 1 : 0;  }
+   elsif($txt =~ / == /)  { return (trim($`) == trim($')) ? 1 : 0;  }
+   elsif($txt =~ / >= /)  { return (trim($`) >= trim($')) ? 1 : 0;  }
+   elsif($txt =~ / > /)   { return (trim($`) >  trim($')) ? 1 : 0;  }
+   elsif($txt =~ / < /)   { return (trim($`) <  trim($')) ? 1 : 0;  }
+   elsif($txt =~ / eq /)  { return (trim($`) eq trim($')) ? 1 : 0;  }
+   elsif($txt =~ / ne /)  { return (trim($`) ne trim($')) ? 1 : 0;  }
+   else                   { return 0;                               }
 }
 
-#
 # cmd_while
 #    Loop while the expression is true
 #
@@ -523,7 +518,7 @@ sub cmd_while
 
     return err("Permission Denied.") if(!perm($user,"WHILE"));
     my $cmd = $$user{cmd_data};
-    my $command = $$user{command_data};
+
     if(!defined $$cmd{while_test}) {                 # initialize "loop"
         $first = 1;
         if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/s) {
@@ -532,15 +527,16 @@ sub cmd_while
         } else {
            return err("usage: while (<expression>) { commands }");
         }
-    } 
+    }
     $$cmd{while_count}++;
 
-    if($$cmd{while_count} >= 500) {
-       return err("while exceeded maxium loop of 500, stopped");
+    if($$cmd{while_count} >= 100) {
+       printf("#*****# while exceeded maxium loop of 1000, stopped\n");
+       return err("while exceeded maxium loop of 1000, stopped");
     } elsif(test(evaluate($$cmd{while_test}))) {
        signal_still_running();
        my $commands = $$cmd{while_cmd};
-       for my $i (reverse 0 .. $#$commands) {
+       for my $i (0 .. $#$commands) {
           $$user{child} = $prog;
           mushrun($user,$$commands[$i]);
        }
@@ -660,6 +656,7 @@ sub signal_still_running
     my $cmd = $$prog{cmd_last};
 
     unshift(@$stack,$cmd);
+#    push(@$stack,$cmd);
 }
 
 sub cmd_sleep
@@ -811,6 +808,7 @@ sub cmd_telnet
          return echo($user,"Invalid hostname '%s' specified.",$2);
       my $sock = IO::Socket::INET->new(Proto=>'tcp') ||
          return echo($user,"Could not create socket");
+      $sock->blocking(0);
       my $sockaddr = sockaddr_in($3, $addr) ||
          return echo($user,"Could not create SOCKET");
       $sock->connect($sockaddr) or                     # start connect to host
@@ -818,8 +816,8 @@ sub cmd_telnet
          return echo($user,"Could not open connection");
       () = IO::Select->new($sock)->can_write(10)     # see if socket is pending
           or $pending = 2;
-      defined($sock->blocking(1)) ||
-         return echo($user,"Could not open a nonblocking connection");
+#      defined($sock->blocking(1)) ||
+#         return echo($user,"Could not open a nonblocking connection");
 
       @connected{$sock} = {
          obj_id    => $$user{obj_id},
@@ -843,28 +841,31 @@ sub cmd_telnet
       }
 
       $readable->add($sock);
-       sql(e($db,1),
-           "insert into socket " . 
-           "(   obj_id, " .
-           "    sck_start_time, " .
-           "    sck_type, " . 
-           "    sck_socket, " .
-           "    sck_tag, " .
-           "    sck_hostname, " .
-           "    sck_port " .
-           ") values ( ? , now(), ?, ?, ?, ?, ? )",
-                $$user{obj_id},
-                2,
-                $sock,
-                $1,
-                $2,
-                $3
-          );
+      sql(e($db,1),
+          "insert into socket " . 
+          "(   obj_id, " .
+          "    sck_start_time, " .
+          "    sck_type, " . 
+          "    sck_socket, " .
+          "    sck_tag, " .
+          "    sck_hostname, " .
+          "    sck_port " .
+          ") values ( ? , now(), ?, ?, ?, ?, ? )",
+               $$user{obj_id},
+               2,
+               $sock,
+               $1,
+               $2,
+               $3
+         );
+      my $count = one_val("select count(*) value " .
+                          "  from socket " .
+                          " where lower(sck_tag) = lower( ? )",
+                          $1);
         commit;
       @info{io} = {} if(!defined @info{io});
       delete @{@info{io}}{$1};
       echo($user,"Connection started to: %s:%s\n",$2,$3);
-#      printf($sock "QUIT\r\n");
    } else {
       echo($user,"usage: \@telnet <id>=<hostname>:<port>");
    }
@@ -2014,7 +2015,7 @@ sub cmd_set
 sub cmd_ex
 {
    my $txt = shift;
-   my ($target,@exit,@content);
+   my ($target,$desc,@exit,@content);
 
    if($txt =~ /^\s*(.+?)\s*$/) {
       $target = locate_object($user,$1) ||
@@ -2030,8 +2031,10 @@ sub cmd_ex
    echo($user,"Owner: %s  Flags: %s",obj_name($owner,$perm),
       flag_list($target,1));
 
-   if((my $desc = get($$target{obj_id},"DESCRIPTION"))) {
-      echo($user,"%s",$desc) if $desc ne undef;
+   if(($desc = get($$target{obj_id},"DESCRIPTION")) && $desc ne undef) {
+      echo($user,"%s",$desc);
+   } else {
+      echo($user,"You see nothing special.");
    }
 
    echo($user,"Created: %s\n",$$target{obj_created_date});
@@ -2204,7 +2207,7 @@ sub cmd_inventory
 sub cmd_look
 {
    my $txt = shift; 
-   my ($flag,$target,@exit);
+   my ($flag,$desc,$target,@exit);
 
 
    if($txt =~ /^\s*$/) {
@@ -2214,8 +2217,10 @@ sub cmd_look
    }
 
    echo($user,"%s",obj_name($target));
-   if((my $desc = get($$target{obj_id},"DESCRIPTION"))) {
-      echo($user,"%s",evaluate($desc,$target)) if $desc ne undef;
+   if(($desc = get($$target{obj_id},"DESCRIPTION")) && $desc ne undef) {
+      echo($user,"%s",evaluate($desc,$target));
+   } else {
+      echo($user,"You see nothing special.");
    }
 
    if(!hasflag($target,"ROOM") ||
@@ -2245,7 +2250,7 @@ sub cmd_look
           "               and flg.atr_id is null " .
           "               and fde_type = 1 " .
           "             union all " .
-          "            select 99 fde_order, obj_id, 'c' fde_letter, " .
+          "            select 999 fde_order, obj_id, 'c' fde_letter, " .
           "                   'CONNECTED' fde_name ".
           "              from socket sck " .
           "         ) flg, " .
@@ -2293,7 +2298,8 @@ sub cmd_look
 
 sub cmd_pose
 {
-   my ($txt,$flag) = @_;
+   my ($txt,$prog,$flag) = @_;
+
    my $space = ($flag) ? "" : " ";
    echo($user,"%s%s%s",name($user),$space,evaluate($txt));
    echo_room($user,"%s%s%s",name($user),$space,evaluate($txt));
@@ -2392,17 +2398,28 @@ sub cmd_DOING
 sub who
 {
    my $flag = shift;
-   my ($max,@who,$idle,$count,$out) = (2);
+   my ($max,@who,$idle,$count,$out,$extra) = (2);
    my $hasperm = (perm($user,"WHO") && !$flag) ? 1 : 0;
 
    # query the database for connected user, location, and socket
    # details.
+   for my $key (keys %connected) {
+      my $hash = @connected{$key};
+      if(!defined $$hash{connect_time}) {
+         push(@who,{ obj_name      => "[Connecting]",
+                     sck_socket    => $$hash{sock},
+                     start_time    => $$hash{start},
+                     sck_hostname  => $$hash{hostname},
+                     con_source_id =>  " - ",
+                   });
+      }
+   }
    for my $key (@{sql($db,
                     "select obj.*, " .
                     "       sck_start_time start_time, " .
                     "       sck_hostname, " .
                     "       sck_socket, " .
-                    "       con_source_id " .
+                    "       concat('#',con_source_id) con_source_id " .
                     "  from socket sck, object obj, content con " .
                     " where sck_type = 1 " .
                     "   and sck.obj_id = obj.obj_id " .
@@ -2430,12 +2447,12 @@ sub who
    for my $hash (@who) {
 
       # determine idle details
-      my $extra = @connected{$$hash{sck_socket}};
+      my $extra_data = @connected{$$hash{sck_socket}};
 
-      next if($$extra{site_restriction} == 69);
+#      next if($$extra_data{site_restriction} == 69);
 
-      if(defined $$extra{last}) {
-         $idle = date_split(time() - @{$$extra{last}}{time});
+      if(defined $$extra_data{last}) {
+         $idle = date_split(time() - @{$$extra_data{last}}{time});
       } else {
          $idle = { max_abr => 's' , max_val => 0 };
       }
@@ -2450,12 +2467,14 @@ sub who
 
       # show connected user details
       if($hasperm) {
-         $out .= sprintf("%-15s%4s %02d:%02d %4s #%-*s %s\r\n",
+         $out .= sprintf("%-15s%4s %02d:%02d %4s  %-*s %s%s\r\n",
              $$hash{obj_name},$extra,$$online{h},$$online{m},$$idle{max_val} .
              $$idle{max_abr},$max,$$hash{con_source_id},
-             short_hn($$hash{sck_hostname}));
-      } else {
-         $out .= sprintf("%-14s%4s %02d:%02d  %4s  %s\r\n",name($hash),$extra,
+             short_hn($$hash{sck_hostname}),
+             ($$extra_data{site_restriction} == 69) ? " [HoneyPoted]" : ""
+            );
+      } elsif($$extra_data{site_restriction} != 69) {
+         $out .= sprintf("%-15s%4s %02d:%02d %4s  %s\r\n",name($hash),$extra,
              $$online{h},$$online{m},$$idle{max_val} . $$idle{max_abr},
              $$hash{obj_doing});
       }

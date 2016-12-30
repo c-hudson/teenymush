@@ -7,10 +7,6 @@
 #
 
 
-
-
-
-
 use Time::HiRes "ualarm";
 
 sub mush_command
@@ -38,10 +34,8 @@ sub mush_command
       $$hash{cmd} =~ s/\*/\(.*\)/g;
       $$hash{txt} =~ s/\r\s*|\n\s*//g;
       if($cmd =~ /^$$hash{cmd}$/) {
-         printf("CMD: '$1,$2,$3,$4,$5,$6,$7,$8,$9'\n");
          mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
       } else {
-         printf("CMD: 'N/A'\n");
          mushrun($hash,$$hash{txt});
       }
       $match=1;                                   # signal mush command found
@@ -102,9 +96,13 @@ sub mushrun
     if(defined $$hash{source} && $$hash{source} == 1) {
        unshift(@$stack,{ cmd => $cmd });
     } else {
-       for my $i ( reverse bannana_split($cmd,';',1) ) {
-          my $stack=$$prog{stack};
-          unshift(@$stack,{ cmd => $i });
+       for my $i ( bannana_split($cmd,';',1) ) {
+          my $stack = $$prog{stack};
+          if(defined $$hash{child}) {                # child gets added to top
+             unshift(@$stack,{ cmd => $i });
+          } else {                               # all else goes on the bottom
+             push(@$stack,{ cmd => $i });
+          }
        }
     }
 
@@ -150,11 +148,11 @@ sub spin
 
             if($#$command == -1) {                      # this thread is done
                my $prog = shift(@$thread);
-#             echo($user,"Total calls: %s - %s",$$prog{calls},$$user{source});
+#               printf("# Total calls: %s - %s\n",$$prog{calls},$$user{source});
             } else {
                for(my $i=0;$#$command >= 0 && $i <= $$program{priority};$i++) {
-                  $$program{calls}++;
                   my $cmd = shift(@$command);
+                  $$user{cmd_data} = $cmd;
                   delete @$cmd{still_running};
                   spin_run(\%last,$program,$cmd,$command);
                   $count++;
@@ -164,11 +162,10 @@ sub spin
                   # next program as it won't finish any quicker by running
                   # it again.
                   #
-                  if($cmd eq @$command[0]) {
-                     next;
-                  }
+                  next if($cmd eq @$command[0]);
+                  $$program{calls}++;
                                                       # stop at 4 milliseconds
-                  if(Time::HiRes::gettimeofday() - $start > .4) {
+                  if(Time::HiRes::gettimeofday() - $start > .5) {
 #                     printf("Time slice ran long, exiting correctly\n");
                      ualarm(0);
                      return;
@@ -181,7 +178,7 @@ sub spin
    ualarm(0);                                                 # cancel alarm
 #   printf("Count: $count\n");
 
-   if(uc($@) eq "ALARM") {
+   if($@ =~ /alarm/i) {
       printf("Time slice timed out (%2f w/%s cmd) $@\n",
          Time::HiRes::gettimeofday() - $start,$count);
       if(defined @last{user} && defined @{@last{user}}{var}) {
@@ -193,13 +190,13 @@ sub spin
          printf("   #%s: %s\n",@{@last{user}}{obj_id},@last{cmd});
       }
    } elsif($@) {                               # oops., you sunk my battle ship
-         printf("# %s crashed the server with: %s\n%s",name($user),
+         printf("# %s CRASHED the server with: %s\n%s",name($user),
                 @{@last{cmd}}{cmd},$@);
          printf("LastSQL: '%s'\n",@info{sql_last});
          printf("         '%s'\n",@info{sql_last_args});
          rollback($db);
 
-         my $msg = sprintf("%s crashed the server with: %s",name($user),
+         my $msg = sprintf("%s CRASHed the server with: %s",name($user),
              @{@last{cmd}}{cmd});
          echo($user,"%s",$msg);
          if($msg ne $$user{crash}) {
@@ -234,13 +231,21 @@ sub spin_run
       };
    }
 
-   if(ref($$cmd{cmd}) eq "HASH") {
-      printf("%s",print_var($$cmd{cmd}));
-   }
    if($$cmd{cmd} =~ /^\s*([^ ]+)(\s*)/) {
       my ($cmd_name,$arg) = lookup_command(\%command,$1,"$2$'",1);
-#      printf("SPIN_RUN: '%s'\n",$$cmd{cmd});
-      &{@{@command{$cmd_name}}{fun}}($arg,$prog);
+
+      if(hasflag($user,"VERBOSE")) {
+         if($arg eq undef) {
+            echo(owner($user),"> %s",$cmd_name);
+         } else {
+            echo(owner($user),"> %s %s",$cmd_name,$arg);
+         }
+      }
+
+      if($cmd_name ne "@@") {
+         $$user{cmd_data} = $cmd;
+         &{@{@command{$cmd_name}}{fun}}($arg,$prog);
+      }
    }
    ($user,$enactor) = ($tmp_user,$tmp_enactor);
 }

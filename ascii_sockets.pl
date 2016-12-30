@@ -209,14 +209,15 @@ sub server_handle_sockets
                $readable->add($new);               # add 2 watch list 4 input
                my $hash = { sock => $new,             # store connect details
                             hostname => server_hostname($new),
-                            ip => $new->peerhost,
+                            ip       => $new->peerhost,
                             loggedin => 0,
-                            raw => 0
+                            raw      => 0,
+                            start    => time()
                           };
                add_site_restriction($hash);
                @connected{$new} = $hash;
 
-               printf("# Connect from: %s\n",$$hash{hostname});
+               printf("# Connect from: %s [%s]\n",$$hash{hostname},ts());
                if($$hash{site_restriction} <= 2) {                  # banned
                   printf("   BANNED   [Booted]\n");
                   if($$hash{site_restriction} == 2) {
@@ -240,8 +241,8 @@ sub server_handle_sockets
                                                          # breakapart by line
             while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
                @{@connected{$s}}{buf} = $';                # store left overs
-#               if(@{@connected{$s}}{raw} == 1) {
-#                  printf("\$ %s\n",$`);
+#               if(@{@connected{$s}}{raw} == 2) {
+#                  printf("#%s# %s\n",@{@connected{$s}}{raw},$`);
 #               }
 
                server_process_line(@connected{$s},$`);         # process line

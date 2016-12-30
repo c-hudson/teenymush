@@ -122,9 +122,9 @@ sub has_socket
 
    my $con = one_val("select count(*) value " .
                      "  from socket " .
-                            " where lower(sck_tag) = lower(?)",
-                            $1
-                           );
+                     " where lower(sck_tag) = lower(?)",
+                     $txt
+                    );
    return ($con == 0) ? 0 : 1;
 }
 
@@ -156,18 +156,14 @@ sub fun_input
 
        my $data = $$input{$1};
 
-       if(!defined $$data{buffer}) {
-          # shouldn't happen
-          delete @$input{$1};
-          return socket_status($1);
-       } elsif($#{$$data{buffer}} == -1) {
-          delete @$input{$1};
+       if(!defined $$data{buffer} || $#{$$data{buffer}} == -1) {
           return socket_status($1);
        } else {
           my $buffer = $$data{buffer};
           return shift(@$buffer);
        }
    } else {
+       printf("### usage\n");
        return "#-1 Usage: [input(<socket>)]";
    }
 }

@@ -76,7 +76,6 @@ sub evaluate
     }
     
     if(ref($prog) eq "HASH") {                     # handle local variables
-       printf("PROG: %s\n",print_var($prog));
        my $var = $$prog{var};
        my $out;
 
@@ -397,10 +396,8 @@ sub handle_listener
             mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
          }
       } elsif($msg =~ /^$$hash{cmd}$/i) {
-         printf("Cmd: '$1,$2,$3,$4,$5,$6,$7,$8,$9'\n");
          mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
       } else {
-         printf("Cmd: 'N/A'\n");
          mushrun($hash,$$hash{txt});
       }
       $match=1;                                   # signal mush command found
@@ -416,6 +413,17 @@ sub nospoof
       return "[".obj_name($user) . "] ";
    }
    return undef;
+}
+
+sub ts
+{
+   my $time = shift;
+
+   my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) =
+                                                localtime(time);
+   $mon++;
+
+   return sprintf("%02d:%02d@%02d/%02d",$hour,$min,$mon,$mday);
 }
 
 #
@@ -663,27 +671,30 @@ sub loggedin
 
 sub flag_list
 {
-   my ($obj,$flag) = @_;
+   my ($obj,$flag) = (obj($_[0]),$_[1]);
    my (@list,$array);
    $flag = 0 if !$flag;
  
-   $obj = { obj_id => $obj } if(ref($obj) ne "HASH");
-   if(defined @connected_user{$$obj{obj_id}}) {
-      push(@list,$flag ? "CONNECTED" : 'c');
-   }
-
-   for my $hash (@{sql($db,"select fde_name, fde_letter" .
+   for my $hash (@{sql($db,"select * from ( " .
+                           "select fde_name, fde_letter, fde_order" .
                            "  from flag flg, flag_definition fde " . 
                            " where flg.fde_flag_id = fde.fde_flag_id " .
                            "   and obj_id = ? " .
                            "   and flg.atr_id is null " .
                            "   and fde_type = 1 " .
-                           "order by fde_order",
+                           " union all " .
+                           "select 'CONNECTED' fde_name, " .
+                           "       'c' fde_letter, " .
+                           "       999 fde_order " .
+                           "  from socket sck " .
+                           " where obj_id = ?) foo " .
+                            "order by fde_order",
+                           $$obj{obj_id},
                            $$obj{obj_id}
                           )}) {
       push(@list,$$hash{$flag ? "fde_name" : "fde_letter"});
    }
-   return join($flag ? " " : '',sort @list);
+   return join($flag ? " " : '',@list);
 }
 
 sub valid_dbref 
@@ -694,6 +705,18 @@ sub valid_dbref
                   "  from object " . 
                   " where obj_id = ?",
                   $$id{obj_id}) || return 0;
+}
+
+sub owner
+{
+   my $object = obj(shift);
+
+   if(defined $$object{obj_owner}) {
+      return fetch($$object{obj_owner});
+   } else {
+      my $child = fetch($$object{obj_id});
+      return fetch($$child{obj_owner});
+   }
 }
 
 sub locate_player
@@ -1199,7 +1222,9 @@ sub print_var
    my ($PL,$PR) = ('{','}');
    my $out;
 
-   return "$name -> TO_BIG" if $depth > 6;
+   if($depth > 4) {
+       return (" " x ($depth * 2)) .  " -> TO_BIG\n";
+   }
    $depth = 0 if $depth eq "";
    $out .= (" " x ($depth * 2)) . (($name eq undef) ? "UNDEFINED" : $name) .
            " $PL\n" if(!$recursive);
@@ -1209,13 +1234,10 @@ sub print_var
 
       my $data = (ref($var) eq "HASH") ? $$var{$key} : $$var[$key];
 
-      if(ref($data) eq "HASH" && !ignoreit($skip,$key,$depth)) {
+      if((ref($data) eq "HASH" || ref($data) eq "ARRAY") &&
+         !ignoreit($skip,$key,$depth)) {
          $out .= sprintf("%s%s $PL\n"," " x ($depth*2),$key);
-         $out .= print_var($$data{$key},$depth+1,$key,$skip,1);
-         $out .= sprintf("%s$PR\n"," " x ($depth*2));
-      } elsif(ref($data) eq "ARRAY" && !ignoreit($skip,$key,$depth)) {
-         $out .= sprintf("%s%s $PL\n"," " x ($depth*2),$key);
-         $out .= print_var(@$data[$key],$depth+1,$key,$skip,1);
+         $out .= print_var($data,$depth+1,$key,$skip,1);
          $out .= sprintf("%s$PR\n"," " x ($depth*2));
       } elsif(!ignoreit($skip,$key,$depth)) {
          $out .= sprintf("%s%s = %s\n"," " x ($depth*2),$key,$data);
@@ -1584,6 +1606,7 @@ sub fuzzy
    my ($sec,$min,$hour,$day,$mon,$year);
    my $AMPM = 1;
 
+   return $1 if($time =~ /^\s*(\d+)\s*$/);
    for my $word (split(/\s+/,$time)) {
 
       if($word =~ /^(\d+):(\d+):(\d+)$/) {

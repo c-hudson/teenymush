@@ -1273,7 +1273,10 @@ sub set
 {
    my ($obj,$attribute,$value) = @_;
 
-   if($value =~ /^\s*$/) {
+   if($attribute !~ /^\s*([a-z0-9_-]+)\s*$/i) {
+      echo($user,"Attribute name is bad, use the following characters: " .
+           "A-Z, 0-9, and _");
+   } elsif($value =~ /^\s*$/) {
       sql($db,
           "delete " .
           "  from attribute " .

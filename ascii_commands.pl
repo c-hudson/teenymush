@@ -530,7 +530,7 @@ sub cmd_while
     }
     $$cmd{while_count}++;
 
-    if($$cmd{while_count} >= 100) {
+    if($$cmd{while_count} >= 1000) {
        printf("#*****# while exceeded maxium loop of 1000, stopped\n");
        return err("while exceeded maxium loop of 1000, stopped");
     } elsif(test(evaluate($$cmd{while_test}))) {
@@ -1971,7 +1971,7 @@ sub cmd_describe
 {
    my $txt = shift;
 
-   if($txt =~ /^\s*([^ \/]+)\s*=\s*(.*?)\s*$/) {
+   if($txt =~ /^\s*([^ \/]+?)\s*=\s*(.*?)\s*$/) {
       cmd_set(trim($1) . "/DESCRIPTION=" . $2);
    } else {
       echo($user,"syntax: \@describe <object> = <Text of Description>");
@@ -1987,7 +1987,7 @@ sub cmd_set
 
    if(!perm($user,"SET")) {
       return err("Permission Denied.");
-   } elsif($txt =~ /^\s*([^ ]+)\/\s*([^ ]+)\s*=\s*(.*?)\s*$/s) { # attribute
+   } elsif($txt =~ /^\s*([^ ]+?)\/\s*([^ =]+?)\s*=\s*(.*?)\s*$/s) { # attribute
 
       ($target,$attr,$value) = (locate_object($user,$1),$2,$3);
       return echo($user,"Unknown object '%s'",$1) if !$target;
@@ -2000,7 +2000,7 @@ sub cmd_set
       }
       commit($db);
 
-   } elsif($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) { # flag?
+   } elsif($txt =~ /^\s*([^ ]+?)\s*=\s*(.*?)\s*$/) { # flag?
       ($target,$flag) = (locate_object($user,$1),$2);
       return echo($user,"Unknown object '%s'",$1) if !$target;
       controls($user,$target) || return echo($user,"Permission denied");

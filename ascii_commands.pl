@@ -120,6 +120,8 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_toad(@_); }};
 @command{"\@sleep"}  = { help => "Pause the a program for X seconds",
                          fun  => sub { cmd_sleep(@_); }};
+@command{"\@sweep"}  = { help => "Lists who/what is listening",
+                         fun  => sub { cmd_sweep(@_); }};
 #@command{"\@update_hostname"} =   { help => "Perform hostname lookups on any connected player as needed",
 #                         fun  => sub { cmd_update_hostname(@_); }};
 @command{"\@list"}   = { help => "List internal server data",
@@ -182,7 +184,7 @@ delete @honey{keys %honey};
 
 sub cmd_huh         { echo($user,"Huh?  (Type \"help\" for help.)");     }
 sub cmd_offline_huh { my $sock = $$user{sock};
-                      printf($sock "%s ",getfile("login.txt"));          }
+                      printf($sock "%s",getfile("login.txt"));           }
 sub cmd_version     { echo($user,"TeenyMUSH 0.1 [cmhudson\@gmail.com]"); }
 
 sub cmd_reset
@@ -504,7 +506,7 @@ sub test
    elsif($txt =~ / > /)   { return (trim($`) >  trim($')) ? 1 : 0;  }
    elsif($txt =~ / < /)   { return (trim($`) <  trim($')) ? 1 : 0;  }
    elsif($txt =~ / eq /)  { return (trim($`) eq trim($')) ? 1 : 0;  }
-   elsif($txt =~ / ne /)  { return (trim($`) ne trim($')) ? 1 : 0;  }
+   elsif($txt =~ / ne /)  { return ( trim($`) ne trim($')) ? 1 : 0; }
    else                   { return 0;                               }
 }
 
@@ -525,21 +527,27 @@ sub cmd_while
            ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
            $$cmd{while_cmd} = [ bannana_split($2,";",1) ];
         } else {
+          echo($user,"### while usage\n");
            return err("usage: while (<expression>) { commands }");
         }
     }
     $$cmd{while_count}++;
 
     if($$cmd{while_count} >= 1000) {
+       echo($user,"### while stopped\n");
        printf("#*****# while exceeded maxium loop of 1000, stopped\n");
        return err("while exceeded maxium loop of 1000, stopped");
     } elsif(test(evaluate($$cmd{while_test}))) {
+       echo($user,"### while still running\n");
        signal_still_running();
        my $commands = $$cmd{while_cmd};
        for my $i (0 .. $#$commands) {
           $$user{child} = $prog;
           mushrun($user,$$commands[$i]);
        }
+    } else {
+       echo($user,"### while loop finished - %s - %s -> %s\n",$$cmd{while_test} ,
+          evaluate($$cmd{while_test}),test(evaluate($$cmd{while_test})));
     }
 }
 
@@ -788,13 +796,13 @@ sub cmd_telnet
    my $pending = 1;
 #   return 0;
 
-   return err("Permission Denied.") if(!perm($user,"TELNET"));
+   return err("PErmission Denied.") if(!perm($user,"TELNET"));
 
    my $puppet = hasflag($user,"SOCKET_PUPPET");
    my $input = hasflag($user,"SOCKET_INPUT");
 
    if(!$input && !$puppet) {
-      return echo($user,"Permission Denied.");
+      return echo($user,"PeRmission Denied. ($puppet,$input)");
    } elsif($txt =~ /^\s*([^ ]+)\s*=\s*([^:]+)\s*:\s*(\d+)\s*$/ ||
            $txt =~ /^\s*([^ ]+)\s*=\s*([^:]+)\s* \s*(\d+)\s*$/) {
       my $count = one_val("select count(*) value " .
@@ -806,7 +814,7 @@ sub cmd_telnet
       }
       my $addr = inet_aton($2) ||
          return echo($user,"Invalid hostname '%s' specified.",$2);
-      my $sock = IO::Socket::INET->new(Proto=>'tcp') ||
+      my $sock = IO::Socket::INET->new(Proto=>'tcp',blocking=>0) ||
          return echo($user,"Could not create socket");
       $sock->blocking(0);
       my $sockaddr = sockaddr_in($3, $addr) ||
@@ -814,7 +822,7 @@ sub cmd_telnet
       $sock->connect($sockaddr) or                     # start connect to host
          $! == EWOULDBLOCK or $! == EINPROGRESS or         # and check status
          return echo($user,"Could not open connection");
-      () = IO::Select->new($sock)->can_write(10)     # see if socket is pending
+      () = IO::Select->new($sock)->can_write(.2)     # see if socket is pending
           or $pending = 2;
 #      defined($sock->blocking(1)) ||
 #         return echo($user,"Could not open a nonblocking connection");
@@ -823,12 +831,13 @@ sub cmd_telnet
          obj_id    => $$user{obj_id},
          sock      => $sock,
          raw       => 1,
-         socket    => $1,
+         socket    => uc($1),
          hostname  => $2,
          port      => $3, 
          loggedin  => 0,
          opened    => time(),
-         enactor   => $enactor
+         enactor   => $enactor,
+         pending   => $pending,
       };
 
       if($puppet) {
@@ -854,17 +863,13 @@ sub cmd_telnet
                $$user{obj_id},
                2,
                $sock,
-               $1,
+               uc($1),
                $2,
                $3
          );
-      my $count = one_val("select count(*) value " .
-                          "  from socket " .
-                          " where lower(sck_tag) = lower( ? )",
-                          $1);
         commit;
       @info{io} = {} if(!defined @info{io});
-      delete @{@info{io}}{$1};
+      delete @{@info{io}}{uc($1)};
       echo($user,"Connection started to: %s:%s\n",$2,$3);
    } else {
       echo($user,"usage: \@telnet <id>=<hostname>:<port>");
@@ -1303,6 +1308,9 @@ sub page
 
    my $target = locate_player($target,"online") ||
          return echo($user,"That player is not connected.");
+#   delete @$target{sock};
+
+   my $target = fetch($$target{obj_id});
 
    if($msg =~ /^\s*:/) {
       echo($target,"From afar, %s %s\n",$$user{obj_name},trim($'));
@@ -1560,6 +1568,7 @@ sub cmd_clear
       echo($user,"\@clear expect no arguments");
    } elsif(perm($user,"CLEAR")) {
       $| = 1;
+      printf("%s\n%s\n%s\n","#" x 65,"-" x 65,"#" x 65);
       print "\033[2J";    #clear the screen
       print "\033[0;0H"; #jump to 0,0
       echo($user,"Done.");
@@ -2024,7 +2033,7 @@ sub cmd_ex
       $target = loc_obj($user);
    }
 
-   my $perm = controls($user,$target);
+   my $perm = controls($user,$target,1);
 
    echo($user,"%s",obj_name($target,$perm));
    my $owner = fetch(($$target{obj_owner} == -1) ? 0 : $$target{obj_owner});
@@ -2405,7 +2414,7 @@ sub who
    # details.
    for my $key (keys %connected) {
       my $hash = @connected{$key};
-      if(!defined $$hash{connect_time}) {
+      if(!defined $$hash{connect_time} && $$hash{raw} == 0) {
          push(@who,{ obj_name      => "[Connecting]",
                      sck_socket    => $$hash{sock},
                      start_time    => $$hash{start},
@@ -2483,6 +2492,31 @@ sub who
    return $out;
 }
 
+
+sub cmd_sweep
+{
+   for my $obj (sql2("select obj.* " .
+                    "  from content c1,  " .
+                    "       content c2,  " .
+                    "       flag flg, " .
+                    "       flag_definition fde, " .
+                    "       socket sck," .
+                    "       object obj ". 
+                    " where c1.con_source_id = c2.con_source_id " .
+                    "   and obj.obj_id = c1.obj_id " .
+                    "   and flg.obj_id = c1.obj_id " .
+                    "   and flg.fde_flag_id = fde.fde_flag_id " .
+                    "   and fde.fde_Name in ('LISTENER','PUPPET','PLAYER') " .
+                    "   and ( sck.obj_id = c1.obj_id " .
+                    "         or obj.obj_owner = sck.obj_id " .
+                    "       ) " .
+                    "   and c2.obj_id = ?",
+                    $$user{obj_id}
+                   )
+               ) {
+        echo($user,"#%s",obj_name($$obj{obj_id}));
+    }
+}
 
 
 sub cmd_update_hostname

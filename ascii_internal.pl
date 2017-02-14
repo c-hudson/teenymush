@@ -42,14 +42,31 @@ sub first
    return (split($delim,$txt))[0];
 }
 
+sub evaluate
+{
+    my ($txt,$target) = @_;
+    my $tmp = $enactor;
+
+    if($target ne undef) {
+       $enactor = $user;
+       $user = $target;
+    } 
+    my $result = evaluate_string(@_[0],@_[1]);
+
+    if($target ne undef) {
+       $user = $enactor;
+       $enactor = $tmp;
+    }
+    return $result;
+}
+
 #
 # evaluate
 #    Take a string and evaluate any functions, and mush variables
 #
-sub evaluate
+sub evaluate_substitutions
 {
     my ($txt,$target) = @_;
-
     my $tmp = $enactor;
 
     if($target ne undef) {
@@ -101,19 +118,16 @@ sub evaluate
 #    $txt =~ s/(?<!(?<!\\)\\)%9/$$user{9}/g;
 
 
-    # evaluate functions
-    my $result = evaluate_string($txt);
-
     # remove any escaped characters
-    $result =~ s/\\(.)/\1/g;
+    $txt =~ s/\\(.)/\1/g;
 
     if($target ne undef) {
        $user = $enactor;
        $enactor = $tmp;
     }
 
-    $result =~ s/%r/\n/ig;
-    return $result;
+    $txt =~ s/%r/\n/ig;
+    return $txt;
 }
 
 #
@@ -250,11 +264,12 @@ sub force
 #
 sub controls
 {
-   my ($enactor,$target) = @_;
- 
-   $enactor = { obj_id=>$enactor } if(ref($enactor) ne "HASH");
-   $target = { obj_id=>$target } if(ref($target) ne "HASH");
+   my ($enactor,$target,$flag) = (obj(shift),obj(shift),shift);
 
+   if(!defined $$target{obj_owner} && defined $$target{obj_id}) {
+      $target = fetch($$target{obj_id});
+   }
+ 
    if($$enactor{obj_id} eq $$target{obj_id}) {                    # is object
       return 1;
    } elsif($$target{obj_owner} eq $$enactor{obj_id}) {   # is owned by object
@@ -474,6 +489,10 @@ sub echo
           defined @connected{$$target{sck_socket}}) {          # exact socket
           my $sock = @{@connected{$$target{sck_socket}}}{sock};
           printf($sock "%s%s",nospoof($target),$out);
+       } elsif(defined $$target{sock} && 
+          defined @connected{$$target{sock}}) {          # exact socket
+          my $sock = @{@connected{$$target{sock}}}{sock};
+          printf($sock "%s%s",nospoof($target),$out);
       } else {                                       # sockets used by obj_id
           for my $sock (@{sql($db, 
                               "select * from socket " .
@@ -680,7 +699,9 @@ sub owner
 {
    my $object = obj(shift);
 
-   if(defined $$object{obj_owner}) {
+   if(hasflag($object,"PLAYER")) {            # players are owned by god,
+      return $$object{obj_id};                # but really they own themselves
+   } elsif(defined $$object{obj_owner}) {
       return fetch($$object{obj_owner});
    } else {
       my $child = fetch($$object{obj_id});
@@ -854,6 +875,10 @@ sub set_flag
     my $who = $$user{obj_name};;
     my ($remove,$count);
 
+    if(!controls($user,$object)) {
+       return err("#-1 Permission denied.");
+    }
+
     $who = "CREATE_USER" if($flag eq "PLAYER" && $who eq undef);
     ($flag,$remove) = ($',1) if($flag =~ /^\s*!\s*/);         # remove flag 
 
@@ -879,8 +904,8 @@ sub set_flag
        return "#-1 Unknown Flag.";
     }
 
-    if(!perm($object,$$hash{fde_name})) {
-       return "#-1 Permission Denied.";
+    if(!perm($user,$$hash{fde_name})) {
+       return "#-1 PERMission Denied.";
     }
 
     if($override || $$hash{fde_permission_name} eq "ANYONE" ||
@@ -1039,7 +1064,9 @@ sub set_atr_flag
 
 sub perm
 {
-   my ($target,$perm) = @_;
+   my ($target,$perm) = (obj(shift),shift);
+
+   return 0 if(defined $$target{loggedin} && !$$target{loggedin});
 
    $perm =~ s/@//;
    my $result = one_val($db,
@@ -1059,11 +1086,11 @@ sub perm
                   "         and flg2.obj_id = flg1.obj_id " .
                   "   ) " .
                   "group by obj_id, fpr_name",
-                  $$target{obj_id},
+                  owner($$target{obj_id}),
                   $perm
                  );
     if($result eq undef) {
-       return 1;
+       return 0;
     } else {
        return $result - 1;
     }
@@ -1529,6 +1556,8 @@ sub getfile
       $out .= $_;
    }
    close($file);
+   $out =~ s/\r//g;
+   $out =~ s/\n/\r\n/g;
 
    @info{"file_$fn"} = {                                 # store cached data
       mod => $newmod,

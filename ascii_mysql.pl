@@ -15,6 +15,7 @@ $log = {} if(ref($log) ne "HASH");
 sub get_db_credentials
 {
    for my $line (split(/\n/,getfile("ascii_config.dat"))) {
+      $line =~ s/\r|\n//g;
       if($line =~ /^\s*(user|pass|database)\s*=\s*([^ ]+)\s*$/) {
          $$db{$1} = $2;
          $$log{$1} = $2;
@@ -30,6 +31,74 @@ get_db_credentials;
 #    Connect / Reconnect to the database and run some sql.
 #
 sub sql
+{
+   my $con = (ref(@_[0]) eq "HASH") ? shift : $db;
+   my ($sql,@args) = @_;
+   my (@result,$sth);
+   @info{sqldone} = 0;
+
+   delete @$con{rows};
+
+   #
+   # clean up the sql a little
+   #  keep track of last sql that was run for debug purposes.
+   #
+   $sql =~ s/\s{2,999}/ /g;
+   @info{sql_last} = $sql;
+   @info{sql_last_args} = join(',',@args);
+
+   # connected/reconnect to DB if needed
+   if(!defined $$con{db} || !$$con{db}->ping) {
+      $$con{host} = "localhost" if(!defined $$con{host});
+      $$con{db} = DBI->connect("DBI:mysql:database=$$con{database}:" .
+                             "host=$$con{host}",
+                             $$con{user},
+                             $$con{pass},
+                             {AutoCommit => 0, RaiseError => 1,
+                               mysql_auto_reconnect => 1}
+                            ) 
+                            or die "Can't connect to database: $DBI::errstr\n";
+   }
+
+   $sth = @$con{db}->prepare($sql) ||
+      die("Could not prepair sql: $sql");
+
+   for my $i (0 .. $#args) {
+      $sth->bind_param($i+1,@args[$i]);
+   }
+
+   $sth->execute( ) || die("Could not execute sql");
+   @$con{rows} = $sth->rows;
+
+   # produce an error if expectations are not met
+   if(defined @$con{expect}) {
+      if(@$con{expect} != $sth->rows) {
+         delete @$con{expect};
+         die("Expected @$con{expect} rows but got " . $sth->rows . 
+             " when running SQL: $sql");
+      } else {
+         delete @$con{expect};
+      }
+   }
+ 
+   # do not fetch results from inserts / deletes 
+   if($sql !~ /^\s*(insert|delete|update) /i) {
+      while(my $ref = $sth->fetchrow_hashref()) {
+         push(@result,$ref);
+      }
+   }
+
+   # clean up and return the results
+   $sth->finish();
+   @info{sqldone} = 1;
+   return \@result;
+}
+
+#
+# sql
+#    Connect / Reconnect to the database and run some sql.
+#
+sub sql2
 {
    my $con = (ref(@_[0]) eq "HASH") ? shift : $db;
    my ($sql,@args) = @_;
@@ -102,7 +171,7 @@ sub sql
    # clean up and return the results
    $sth->finish();
    @info{sqldone} = 1;
-   return \@result;
+   return @result;
 }
 
 #

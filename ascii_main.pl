@@ -21,5 +21,4 @@ sql($db,"update socket_history " .
         " where skh_end_time is null");
 commit($db);
 
-
 server_start(4096);

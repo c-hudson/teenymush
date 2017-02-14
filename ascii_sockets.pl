@@ -192,7 +192,7 @@ sub server_hostname
 #
 sub server_handle_sockets
 {
-   eval {
+#   eval {
       # wait for IO or 1 second
       my ($sockets) = IO::Select->select($readable,undef,undef,.4);
       my $buf;
@@ -252,7 +252,7 @@ sub server_handle_sockets
 
      spin();
 
-   };
+#   };
    if($@){
       printf("Server Crashed, minimal details [main_loop]\n");
       printf("LastSQL: '%s'\n",@info{sql_last});
@@ -338,9 +338,9 @@ sub server_start
 
    # main loop;
    while(1) {
-      eval {
+#      eval {
          server_handle_sockets();
-      };
+#      };
       if($@){
          printf("Server Crashed, minimal details [main_loop]\n");
          printf("LastSQL: '%s'\n",@info{sql_last});

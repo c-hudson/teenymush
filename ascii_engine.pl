@@ -46,11 +46,11 @@ sub mush_command
 
 sub priority
 {
-   if(perm($user,"HIGH_PRORITY")) {
-      return 50;
-   } else {
-      return 1;
-   }
+   my $obj = shift;
+
+   $obj = owner($obj) if(!hasflag($obj,"PLAYER"));
+
+   return (perm($obj,"HIGH_PRORITY") ? 50 : 1);
 }
 
 #
@@ -83,7 +83,7 @@ sub mushrun
          enactor => $user,
          user => $hash,
          var => {},
-         priority => priority(),
+         priority => priority($hash),
          calls => 0
       };
 
@@ -134,7 +134,8 @@ sub spin
    @info{engine} = {} if(!defined @info{engine});
 
    eval {
-      ualarm(800_000);                                # die at 8 milliseconds
+#      ualarm(800_000);                                # die at 8 milliseconds
+      ualarm(1_200_000);                                # die at 8 milliseconds
 
       for my $pid (keys %{@info{engine}}) {
          my $thread = @{@info{engine}}{$pid};
@@ -178,7 +179,7 @@ sub spin
    ualarm(0);                                                 # cancel alarm
 #   printf("Count: $count\n");
 
-   if($@ =~ /alarm/i) {
+   if($@ =~ /alaerm/i) {
       printf("Time slice timed out (%2f w/%s cmd) $@\n",
          Time::HiRes::gettimeofday() - $start,$count);
       if(defined @last{user} && defined @{@last{user}}{var}) {
@@ -187,7 +188,7 @@ sub spin
             @{@last{user}}{obj_id},@last{cmd},$$var{0},$$var{1},$$var{2},
             $$var{3},$$var{4},$$var{5},$$var{6},$$var{7},$$var{8});
       } else {
-         printf("   #%s: %s\n",@{@last{user}}{obj_id},@last{cmd});
+         printf("   #%s: %s\n",@{@last{user}}{obj_id},@{@last{cmd}}{cmd});
       }
    } elsif($@) {                               # oops., you sunk my battle ship
          printf("# %s CRASHED the server with: %s\n%s",name($user),

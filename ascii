@@ -48,6 +48,8 @@ sub getfile
       $out .= $_;
    }
    close($file); 
+   $out =~ s/\r//g;
+   $out =~ s/\n/\r\n/g;
 
    return $out;                                                 # return data
 }

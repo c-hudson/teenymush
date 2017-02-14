@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 
 use strict;
+use HTML::HTML5::Entities;
 
 my %fun = 
 (
@@ -13,6 +14,7 @@ my %fun =
    quota     => sub { return quota_left($$user{obj_id})                 },
 #  sql       => sub { return &fun_sql(@_);                              },
    input     => sub { return &fun_input(@_);                            },
+   has_input => sub { return &fun_has_input(@_);                        },
    strlen    => sub { return &fun_strlen(@_);                           },
    lattr     => sub { return &fun_lattr(@_);                            },
    iter      => sub { return &fun_iter(@_);                             },
@@ -20,7 +22,26 @@ my %fun =
    ljust     => sub { return &fun_ljust(@_);                            },
    extract   => sub { return &fun_extract(@_);                          },
    get       => sub { return &fun_get(@_);                              },
+   edit      => sub { return &fun_edit(@_);                             },
+   decode_entities => sub { return &fun_de(@_);                         },
 );
+
+sub fun_de
+{
+   decode_entities(@_[0]);
+}
+
+sub fun_edit
+{
+   my ($txt,$from,$to) = @_;
+
+   if($txt eq undef || $from eq undef) {
+      return;
+   }
+
+   $txt =~ s/$from/$to/i;
+   return $txt;
+}
 
 sub fun_get
 {
@@ -116,13 +137,17 @@ sub fun_substr
    return substr($txt,$start,$end);
 }
 
+#
+# has_socket
+#    Check the database to see if the named socket exists or not
+#    
 sub has_socket
 {
    my $txt = shift;
 
    my $con = one_val("select count(*) value " .
                      "  from socket " .
-                     " where lower(sck_tag) = lower(?)",
+                     " where upper(sck_tag) = upper(trim(?))",
                      $txt
                     );
    return ($con == 0) ? 0 : 1;
@@ -152,18 +177,17 @@ sub fun_input
     my $input = @info{io};
 
     if($txt =~ /^\s*([^ ]+)\s*$/) {
-       return socket_status($1) if(!defined $$input{$1});
+       return socket_status(uc($1)) if(!defined $$input{uc($1)});
 
-       my $data = $$input{$1};
+       my $data = $$input{uc($1)};
 
        if(!defined $$data{buffer} || $#{$$data{buffer}} == -1) {
-          return socket_status($1);
+          return socket_status(uc($1));
        } else {
           my $buffer = $$data{buffer};
           return shift(@$buffer);
        }
    } else {
-       printf("### usage\n");
        return "#-1 Usage: [input(<socket>)]";
    }
 }
@@ -191,7 +215,7 @@ sub fun_space
     my ($count) = @_;
 
     if($#_ != 0) {
-       return "#-1 Space expects 2 arguments but found " . ($#_ +1);
+       return "#-1 Space expects 1 arguments but found " . ($#_ +1);
     } elsif($count !~ /^\s*\d+\s*/) {
        return "#-1 Space expects a numeric value";
     }
@@ -266,7 +290,6 @@ sub fun_lattr
    my $txt = shift;
    my ($obj,$atr,@list);
 
-
    if($txt =~ /\s*\/\s*/) {                               # input has a slash 
       ($obj,$atr) = ($`,$');                          # designating a pattern
    } else {
@@ -276,7 +299,6 @@ sub fun_lattr
    $txt = "me" if $txt eq undef;                # default to searching enactor
    my $target = locate_object($user,$obj,"LOCAL");
    return "#-1 Unknown object" if $target eq undef;  # oops, can't find object
-#   printf("%s\n",print_var($user));
 
    for my $attr (@{sql($db,                     # query db for attribute names
                        "  select atr_name " .
@@ -336,18 +358,52 @@ sub fun_lookup
    return (defined @fun{lc($_[0])}) ? lc($_[0]) : "huh";
 }
 
+
 #
 # function_walk
 #    Traverse the string till the end of the function is reached.
 #    Keep track of the depth of {}[]"s so that the function is
 #    not split in the wrong place.
 #
-sub function_walk
+sub parse_function 
 {
-   my ($fun,$txt,$type,$last,$i,@stack,@depth) = (shift,shift,shift,0,0);
-   my %pair = ( '(' => ')', '{' => '}', '"' => '"',);
+   my ($txt,$type,$target) = @_;
 
-   my @array = grep {!/^$/} split(/([\\\[\]\{\}\(\),"])/,$txt);
+   my @array = balanced_split($txt,",");
+   return undef if($#array == -1);
+
+   # type 1: expect ending ]
+   # type 2: expect ending ) and nothing else
+   if(($type == 1 && @array[0] =~ /^\s*]/) ||
+      ($type == 2 && @array[0] =~ /^\s*$/)) {
+      
+      @array[0] = $';                              # strip ending ] if there
+      for my $i (1 .. $#array) {                            # eval arguments
+         # evaluate args before passing them to function
+         @array[$i] = evaluate_substitutions(@array[$i],$target);
+      }
+      return \@array;
+   } else {
+      return undef;
+   }
+}
+
+
+
+#
+# balanced_split
+#    Split apart a string but allow the string to have "",{},()s
+#    that keep segments together... but only if they have a matching
+#    pair.
+#
+sub balanced_split
+{
+   my ($txt,$delim) = @_;
+   my ($last,$i,@stack,@depth) = (0,0);
+   my %pair = ( '(' => ')', '{' => '}', '"' => '"',);
+   $delim = "," if $delim eq undef;
+
+   my @array = grep {!/^$/} split(/([\\\[\]\{\}\(\)$delim"])/,$txt);
    while(++$i <= $#array) {
       if(@array[$i] eq undef || length(@array[$i]) > 1 || escaped(\@array,$i)) {
          # skippable
@@ -359,7 +415,7 @@ sub function_walk
                         i     => $i,
                         stack => $#stack+1
                      });
-      } elsif($#depth == -1 && @array[$i] eq ",") {    # comma at right depth
+      } elsif($#depth == -1 && @array[$i] eq $delim) { # delim at right depth
          push(@stack,join('',@array[$last .. ($i-1)]));
          $last = $i+1;
       } elsif($#depth == -1 && @array[$i] eq ")") {         # end of function
@@ -376,16 +432,8 @@ sub function_walk
       }
    }
 
-
-   my $left = join('',@array[$last .. $#array]);
-   if($#depth != -1) {
-      return { err => 1 };
-   } elsif(($type == 1 && $left =~ /^\s*]/) || 
-           ($type == 2 && $left =~ /^\s*$/)) {
-      return { err  => 0, left => $', stack => \@stack };
-   } else {
-      return { err => 1 };
-   }
+   unshift(@stack,join('',@array[$last .. $#array]));
+   return ($#depth != -1) ? undef : @stack;
 }
 
 
@@ -395,31 +443,33 @@ sub function_walk
 #
 sub evaluate_string
 {
-   my $txt = shift;
+   my ($txt,$target) = @_;
    my $out;
 
    #
    # handle string containing a single non []'ed function
    #
-   if($txt =~ /^([a-zA-Z_]+)\(/) {
-      my $result = function_walk($1,$',2);
-      return &{@fun{fun_lookup($1)}}(@{$$result{stack}}) if(!$$result{error});
+   if($txt =~ /^([a-zA-Z_]+)\((.*)\)$/) {
+      my $result = parse_function($2 . ")",2,$target);
+      if($result ne undef) {
+         return &{@fun{fun_lookup($1)}}(@$result[1 .. $#$result]);
+      }
    }
 
    #
    # pick functions out of string when enclosed in []'s 
    #
    while($txt =~ /\[([a-zA-Z_]+)\(/) {
-      $out .= $`;
-      my $result = function_walk($1,$',1);
+      $out .= evaluate_substitutions($`);
+      my $result = parse_function($',1,$target);
 
-      if($$result{error}) {                    # found error, copy verbatium
+      if($result eq undef) {
          $txt = $';
          $out .= "[" . $1 . "(";
       } else {                                       # good function, run it
-         $txt = $$result{left};
-         $out .= &{@fun{fun_lookup($1)}}(@{$$result{stack}}),
+         $txt = shift(@$result);
+         $out .= &{@fun{fun_lookup($1)}}(@$result);
       }
    }
-   return $out . $txt;                           # return results + leftovers
+   return $out . evaluate_substitutions($txt);   # return results + leftovers
 }

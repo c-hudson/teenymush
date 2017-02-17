@@ -185,7 +185,9 @@ delete @honey{keys %honey};
 sub cmd_huh         { echo($user,"Huh?  (Type \"help\" for help.)");     }
 sub cmd_offline_huh { my $sock = $$user{sock};
                       printf($sock "%s",getfile("login.txt"));           }
-sub cmd_version     { echo($user,"TeenyMUSH 0.1 [cmhudson\@gmail.com]"); }
+sub cmd_version     { echo($user,"TeenyMUSH :  Version 0.1 [cmhudson\@gmail.com]");
+                      echo($user,"   Source :  https://github.com/c-hudson" .
+                                 "/Ascii");                              }
 
 sub cmd_reset
 {
@@ -2338,7 +2340,7 @@ sub cmd_set2
 
 sub cmd_say
 {
-   my $txt = evaluate(shift,shift);
+   my $txt = evaluate(shift);
 
    echo($user,"You say, \"%s\"",$txt);
    echo_room($user,"%s says, \"%s\"",name($user),$txt);

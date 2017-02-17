@@ -96,7 +96,8 @@ sub mushrun
     if(defined $$hash{source} && $$hash{source} == 1) {
        unshift(@$stack,{ cmd => $cmd });
     } else {
-       for my $i ( bannana_split($cmd,';',1) ) {
+       for my $i ( balanced_split($cmd,';',3) ) {
+#       for my $i ( bannana_split($cmd,';',1) ) {
           my $stack = $$prog{stack};
           if(defined $$hash{child}) {                # child gets added to top
              unshift(@$stack,{ cmd => $i });

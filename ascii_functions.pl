@@ -214,8 +214,10 @@ sub fun_space
 {
     my ($count) = @_;
 
-    if($#_ != 0) {
-       return "#-1 Space expects 1 arguments but found " . ($#_ +1);
+    if($count =~ /^\s*$/) {
+       $count = 1;
+    } elsif(!($#_ == -1 or $#_ == 0)) {
+       return "#-1 Space expects 0 or 1 numeric value but found " . ($#_ +1);
     } elsif($count !~ /^\s*\d+\s*/) {
        return "#-1 Space expects a numeric value";
     }
@@ -244,7 +246,7 @@ sub fun_repeat
 #
 sub fun_time
 {
-    if($#_ != -1) {
+    if($#_ != -1 && $#_ != 0) {
        return "#-1 Time expects no arguments but found " . ($#_ +1);
     }
     return scalar localtime();
@@ -369,7 +371,7 @@ sub parse_function
 {
    my ($txt,$type,$target) = @_;
 
-   my @array = balanced_split($txt,",");
+   my @array = balanced_split($txt,",",$type);
    return undef if($#array == -1);
 
    # type 1: expect ending ]
@@ -398,11 +400,12 @@ sub parse_function
 #
 sub balanced_split
 {
-   my ($txt,$delim) = @_;
-   my ($last,$i,@stack,@depth) = (0,0);
+   my ($txt,$delim,$type) = @_;
+   my ($last,$i,@stack,@depth) = (0,-1);
    my %pair = ( '(' => ')', '{' => '}', '"' => '"',);
    $delim = "," if $delim eq undef;
 
+   $txt = $1 if($type == 3 && $txt =~ /^\s*{(.*)}\s*$/);
    my @array = grep {!/^$/} split(/([\\\[\]\{\}\(\)$delim"])/,$txt);
    while(++$i <= $#array) {
       if(@array[$i] eq undef || length(@array[$i]) > 1 || escaped(\@array,$i)) {
@@ -418,7 +421,7 @@ sub balanced_split
       } elsif($#depth == -1 && @array[$i] eq $delim) { # delim at right depth
          push(@stack,join('',@array[$last .. ($i-1)]));
          $last = $i+1;
-      } elsif($#depth == -1 && @array[$i] eq ")") {         # end of function
+      } elsif($type <= 2 && $#depth == -1 && @array[$i] eq ")") { # func end
          push(@stack,join('',@array[$last .. ($i-1)]));
          $last = $i+1;
          $i = $#array;
@@ -432,7 +435,11 @@ sub balanced_split
       }
    }
 
-   unshift(@stack,join('',@array[$last .. $#array]));
+   if($type == 3) {
+      push(@stack,join('',@array[$last .. $#array]));
+   } else { 
+      unshift(@stack,join('',@array[$last .. $#array]));
+   }
    return ($#depth != -1) ? undef : @stack;
 }
 
@@ -450,7 +457,7 @@ sub evaluate_string
    # handle string containing a single non []'ed function
    #
    if($txt =~ /^([a-zA-Z_]+)\((.*)\)$/) {
-      my $result = parse_function($2 . ")",2,$target);
+      my $result = parse_function("$2)",2,$target);
       if($result ne undef) {
          return &{@fun{fun_lookup($1)}}(@$result[1 .. $#$result]);
       }

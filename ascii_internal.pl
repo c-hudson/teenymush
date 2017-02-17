@@ -1267,7 +1267,7 @@ sub inuse_player_name
 
 sub set
 {
-   my ($obj,$attribute,$value) = @_;
+   my ($obj,$attribute,$value) = (obj(@_[0]),@_[1],@_[2]);
 
    if($attribute !~ /^\s*([a-z0-9_-]+)\s*$/i) {
       echo($user,"Attribute name is bad, use the following characters: " .
@@ -1438,6 +1438,11 @@ sub move
 
    $who = 'CREATE_COMMAND' if($who eq undef);
 
+   my $current = loc($target);
+   if(hasflag($current,"ROOM")) {
+      set($current,"LAST_INHABITED",scalar localtime());
+   }
+
    # look up destination object
    # remove previous location record for object
    sql($db,"delete from content " .           # remove previous loc
@@ -1461,6 +1466,11 @@ sub move
        $who,
        ($type eq undef) ? 3 : 4
    );
+
+   $current = loc($target);
+   if(hasflag($current,"ROOM")) {
+      set($current,"LAST_INHABITED",scalar localtime());
+   }
    commit($db);
    return 1;
 }

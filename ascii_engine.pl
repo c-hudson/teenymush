@@ -7,6 +7,8 @@
 #
 
 
+
+
 use Time::HiRes "ualarm";
 
 sub mush_command
@@ -30,7 +32,6 @@ sub mush_command
                        $$user{obj_id}
                       )
                 }) {
-
       $$hash{cmd} =~ s/\*/\(.*\)/g;
       $$hash{txt} =~ s/\r\s*|\n\s*//g;
       if($cmd =~ /^$$hash{cmd}$/) {
@@ -61,12 +62,13 @@ sub priority
 sub mushrun
 {
    my ($hash,$cmd,@wildcard) = @_;
+   my $txt;
 
    if(defined $$user{inattr}) {                               # handle inattr
       my $hash = $$user{inattr};
       my $stack = $$hash{content};
       if($cmd =~ /^\s*$/) {
-         my $txt = "$$hash{attr} $$hash{object}=" . join("\r\n",@$stack);
+         $txt = "$$hash{attr} $$hash{object}=" . join("\r\n",@$stack);
          delete @$user{inattr};
          cmd_set2($txt);
          return;
@@ -96,8 +98,7 @@ sub mushrun
     if(defined $$hash{source} && $$hash{source} == 1) {
        unshift(@$stack,{ cmd => $cmd });
     } else {
-       for my $i ( balanced_split($cmd,';',3) ) {
-#       for my $i ( bannana_split($cmd,';',1) ) {
+       for my $i ( balanced_split($cmd,';',3,1) ) {
           my $stack = $$prog{stack};
           if(defined $$hash{child}) {                # child gets added to top
              unshift(@$stack,{ cmd => $i });
@@ -108,16 +109,36 @@ sub mushrun
     }
 
     if(!defined $$hash{child}) {
-       for my $i (0 .. 9) {                              # copy over %0 .. %9
-          if(defined @wildcard[$i]) {
-             @{$$prog{var}}{$i} = @wildcard[$i];
-          } else {
-             @{$$prog{var}}{$i} = "";
-          }
-       }
+       set_digit_variables(@wildcard);             # copy over %0 .. %9
     }
     delete @$hash{child};
-    delete @$hash{source};
+#    delete @$hash{source};
+}
+
+sub set_digit_variables
+{
+   if(ref(@_[0]) eq "HASH") {
+      my $new = shift;
+      for my $i (0 .. 9) {
+         @{$$prog{var}}{$i} = $$new{$i};
+      }
+   } else {
+      my @var = @_;
+
+      for my $i (0 .. 9 ) {
+         @{$$prog{var}}{$i} = @var[$i];
+      }
+   }
+}
+
+sub get_digit_variables
+{
+    my $result = {};
+  
+    for my $i (0 .. 9) {
+       $$result{$i} =  @{$$prog{var}}{$i};
+    }
+    return $result;
 }
 
 #

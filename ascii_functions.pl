@@ -2,6 +2,21 @@
 
 use strict;
 use HTML::HTML5::Entities;
+use Carp;
+
+
+
+#
+# define which function's arguements should not be evaluated before
+# executing the function. The sub-hash defines exactly which argument
+# should be not evaluated ( starts at 1 not 0 )
+#
+my %exclude = 
+(
+   iter      => { 2 => 1 },
+   u         => { 2 => 1, 3 => 1, 4 => 1, 5 => 1, 6 => 1, 7 => 1, 8 => 1,
+                  9 => 1, 10 => 1 },
+);
 
 my %fun = 
 (
@@ -23,8 +38,248 @@ my %fun =
    extract   => sub { return &fun_extract(@_);                          },
    get       => sub { return &fun_get(@_);                              },
    edit      => sub { return &fun_edit(@_);                             },
+   add       => sub { return &fun_add(@_);                              },
+   sub       => sub { return &fun_sub(@_);                              },
+   div       => sub { return &fun_div(@_);                              },
+   secs      => sub { return &fun_secs(@_);                             },
+   loadavg   => sub { return &fun_loadavg(@_);                          },
+   after     => sub { return &fun_after(@_);                            },
+   before    => sub { return &fun_before(@_);                           },
+   member    => sub { return &fun_member(@_);                           },
+   num       => sub { return &fun_num(@_);                              },
+   name      => sub { return &fun_name(@_);                             },
+   type      => sub { return &fun_type(@_);                             },
+   u         => sub { return &fun_u(@_);                                },
+   v         => sub { return &fun_v(@_);                                },
+   mid       => sub { return &fun_substr(@_);                           },
+   center    => sub { return &fun_center(@_);                           },
+   rest      => sub { return &fun_rest(@_);                             },
+   first     => sub { return &fun_first(@_);                            },
+   switch    => sub { return &fun_switch(@_);                           },
    decode_entities => sub { return &fun_de(@_);                         },
 );
+
+sub safe_split
+{
+    my ($txt,$delim) = @_;
+    my ($start,$pos,$size,$dsize,@result) = (0,0,length($txt),length($delim));
+
+    for($pos=0;$pos < $size;$pos++) {
+       if(substr($txt,$pos,$dsize) eq $delim) {
+          push(@result,substr($txt,$start,$pos-$start));
+          $start = $pos + $dsize;
+       }
+    }
+    push(@result,substr($txt,$start)) if($start < $size);
+    return @result;
+}
+
+sub good_args
+{
+   my ($count,@possible) = @_;
+   $count++;
+
+   for my $i (0 .. $#possible) {
+      return 1 if($count eq @possible[$i]);
+   }
+   return 0;
+}
+
+sub fun_center
+{
+   my ($txt,$size) = @_;
+
+   if(!good_args($#_,2)) {
+      return "#-1 FUNCTION (MEMBER) EXPECTS 2 ARGUMENTS";
+   } elsif($size !~ /^\s*\d+\s*$/) {
+      return "#-1 SECOND ARGUMENT MUST BE NUMERIC";
+   } elsif($size eq 0) { 
+      return "#-1 SECOND ARGUMENT MUST NOT BE ZERO";
+   }
+   $txt = substr($txt,0,$size);
+   return sprintf("%-*s",$size,(" " x (($size - length($txt))/2)).$txt);
+}
+
+sub fun_switch
+{
+   my $first = evaluate(shift,$$prog{user});
+
+   while($#_ >= 0) {
+      if($#_ >= 1) {
+         my $txt = shift;
+         $txt =~ s/\*/\(.*\)/g;
+         $txt =~ s/^\s+|\s+$//g;
+
+         if($first =~ /^\s*$txt\s*$/i) {
+            return evaluate(shift,$$prog{user});
+         } else {
+            shift;
+         }
+      } else {
+         return evaluate(shift,$$prog{user});
+      }
+   }
+}
+
+sub fun_member
+{
+   my ($txt,$word,$delim) = @_;
+   my $i = 1;
+
+   good_args($#_,2,3) ||
+      return "#-1 FUNCTION (MEMBER) EXPECTS 2 OR 3 ARGUMENTS";
+
+   $delim = " " if $delim eq undef;
+
+   for my $x (safe_split($txt,$delim)) {
+      return $i if($x eq $word);
+      $i++;
+   }
+   return -1;
+}
+
+sub fun_after
+{
+   if($#_ != 0 && $#_ != 1) {
+      return "#-1 Function (AFTER) EXPECTS 1 or 2 ARGUMENTS";
+   }
+
+   my $loc = index(@_[0],@_[1]);
+   if($loc == -1) {
+      return undef;
+   } else {
+      my $result = substr(@_[0],$loc + length(@_[1]));
+      $result =~ s/^\s+//g;
+      return $result;
+   }
+}
+
+sub fun_rest
+{
+   my ($txt,$delim) = @_;
+   if($#_ != 0 && $#_ != 1) {
+      return "#-1 Function (REST) EXPECTS 1 or 2 ARGUMENTS";
+   }
+
+   $delim = " " if($delim eq undef);
+   my $loc = index($txt,$delim);
+
+   if($loc == -1) {
+      return $txt;
+   } else {
+      my $result = substr($txt,$loc + length($delim));
+      $result =~ s/^\s+//g;
+      return $result;
+   }
+}
+
+sub fun_first
+{
+   my ($txt,$delim) = @_;
+   if($#_ != 0 && $#_ != 1) {
+      return "#-1 Function (FIRST) EXPECTS 1 or 2 ARGUMENTS";
+   }
+
+   $delim = " " if($delim eq undef);
+   my $loc = index($txt,$delim);
+
+   if($loc == -1) {
+      return $txt;
+   } else {
+      my $result = substr($txt,0,$loc);
+      $result =~ s/^\s+//g;
+      return $result;
+   }
+}
+
+sub fun_before
+{
+   if($#_ != 0 && $#_ != 1) {
+      return "#-1 Function (BEFORE) EXPECTS 1 or 2 ARGUMENTS";
+   }
+ 
+   my $loc = index(@_[0],@_[1]);
+
+   if($loc == -1) {
+      return undef;
+   } else {
+      my $result = substr(@_[0],0,$loc);
+      $result =~ s/\s+$//;
+      return $result;
+   }
+}
+
+
+sub fun_loadavg
+{
+   my $file;
+
+   if(-e "/proc/loadavg") {
+      open($file,"/proc/loadavg") ||
+         return "#-1 Unable to determine load average";
+      while(<$file>) {
+         if(/^\s*([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+/) {
+            close($file);
+            return "$1 $2 $3";
+         }
+      }
+      close($file);
+      return "#-1 Unable to determine load average";
+   } else {
+      return "#-1 Unable to determine load average";
+   }
+}
+#
+# fun_secs
+#    Return the current epoch time
+#
+sub fun_secs
+{
+   return time();
+}
+
+#
+# fun_div
+#    Divide a number
+#
+sub fun_div
+{
+   return "#-1 Add requires at least two arguments" if $#_ < 1;
+
+   if($_[1] eq 0) {
+      return "#-1 DIVIDE BY ZERO";
+   } else {
+      return int(@_[0] / @_[1]);
+   }
+}
+
+#
+# fun_add
+#    Add multiple numbers together
+#
+sub fun_add
+{
+   my $result = 0;
+
+   return "#-1 Add requires at least one argument" if $#_ < 0;
+
+   for my $i (0 .. $#_) {
+      $result += @_[$i];
+   }
+   return $result;
+}
+
+sub fun_sub
+{
+   my $result = @_[0];
+
+   return "#-1 Sub requires at least one argument" if $#_ < 0;
+
+   for my $i (1 .. $#_) {
+      $result -= @_[$i];
+   }
+   return $result;
+}
 
 sub fun_de
 {
@@ -43,9 +298,86 @@ sub fun_edit
    return $txt;
 }
 
-sub fun_get
+sub fun_num
+{
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (NUM) EXPECTS 1 ARGUMENT";
+
+   my $result = locate_object($user,$_[0]);
+ 
+   if($result eq undef) {
+      return "#-1";
+   } else {
+      return "#$$result{obj_id}";
+   }
+}
+
+sub fun_name
+{
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (NAME) EXPECTS 1 ARGUMENT";
+
+   my $result = locate_object($user,$_[0]);
+ 
+   if($result eq undef) {
+      return "#-1";
+   } else {
+      return $$result{obj_name};
+   }
+}
+
+sub fun_type
+{
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (TYPE) EXPECTS 1 ARGUMENT";
+
+   my $obj = locate_object($user,$_[0]);
+
+   return one_val("select fde_name value " . 
+                     "  from object obj, " .
+                     "       flag flg,  " .
+                     "       flag_definition fde " .
+                     " where obj.obj_id = flg.obj_id " .
+                     "   and flg.fde_flag_id = fde.fde_flag_id " .
+                     "   and fde.fde_name in " .
+                     "          ('PLAYER','OBJECT','ROOM','EXIT') ".
+                     "   and obj.obj_id = ?",
+                     $$obj{obj_id}
+                    );
+}
+
+sub fun_u
 {
    my $txt = shift;
+   my ($obj,$attr);
+
+   my $prev = get_digit_variables($prog);                   # save %0 .. %9
+   set_digit_variables(@_);                          # update to new values
+
+   if($txt =~ /\//) {                    # input in object/attribute format?
+      ($obj,$attr) = (locate_object($$prog{user},$`,"LOCAL"),$');
+   } else {                                  # nope, just contains attribute
+      ($obj,$attr) = ($$prog{user},$txt);
+   }
+   my $foo = $$obj{obj_name};
+
+   if($obj eq undef) {
+      return "#-1 Unknown object";
+   } elsif(!controls($user,$obj)) {
+      return "#-1 Permission Denied";
+   }
+   my $data = get($obj,$attr);
+   $data =~ s/^\s+|\s+$//gm;
+   $data =~ s/\n|\r//g;
+   my $result = evaluate($data,$$prog{user});
+   set_digit_variables($prev);                             # restore %0 .. %9
+   return $result;
+}
+
+
+sub fun_get
+{
+   my $txt = $_[0];
    my ($obj,$atr);
 
    if($txt =~ /\//) {
@@ -61,10 +393,14 @@ sub fun_get
    } elsif(!controls($user,$target)) {
       return "#-1 Permission Denied";
    }
-
    return get($target,$atr);
 }
 
+
+sub fun_v
+{
+   return get($$prog{user},$_[0]);
+}
 
 sub fun_extract
 {
@@ -75,11 +411,12 @@ sub fun_extract
    $first--;
 
    if($first !~ /^\s*\d+\s*$/) {
-      return "#-1 Expected numberic value for second argument";
+      return "#-1 Expected numberic value for second argument ($first)";
    } elsif($length !~ /^\s*\d+\s*$/) {
       return "#-1 Expected numberic value for third argument";
    } 
-   my $text = evaluate($txt);
+#   my $text = evaluate($txt);
+   my $text = $txt;
    $text =~ s/\r//g;
    $text =~ s/\n/<RETURN>/g;
    @list = split(/$idelim/,$text);
@@ -97,7 +434,7 @@ sub fun_ljust
    if(@_[1] =~ /^\s*$/) {
       return @_[0];
    } elsif(@_[1] =~ /^\s*(\d+)\s*$/) {
-      return sprintf("%-*s",@_[1],evaluate(@_[0]));
+      return sprintf("%-*s",@_[1],@_[0]);
    } else {
       return "#-1 Ljust expects a numeric value for the second argument";
    }
@@ -105,7 +442,8 @@ sub fun_ljust
 
 sub fun_strlen
 {
-    return length(evaluate(shift));
+#    return length(evaluate(shift));
+    return length(shift);
 }
 
 sub fun_sql
@@ -323,7 +661,7 @@ sub fun_iter
    for my $item (split(/ /,evaluate(@_[0]))) {
        my $new = @_[1];
        $new =~ s/##/$item/g;
-       push(@result,evaluate($new));
+       push(@result,evaluate($new,$user));
    }
 
    return join((@_[2] eq undef) ? " " : @_[2],@result);
@@ -369,20 +707,22 @@ sub fun_lookup
 #
 sub parse_function 
 {
-   my ($txt,$type,$target) = @_;
+   my ($fun,$txt,$type,$target) = @_;
 
    my @array = balanced_split($txt,",",$type);
    return undef if($#array == -1);
 
    # type 1: expect ending ]
    # type 2: expect ending ) and nothing else
-   if(($type == 1 && @array[0] =~ /^\s*]/) ||
+   if(($type == 1 && @array[0] =~ /^ *]/) ||
       ($type == 2 && @array[0] =~ /^\s*$/)) {
-      
       @array[0] = $';                              # strip ending ] if there
       for my $i (1 .. $#array) {                            # eval arguments
          # evaluate args before passing them to function
-         @array[$i] = evaluate_substitutions(@array[$i],$target);
+         if(!defined @exclude{$fun} || !defined @{@exclude{$fun}}{$i}) {
+            my $foo=@array[$i];
+            @array[$i] = evaluate(@array[$i],$target);
+         }
       }
       return \@array;
    } else {
@@ -400,13 +740,15 @@ sub parse_function
 #
 sub balanced_split
 {
-   my ($txt,$delim,$type) = @_;
+   my ($txt,$delim,$type,$debug) = @_;
    my ($last,$i,@stack,@depth) = (0,-1);
-   my %pair = ( '(' => ')', '{' => '}', '"' => '"',);
+#   my %pair = ( '(' => ')', '{' => '}', '"' => '"',);
+   my %pair = ( '(' => ')', '{' => '}');
    $delim = "," if $delim eq undef;
 
    $txt = $1 if($type == 3 && $txt =~ /^\s*{(.*)}\s*$/);
-   my @array = grep {!/^$/} split(/([\\\[\]\{\}\(\)$delim"])/,$txt);
+#   my @array = grep {!/^$/} split(/([\\\[\]\{\}\(\)$delim"])/,$txt);
+   my @array = grep {!/^$/} split(/([\\\[\]\{\}\(\)$delim])/,$txt);
    while(++$i <= $#array) {
       if(@array[$i] eq undef || length(@array[$i]) > 1 || escaped(\@array,$i)) {
          # skippable
@@ -440,6 +782,7 @@ sub balanced_split
    } else { 
       unshift(@stack,join('',@array[$last .. $#array]));
    }
+
    return ($#depth != -1) ? undef : @stack;
 }
 
@@ -457,9 +800,11 @@ sub evaluate_string
    # handle string containing a single non []'ed function
    #
    if($txt =~ /^([a-zA-Z_]+)\((.*)\)$/) {
-      my $result = parse_function("$2)",2,$target);
+      my $fun = $1;
+      my $result = parse_function($1,"$2)",2,$target);
       if($result ne undef) {
-         return &{@fun{fun_lookup($1)}}(@$result[1 .. $#$result]);
+         shift(@$result);
+         return &{@fun{fun_lookup($fun)}}(@$result);
       }
    }
 
@@ -467,16 +812,23 @@ sub evaluate_string
    # pick functions out of string when enclosed in []'s 
    #
    while($txt =~ /\[([a-zA-Z_]+)\(/) {
-      $out .= evaluate_substitutions($`);
-      my $result = parse_function($',1,$target);
+      my ($fun,$before) = ($1,$`);
+      my $result = parse_function($1,$',1,$target);
+      $out .= evaluate_substitutions($before);
 
       if($result eq undef) {
          $txt = $';
          $out .= "[" . $1 . "(";
       } else {                                       # good function, run it
          $txt = shift(@$result);
-         $out .= &{@fun{fun_lookup($1)}}(@$result);
+         my $r = &{@fun{fun_lookup($fun)}}(@$result);
+         $out .= $r;
       }
    }
-   return $out . evaluate_substitutions($txt);   # return results + leftovers
+
+   if($txt ne undef) {
+      return $out . evaluate_substitutions($txt);   # return results + leftovers
+   } else {
+      return $out;
+   }
 }

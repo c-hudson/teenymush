@@ -1,13 +1,11 @@
 #!/usr/bin/perl
 
-#foo
 
-
- 
 use strict;
 use IO::Select;
 use IO::Socket;
 use Time::Local;
+use Carp;
 
 my %months = (
    jan => 1, feb => 2, mar => 3, apr => 4, may => 5, jun => 6,
@@ -45,19 +43,30 @@ sub first
 sub evaluate
 {
     my ($txt,$target) = @_;
-    my $tmp = $enactor;
-
-    if($target ne undef) {
-       $enactor = $user;
-       $user = $target;
-    } 
-    my $result = evaluate_string(@_[0],@_[1]);
+    my $tmp = $user;
 
     if($target ne undef) {
        $user = $enactor;
-       $enactor = $tmp;
+       $enactor = $target;
+    } 
+    my $result = evaluate_string($txt,$target);
+
+    if($target ne undef) {
+       $enactor = $user;
+       $user = $tmp;
     }
     return $result;
+}
+
+sub string_escaped
+{
+   my $txt = shift;
+
+   if($txt =~ /(\\+)$/) {
+      return (length($1) % 2 == 0) ? 0 : 1;
+   } else {
+      return 0;
+   }
 }
 
 #
@@ -81,14 +90,19 @@ sub evaluate_substitutions
 
     # convert %n [name] and %# [dbref]
     if($enactor ne undef) {
-       $txt =~ s/%n/$$enactor{obj_name}/g;
+       $txt =~ s/%n/$$enactor{obj_name}/ig;
        $txt =~ s/%#/#$$enactor{obj_id}/g;
     } else {
        $txt =~ s/%#/#$$user{obj_id}/g;
-       $txt =~ s/%n/$$user{obj_name}/g;
+       $txt =~ s/%n/$$user{obj_name}/ig;
     }
 
-    if(defined $$user{cmd_data} && defined @{$$user{cmd_data}}{"##"}) {
+     
+    if(ref($user) ne "HASH") {
+       printf("USER: '%s'\n",$user);
+       printf("%s",Carp::shortmess());
+    }
+    if(ref($user) eq "HASH" && defined $$user{cmd_data} && defined @{$$user{cmd_data}}{"##"}) {
        $txt =~ s/(?<!(?<!\\)\\)##/@{$$user{cmd_data}}{"##"}/g;
     }
     
@@ -96,7 +110,18 @@ sub evaluate_substitutions
        my $var = $$prog{var};
        my $out;
 
-       while($txt =~ /(?<!(?<!\\)\\)%{([^ ]+)}/) {      # look for variables
+       while($txt =~ /%(\d)/) {
+          $txt = $';
+          if(string_escaped($`) || !defined $$var{$1}) {
+             $out .= $` . "%$1";
+          } else {
+             $out .= $` . $$var{$1};
+          }
+       }
+       $txt = $out . $txt;
+       $out = undef;
+
+       while($txt =~ /%{([^ ]+)}/) {               # look for variables
           $txt = $';
           if(defined $$var{$1}) {
              $out .= $` . $$var{$1};                # defined variable
@@ -577,9 +602,8 @@ sub echo_room
    my $target = obj(shift);
    my ($fmt,@args) = @_;
    my ($all);
-
    for my $player (@{sql($db,                    # search room target is in
-                         "select obj.* " .
+                         "select con2.con_source_id, obj.* " .
                          "  from object obj, " .
                          "       content con1, " . 
                          "       content con2 " .
@@ -767,13 +791,13 @@ sub locate_object
    if($name =~ /^\s*#(\d+)\s*$/) {                                  # dbref
       return fetch($1);
    } elsif($name =~ /^\s*%#\s*$/) {
-      return $$enactor{obj_id};
+      return fetch($enactor);
    } elsif($name =~ /^\s*me\s*$/) {                                # myself
       return $target;
    } elsif($name =~ /^\s*here\s*$/) {
       return loc_obj($target);
    } elsif($name =~ /^\s*\*([^ ]+)\s*$/) {                  # online-player
-      return locate_player($1,"all");
+      return locate_player($name,"all");
    } elsif($type eq "CONTENT") {
       $where = 'con.con_source_id in ( ? )';
       (@what[0]) = ($$target{obj_id});
@@ -1281,11 +1305,7 @@ sub set
           lc($attribute),
           $$obj{obj_id}
          );
-      if($$db{rows} == 1) {
-         echo($user,"Attribute %s Removed.",uc($attribute));
-      } else {
-         echo($user,"Unknown attribute %s on %s",uc($attribute),name($obj));
-      }
+      echo($user,"Set.");
    } else {
       sql($db,
           "insert into attribute " .
@@ -1703,49 +1723,6 @@ sub get_segment
          return $start,join('',@$array[$start .. $end]);
       }
    }
-}
-
-#
-# bannana_split
-#    Take a string and split it according to the delimiter. Do not split
-#    the string if the delimiter is inside a "",{},() pair
-# 
-sub bannana_split                                          # balanced split
-{
-   my ($txt,$delim,$flag,$max) = @_;
-   $delim = ',' if $delim eq undef;                          # default of ,
-
-   $txt = $1 if ($txt =~ /^\s*{\s*(.*?)\s*}\s*$/);
-   my (@array)=(split(/(?<!(?<!\\)\\)([\(\)\{\}"$delim])/,$txt)); # cut up 
-   my %toppings = ( ')' => '(', '}' => '{', '"' => '"',);
-   my @result;
-   $max = 99 if $max eq undef;
-   $max--;
-
-   for(my $i=$#array;$i >= 0;$i--) {                   # put matching pairs
-      if(defined @toppings{@array[$i]}) {                   # back together
-         my ($start,$txt) = get_segment(\@array,$i,@toppings{@array[$i]},\%toppings);
-         if($start ne undef) {                                # match found
-            delete @array[$start .. $i];                  # delete multiple
-            @array[$start] = $txt;                      # put back combined
-            $i = $start;
-         }
-      }
-   }
-
-   for(my ($i,$pos)=(0,0);$i <= $#array;$i++) {         # put rest together
-      if(defined @array[$i]) {                        # unless $delim found
-         if(@array[$i] eq $delim) {
-            if(!$flag || $max == $pos) {                 # found split point
-               @result[$pos] .= $delim;          # found split point
-            }
-            $pos++ if ($pos < $max);
-         } else {
-            @result[$pos] .= @array[$i];                    # join together
-         }
-      }
-   }
-   return @result;
 }
 
 sub isatrflag

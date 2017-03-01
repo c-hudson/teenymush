@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 
 
+
 #
 # add_last_info
 #
@@ -56,7 +57,7 @@ sub add_site_restriction
 #
 sub lookup_command
 {
-   my ($hash,$cmd,$txt,$type) = (@_[0],lc(@_[1]),@_[2],@_[3]);
+   my ($hash,$cmd,$txt,$type,$debug) = (@_[0],lc(@_[1]),@_[2],@_[3],@_[4]);
    my $match;
 
    if(defined $$hash{$cmd}) {                       # match on internal cmd
@@ -192,7 +193,7 @@ sub server_hostname
 #
 sub server_handle_sockets
 {
-#   eval {
+   eval {
       # wait for IO or 1 second
       my ($sockets) = IO::Select->select($readable,undef,undef,.4);
       my $buf;
@@ -252,7 +253,7 @@ sub server_handle_sockets
 
      spin();
 
-#   };
+   };
    if($@){
       printf("Server Crashed, minimal details [main_loop]\n");
       printf("LastSQL: '%s'\n",@info{sql_last});

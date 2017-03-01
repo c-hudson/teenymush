@@ -3,6 +3,7 @@ use strict;
 use DBI;
 use Carp;
 
+
 $db = {} if(ref($db) ne "HASH");
 $log = {} if(ref($log) ne "HASH");
 # delete @$db{keys %$db};

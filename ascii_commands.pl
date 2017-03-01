@@ -1,5 +1,8 @@
 #!/usr/bin/perl
 
+
+
+
 delete @command{keys %command};
 delete @offline{keys %offline};
 delete @honey{keys %honey};
@@ -144,6 +147,9 @@ delete @honey{keys %honey};
 @command{"\@newpassword"}={ help => "Change someone else's password",
                          fun  => sub { cmd_newpassword(@_); }};
 @command{"\@switch"}  ={ help => "Compares strings then runs coresponding " .
+                                 "commands",
+                         fun  => sub { cmd_switch(@_); }};
+@command{"\@select "} ={ help => "Compares strings then runs coresponding " .
                                  "commands",
                          fun  => sub { cmd_switch(@_); }};
 @command{"\@ps"}      ={ help => "Provide details about the engine queue",
@@ -527,7 +533,7 @@ sub cmd_while
         $first = 1;
         if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/s) {
            ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
-           $$cmd{while_cmd} = [ bannana_split($2,";",1) ];
+           $$cmd{while_cmd} = [ balanced_split($2,";",3) ];
         } else {
           echo($user,"### while usage\n");
            return err("usage: while (<expression>) { commands }");
@@ -554,6 +560,20 @@ sub cmd_while
 }
 
 
+sub max_args
+{
+   my ($count,$delim,@array) = @_;
+   my @result;
+
+   for my $i (0 .. $#array) {
+      if($i <= $count-1) {
+         @result[$i] = @array[$i];
+      } elsif($i > $count-1) {
+         @result[$count-1] .= $delim . @array[$i];
+      }
+   }
+   return @result;
+}
 
 #
 # cmd_dolist
@@ -568,8 +588,8 @@ sub cmd_dolist
 
     my $cmd = $$user{cmd_data};
     if(!defined $$cmd{dolist_list}) {                 # initialize "loop"
-        my ($first,$second) = bannana_split($txt,"=",1,2);
-        $$cmd{dolist_cmd} = [ bannana_split($second,";",1) ];
+        my ($first,$second) = max_args(2,"=",balanced_split($txt,"=",3));
+        $$cmd{dolist_cmd} = [ balanced_split($second,";",3) ];
         $$cmd{dolist_list} = [ split(' ',$first) ];
         $$cmd{dolist_count} = 0;
     } 
@@ -734,7 +754,7 @@ sub mush_split2
 
 sub cmd_switch
 {
-    my (@list) = (bannana_split(shift,',',1));
+    my (@list) = (balanced_split(shift,',',3));
 
     if(!perm($user,"SWITCH")) {
        return err("Permission Denied.");
@@ -1102,7 +1122,7 @@ sub cmd_think
 {
    my $txt = shift;
 
-   echo($user,"%s",evaluate($txt));
+   echo($user,"%s\n",evaluate($txt,$$prog{user}));
 }
 
 sub cmd_pemit
@@ -1117,7 +1137,7 @@ sub cmd_pemit
          return echo($user,"I don't see that here");
       } 
 
-      echo($target,"%s\n",evaluate($2));
+      echo($target,"%s",evaluate($2,$target));
    } else {
       echo($user,"syntax: \@pemit <object> = <message>");
    }
@@ -1998,8 +2018,7 @@ sub cmd_set
 
    if(!perm($user,"SET")) {
       return err("Permission Denied.");
-   } elsif($txt =~ /^\s*([^ ]+?)\/\s*([^ =]+?)\s*=\s*(.*?)\s*$/s) { # attribute
-
+   } elsif($txt =~ /^\s*([^ ]+?)\/\s*([^ =]+?)\s*= *(.*) *$/s) { # attribute
       ($target,$attr,$value) = (locate_object($user,$1),$2,$3);
       return echo($user,"Unknown object '%s'",$1) if !$target;
       controls($user,$target) || return echo($user,"Permission denied");
@@ -2007,11 +2026,14 @@ sub cmd_set
       if(isatrflag($value)) {
          echo($user,set_atr_flag($target,$attr,$value));
       } else {
+         if($$user{source} == 0) {
+            $value = evaluate($value,$enactor);
+         }
          set($target,$attr,$value);
       }
       commit($db);
 
-   } elsif($txt =~ /^\s*([^ ]+?)\s*=\s*(.*?)\s*$/) { # flag?
+   } elsif($txt =~ /^\s*([^ ]+?)\s*= *(.*?) *$/s) { # flag?
       ($target,$flag) = (locate_object($user,$1),$2);
       return echo($user,"Unknown object '%s'",$1) if !$target;
       controls($user,$target) || return echo($user,"Permission denied");
@@ -2023,19 +2045,74 @@ sub cmd_set
    }
 }
 
+sub list_attr
+{
+   my ($obj,$atr) = @_;
+   my ($query,@where,$result,$found);
+
+   if($atr ne undef) {
+      $query = "and lower(substr(atr_name,1,length(?))) = lower(?) ";
+      push(@where,$atr);
+      push(@where,$atr);
+   }
+
+   for my $hash (@{sql($db,
+       "   select atr_name, " .
+       "          atr_value, " .
+       "          group_concat(distinct fde_letter order by fde_order " .
+       "             separator '') atr_flag " .
+       "     from attribute atr left join ( " .
+       "             select atr_id, fde_letter, fde_order " .
+       "               from flag flg, flag_definition fde " .
+       "              where flg.fde_flag_id = fde.fde_flag_id " .
+       "                and fde_type = 2 " .
+       "           ) flg on (atr.atr_id = flg.atr_id) " .
+       "    where atr.obj_id = ? " .
+       "      and atr_name != 'DESCRIPTION' " .
+       "      $query " .
+       " group by atr.atr_id, atr_name " .
+       "order by atr.atr_name",
+       $$obj{obj_id},
+       @where
+      )}) { 
+       $found = 1;
+       if($$hash{atr_flag} eq undef) {
+          $result .= sprintf("%s: %s\n",$$hash{atr_name},$$hash{atr_value});
+       } else {
+          $result .= sprintf("%s[%s]: %s\n",@$hash{atr_name},$$hash{atr_flag},
+              $$hash{atr_value});
+       }
+   }
+
+   if(!$found) {
+      return "No matching attributes";
+   } else {
+      return $result;
+   }
+}
+
 sub cmd_ex
 {
    my $txt = shift;
-   my ($target,$desc,@exit,@content);
+   my ($target,$desc,@exit,@content,$atr);
 
-   if($txt =~ /^\s*(.+?)\s*$/) {
+   ($txt,$atr) = ($`,$') if($txt =~ /\//);
+
+   if($txt =~ /^\s*$/) {
+      $target = loc_obj($user);
+   } elsif($txt =~ /^\s*(.+?)\s*$/) {
       $target = locate_object($user,$1) ||
          return echo($user,"I don't see that here.");
    } else {
-      $target = loc_obj($user);
+       return echo($user,"I don't see that here.");
    }
 
    my $perm = controls($user,$target,1);
+
+   if($atr ne undef) {
+      echo($user,"%s",list_attr($target,$atr));
+      return;
+   }
 
    echo($user,"%s",obj_name($target,$perm));
    my $owner = fetch(($$target{obj_owner} == -1) ? 0 : $$target{obj_owner});
@@ -2066,42 +2143,8 @@ sub cmd_ex
           );
    }
 
-#    if($perm) {
-#        for my $hash (@{sql($db,"select * from attribute atr " .
-#                                " where obj_id = ? ".
-#                                "  and atr_name not in ('DESCRIPTION') ".
-#                                " order by atr_name ",
-#                                $$target{obj_id}
-#                     )}) {
-#           echo($user,"%s%s: %s\n",$$hash{atr_name},
-#              atr_flag_list($$hash{atr_id}),
-#              $$hash{atr_value});
-#        }
-#    }
-   if($perm) {
-      for my $hash (@{sql($db,
-          "   select atr_name, " .
-          "          atr_value, " .
-          "          group_concat(distinct fde_letter order by fde_order " .
-          "             separator '') atr_flag " .
-          "     from attribute atr left join ( " .
-          "             select atr_id, fde_letter, fde_order " .
-          "               from flag flg, flag_definition fde " .
-          "              where flg.fde_flag_id = fde.fde_flag_id " .
-          "                and fde_type = 2 " .
-          "           ) flg on (atr.atr_id = flg.atr_id) " .
-          "    where atr.obj_id = ? " .
-          "      and atr_name != 'DESCRIPTION' " .
-          " group by atr.atr_id, atr_name " .
-          "order by atr.atr_name",
-          $$target{obj_id})}) { 
-          if($$hash{atr_flag} eq undef) {
-             echo($user,"%s: %s",$$hash{atr_name},$$hash{atr_value});
-          } else {
-             echo($user,"%s[%s]: %s",@$hash{atr_name},$$hash{atr_flag},
-                 $$hash{atr_value});
-          }
-      }
+   if($perm) {                                             # show attributes
+      echo($user,"%s",list_attr($target));
    }
 
 
@@ -2323,15 +2366,15 @@ sub cmd_set2
 
    if(!perm($user,"SET")) {
       return err("Permission Denied.");
-   } elsif($txt =~ /^\s*&([^& ]+)\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
+   } elsif($txt =~ /^\s*&([^& ]+)\s*([^ ]+)\s*= *(.*?) *$/) {
       $$user{inattr} = {
          attr => $1,
          object => $2,
          content => [ $3 ]
       };
-   } elsif($txt =~ /^\s*([^& ]+)\s*([^ ]+)\s*=\s*(.*?)\s*$/s) {
+   } elsif($txt =~ /^\s*([^& ]+)\s*([^ ]+)\s*= *(.*?) *$/s) {
       cmd_set("$2/$1=$3");
-   } elsif($txt =~ /^\s*([^ ]+)\s*([^ ]+)\s*$/) {
+   } elsif($txt =~ /^\s*([^ ]+)\s*([^ ]+)\s*$/s) {
       cmd_set("$2/$1=");
    } else {
       echo($user,"Unable to parse &attribute command");

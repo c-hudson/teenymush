@@ -174,6 +174,7 @@ sub fun_match
    $delim = " " if $delim eq undef; 
 
    for my $word (safe_split($txt,$delim)) {
+#      printf("MATCH: '%s' -> '%s\n",$word,$pat);
       return $count if(match_glob($pat,$word));
       $count++;
    }
@@ -447,7 +448,7 @@ sub fun_u
    my ($obj,$attr);
 
    my $prev = get_digit_variables($prog);                   # save %0 .. %9
-   set_digit_variables(@_);                          # update to new values
+   set_digit_variables($$prog{user},@_);              # update to new values
 
    if($txt =~ /\//) {                    # input in object/attribute format?
       ($obj,$attr) = (locate_object($$prog{user},$`,"LOCAL"),$');
@@ -465,7 +466,7 @@ sub fun_u
    $data =~ s/^\s+|\s+$//gm;
    $data =~ s/\n|\r//g;
    my $result = evaluate($data,$$prog{user});
-   set_digit_variables($prev);                             # restore %0 .. %9
+   set_digit_variables(undef,$prev);                       # restore %0 .. %9
    return $result;
 }
 
@@ -732,8 +733,10 @@ sub fun_lattr
    }
 
    $txt = "me" if $txt eq undef;                # default to searching enactor
+   printf("fun_lattr user: '%s'\n",obj_name($user));
    my $target = locate_object($user,$obj,"LOCAL");
    return "#-1 Unknown object" if $target eq undef;  # oops, can't find object
+   printf("fun_lattr target: '%s'\n",obj_name($target));
 
    for my $attr (@{sql($db,                     # query db for attribute names
                        "  select atr_name " .
@@ -746,6 +749,7 @@ sub fun_lattr
                       )}) {
       push(@list,$$attr{atr_name});
    }
+   printf("fun_lattr return: '%s'\n",join(' ',@list));
    return join(' ',@list);
 }
 

@@ -39,10 +39,8 @@ sub mush_command
       $$hash{cmd} =~ s/\?/(.{1})/g;
       $$hash{txt} =~ s/\r\s*|\n\s*//g;
       if($cmd =~ /^$$hash{cmd}$/) {
-         printf("RUN: '%s' -> w/args\n",$$hash{txt});
          mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
       } else {
-         printf("RUN: '%s' -> '%s' [w/o args]\n",$cmd,$$hash{cmd});
          mushrun($hash,$$hash{txt});
       }
       $match=1;                                   # signal mush command found
@@ -70,7 +68,7 @@ sub mushrun
    my ($hash,$cmd,@wildcard) = @_;
    my $txt;
 
-   return if $cmd =~ /^\s*$/;
+   return if $cmd =~ /^\s*$/ && !defined $$user{inattr};
    if(defined $$user{inattr}) {                               # handle inattr
       my $hash = $$user{inattr};
       my $stack = $$hash{content};
@@ -111,7 +109,7 @@ sub mushrun
     }
 
     if(!defined $$hash{child}) {
-       set_digit_variables(@wildcard);             # copy over %0 .. %9
+       set_digit_variables(undef,@wildcard);             # copy over %0 .. %9
     }
     delete @$hash{child};
 #    delete @$hash{source};
@@ -119,16 +117,26 @@ sub mushrun
 
 sub set_digit_variables
 {
+   my $target = shift;
+
    if(ref(@_[0]) eq "HASH") {
       my $new = shift;
       for my $i (0 .. 9) {
-         @{$$prog{var}}{$i} = $$new{$i};
+         if($target ne undef) {
+            @{$$prog{var}}{$i} = evaluate($$new{$i},$target);
+         } else {
+            @{$$prog{var}}{$i} = $$new{$i};
+         }
       }
    } else {
       my @var = @_;
 
       for my $i (0 .. 9 ) {
-         @{$$prog{var}}{$i} = @var[$i];
+         if($target ne undef) {
+            @{$$prog{var}}{$i} = evaluate(@var[$i],$target);
+         } else {
+            @{$$prog{var}}{$i} = @var[$i];
+         }
       }
    }
 }

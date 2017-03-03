@@ -46,13 +46,15 @@ sub evaluate
     my $tmp = $user;
 
     if($target ne undef) {
-       $user = $enactor;
-       $enactor = $target;
+#       $enactor = $user;
+       $user = $target;
     } 
-    my $result = evaluate_string($txt,$target);
-
+#    printf("EVALUATE USER:    '%s'\n",obj_name($user));
+#    printf("EVALUATE TARGET:  '%s'\n",obj_name($target));
+#    printf("EVALUATE ENACTOR: '%s'\n",obj_name($enactor));
+    my $result = evaluate_string($txt,$user);
     if($target ne undef) {
-       $enactor = $user;
+#       $user = $enactor;
        $user = $tmp;
     }
     return $result;

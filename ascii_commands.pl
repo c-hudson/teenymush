@@ -1136,7 +1136,11 @@ sub cmd_pemit
          return echo($user,"I don't see that here");
       } 
 
-      echo($target,"%s",evaluate($2,$target));
+#      printf("pemit: '%s'\n",$2);
+#      printf("USER:    '%s'\n",obj_name($user));
+#      printf("ENACTOR: '%s'\n",obj_name($enactor));
+#      printf("TARGET:  '%s'\n",obj_name($target));
+      echo($target,"%s",evaluate($2,$enactor));
    } else {
       echo($user,"syntax: \@pemit <object> = <message>");
    }
@@ -2028,7 +2032,7 @@ sub cmd_set
          if($$user{source} == 0) {
             $value = evaluate($value,$enactor);
          }
-         printf("SET: '%s' -> '%s'\n",$attr,$value);
+#         printf("SET: '%s' -> '%s'\n",$attr,$value);
          set($target,evaluate($attr,$$prog{user}),$value);
       }
       commit($db);
@@ -2262,7 +2266,6 @@ sub cmd_look
 {
    my $txt = shift; 
    my ($flag,$desc,$target,@exit);
-
 
    if($txt =~ /^\s*$/) {
       $target = loc_obj($user);

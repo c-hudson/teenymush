@@ -9,6 +9,8 @@
 
 
 
+
+
 use Time::HiRes "ualarm";
 
 sub mush_command
@@ -25,7 +27,8 @@ sub mush_command
                        " where obj.obj_id = atr.obj_id " .
                        "   and obj.obj_id = con.obj_id " .
                        "   and ? like  " .
-                "replace(substr(atr_value,1,instr(atr_value,':')-1),'*','%')" .
+                       "         replace(replace(substr(atr_value,1," .
+                       "         instr(atr_value,':')-1),'*','%'),'?','_')" .
                        "   and con.con_source_id in ( ?, ? ) ",
                        "\$" . lc($cmd),
                        loc($user),
@@ -33,10 +36,13 @@ sub mush_command
                       )
                 }) {
       $$hash{cmd} =~ s/\*/\(.*\)/g;
+      $$hash{cmd} =~ s/\?/(.{1})/g;
       $$hash{txt} =~ s/\r\s*|\n\s*//g;
       if($cmd =~ /^$$hash{cmd}$/) {
+         printf("RUN: '%s' -> w/args\n",$$hash{txt});
          mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
       } else {
+         printf("RUN: '%s' -> '%s' [w/o args]\n",$cmd,$$hash{cmd});
          mushrun($hash,$$hash{txt});
       }
       $match=1;                                   # signal mush command found
@@ -64,6 +70,7 @@ sub mushrun
    my ($hash,$cmd,@wildcard) = @_;
    my $txt;
 
+   return if $cmd =~ /^\s*$/;
    if(defined $$user{inattr}) {                               # handle inattr
       my $hash = $$user{inattr};
       my $stack = $$hash{content};
@@ -99,12 +106,7 @@ sub mushrun
        unshift(@$stack,{ cmd => $cmd });
     } else {
        for my $i ( balanced_split($cmd,';',3,1) ) {
-          my $stack = $$prog{stack};
-          if(defined $$hash{child}) {                # child gets added to top
-             unshift(@$stack,{ cmd => $i });
-          } else {                               # all else goes on the bottom
-             push(@$stack,{ cmd => $i });
-          }
+          push(@$stack,{ cmd => $i });
        }
     }
 
@@ -175,6 +177,7 @@ sub spin
             } else {
                for(my $i=0;$#$command >= 0 && $i <= $$program{priority};$i++) {
                   my $cmd = shift(@$command);
+                  printf("CMD: '%s'\n",join(',',@$cmd)) if(ref($cmd) eq "ARRAY");
                   $$user{cmd_data} = $cmd;
                   delete @$cmd{still_running};
                   spin_run(\%last,$program,$cmd,$command);

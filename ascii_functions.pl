@@ -3,8 +3,8 @@
 use strict;
 use HTML::HTML5::Entities;
 use Carp;
-
-
+use Text::Glob qw( match_glob glob_to_regex );
+use Scalar::Util qw(looks_like_number);
 
 #
 # define which function's arguements should not be evaluated before
@@ -56,6 +56,15 @@ my %fun =
    rest      => sub { return &fun_rest(@_);                             },
    first     => sub { return &fun_first(@_);                            },
    switch    => sub { return &fun_switch(@_);                           },
+   words     => sub { return &fun_words(@_);                            },
+   eq        => sub { return &fun_eq(@_);                               },
+   not       => sub { return &fun_not(@_);                              },
+   match     => sub { return &fun_match(@_);                            },
+   isnum     => sub { return &fun_isnum(@_);                            },
+   gt        => sub { return &fun_gt(@_);                               },
+   gte       => sub { return &fun_gte(@_);                              },
+   lt        => sub { return &fun_lt(@_);                               },
+   or        => sub { return &fun_or(@_);                               },
    decode_entities => sub { return &fun_de(@_);                         },
 );
 
@@ -81,6 +90,92 @@ sub good_args
 
    for my $i (0 .. $#possible) {
       return 1 if($count eq @possible[$i]);
+   }
+   return 0;
+}
+
+sub fun_eq
+{
+   good_args($#_,2) ||
+      return "#-1 FUNCTION (EQ) EXPECTS 2 ARGUEMENTS";
+
+   my ($one,$two) = @_;
+
+   $one =~ s/^\s+|\s+$//g;
+   $two =~ s/^\s+|\s+$//g;
+   return ($one eq $two) ? 1 : 0;
+}
+
+sub fun_gt
+{
+   good_args($#_,2) ||
+      return "#-1 FUNCTION (GT) EXPECTS 2 ARGUEMENTS";
+   return (@_[0] > @_[1]) ? 1 : 0;
+}
+
+sub fun_gte
+{
+   good_args($#_,2) ||
+      return "#-1 FUNCTION (GTE) EXPECTS 2 ARGUEMENTS";
+   return (@_[0] >= @_[1]) ? 1 : 0;
+}
+
+sub fun_lt
+{
+   good_args($#_,2) ||
+      return "#-1 FUNCTION (LT) EXPECTS 2 ARGUEMENTS";
+   return (@_[0] < @_[1]) ? 1 : 0;
+}
+
+sub fun_or
+{
+   for my $i (0 .. $#_) {
+      return 1 if($_[$i]);
+   }
+   return 0;
+}
+
+
+sub fun_isnum
+{
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (NOT) EXPECTS 1 ARGUEMENTS";
+
+   return looks_like_number($_[0]) ? 1 : 0;
+}
+
+sub fun_not
+{
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (NOT) EXPECTS 1 ARGUEMENTS";
+
+   return (! $_[0] ) ? 1 : 0;
+}
+
+
+sub fun_words
+{
+   my ($txt,$delim) = @_;
+
+   good_args($#_,1,2) ||
+      return "#-1 FUNCTION (WORDS) EXPECTS 1 OR 2 ARGUMENTS";
+
+   return scalar(safe_split($txt,($delim eq undef) ? " " : $delim));
+}
+
+sub fun_match
+{
+   my ($txt,$pat,$delim) = @_;
+   my $count = 1;
+
+   good_args($#_,1,2,3) ||
+      return "#-1 FUNCTION (MATCH) EXPECTS 1, 2 OR 3 ARGUMENTS";
+
+   $delim = " " if $delim eq undef; 
+
+   for my $word (safe_split($txt,$delim)) {
+      return $count if(match_glob($pat,$word));
+      $count++;
    }
    return 0;
 }

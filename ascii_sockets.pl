@@ -242,9 +242,9 @@ sub server_handle_sockets
                                                          # breakapart by line
             while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
                @{@connected{$s}}{buf} = $';                # store left overs
-#               if(@{@connected{$s}}{raw} == 2) {
-#                  printf("#%s# %s\n",@{@connected{$s}}{raw},$`);
-#               }
+               if(@{@connected{$s}}{raw} == 2) {
+                  printf("#%s# %s\n",@{@connected{$s}}{raw},$`);
+               }
 
                server_process_line(@connected{$s},$`);         # process line
             }

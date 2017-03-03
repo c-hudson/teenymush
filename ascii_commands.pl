@@ -480,28 +480,31 @@ sub cmd_ps
    my $engine = @info{engine};
 
    echo($user,"----[ Start ]----");
+   printf("----[ Start ]----\n");
    for my $key (keys %$engine) {
       my $data = @{$$engine{$key}}[0];
-      echo($user,"  PID: $key for %s",obj_name($$data{user},1));
       for my $pid (@{$$engine{$key}}) {
          my $stack = $$pid{stack};
 
-         if($#$stack < 0) {
-            echo($user,"    cmd: %s\n",@{$$user{last}}{cmd});
-         } else {
+         if($#$stack >= 0) {
+            echo($user,"  PID: $key for %s",obj_name($$data{user},1));
+            printf("  PID: $key for %s\n",obj_name($$data{user},1));
 #            for my $i (0 .. (($#$stack <= 10) ? $#$stack : 10)) {
             for my $i (0 .. $#$stack) {
                my $cmd = @{$$stack[$i]}{cmd};
                if(length($cmd) > 67) {
                   echo($user,"    Cmd: %s...",substr($cmd,0,64));
+                  printf("    Cmd: %s...\n",substr($cmd,0,64));
                } else {
                   echo($user,"    Cmd: %s ($#$stack)",$cmd);
+                  printf("    Cmd: %s ($#$stack)\n",$cmd);
                }
             }
          }
       }
    }
    echo($user,"----[  End  ]----");
+   printf("----[  End  ]----\n");
 }
 
 sub test
@@ -525,6 +528,7 @@ sub cmd_while
 {
     my $txt = shift;
     my (%last,$first);
+    my $current = $$prog{cmd_last};
 
     return err("Permission Denied.") if(!perm($user,"WHILE"));
     my $cmd = $$user{cmd_data};
@@ -535,27 +539,21 @@ sub cmd_while
            ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
            $$cmd{while_cmd} = [ balanced_split($2,";",3) ];
         } else {
-          echo($user,"### while usage\n");
            return err("usage: while (<expression>) { commands }");
         }
     }
     $$cmd{while_count}++;
 
     if($$cmd{while_count} >= 1000) {
-       echo($user,"### while stopped\n");
        printf("#*****# while exceeded maxium loop of 1000, stopped\n");
        return err("while exceeded maxium loop of 1000, stopped");
-    } elsif(test(evaluate($$cmd{while_test}))) {
-       echo($user,"### while still running\n");
-       signal_still_running();
+    } elsif(test(evaluate($$cmd{while_test},$$prog{user}))) {
        my $commands = $$cmd{while_cmd};
        for my $i (0 .. $#$commands) {
           $$user{child} = $prog;
           mushrun($user,$$commands[$i]);
        }
-    } else {
-       echo($user,"### while loop finished - %s - %s -> %s\n",$$cmd{while_test} ,
-          evaluate($$cmd{while_test}),test(evaluate($$cmd{while_test})));
+       signal_still_running($current);
     }
 }
 
@@ -685,8 +683,7 @@ sub signal_still_running
     my $stack = $$prog{stack};
     my $cmd = $$prog{cmd_last};
 
-    unshift(@$stack,$cmd);
-#    push(@$stack,$cmd);
+    push(@$stack,$cmd);
 }
 
 sub cmd_sleep
@@ -771,8 +768,10 @@ sub cmd_switch
           $txt =~ s/\*/\(.*\)/g;
           $txt =~ s/^\s+|\s+$//g;
 
-          $$user{child} = $prog;
-          return mushrun($user,$cmd) if($first =~ /^\s*$txt\s*$/i);
+          if($first =~ /^\s*$txt\s*$/i) {
+             $$user{child} = $prog;
+             return mushrun($user,$cmd);
+          } 
        } else {
           $$user{child} = $prog;
           return mushrun($user,@list[0]);
@@ -1122,7 +1121,7 @@ sub cmd_think
 {
    my $txt = shift;
 
-   echo($user,"%s\n",evaluate($txt,$$prog{user}));
+   echo($user,"%s",evaluate($txt,$$prog{user}));
 }
 
 sub cmd_pemit
@@ -2029,7 +2028,8 @@ sub cmd_set
          if($$user{source} == 0) {
             $value = evaluate($value,$enactor);
          }
-         set($target,$attr,$value);
+         printf("SET: '%s' -> '%s'\n",$attr,$value);
+         set($target,evaluate($attr,$$prog{user}),$value);
       }
       commit($db);
 

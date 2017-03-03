@@ -112,7 +112,7 @@ sub evaluate_substitutions
 
        while($txt =~ /%(\d)/) {
           $txt = $';
-          if(string_escaped($`) || !defined $$var{$1}) {
+          if(string_escaped($`)) {
              $out .= $` . "%$1";
           } else {
              $out .= $` . $$var{$1};

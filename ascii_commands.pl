@@ -65,7 +65,7 @@ delete @honey{keys %honey};
                          fun  => sub { return &cmd_look(@_); }           };
 @command{quit}       = { help => "Disconnect from the server",
                          fun  => sub { return cmd_quit(@_); }            };
-@command{commit}     = { help => "Force a commit to mysql",
+@command{"\@commit"} = { help => "Force a commit to mysql",
                          fun  => sub { return cmd_commit(@_); }          };
 @command{"\@set"}    = { help => "Set attributes on an object",
                          fun  => sub { return cmd_set(@_); }             };
@@ -166,6 +166,8 @@ delete @honey{keys %honey};
                          fun  => sub { my $foo; @{$$foo{crash}}; }};
 @command{"\@\@"}     = { help => "A comment, will be ignored ",
                          fun  => sub { return;}                          };
+@command{"\@lock"}   = { help => "Test Command",
+                         fun  => sub { cmd_lock(@_);}                    };
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); },
@@ -203,6 +205,15 @@ sub cmd_reset
      delete @info{io};
      echo($user,"Telenet connections reset.");
   }
+}
+
+sub cmd_lock
+{
+   echo($user,"---[start]----");
+   for my $i (locked(@_[0])) {
+      echo($user,"# '%s'",$i);
+   }
+   echo($user,"---[ end ]----");
 }
 
 #
@@ -528,7 +539,6 @@ sub cmd_while
 {
     my $txt = shift;
     my (%last,$first);
-    my $current = $$prog{cmd_last};
 
     return err("Permission Denied.") if(!perm($user,"WHILE"));
     my $cmd = $$user{cmd_data};
@@ -553,7 +563,7 @@ sub cmd_while
           $$user{child} = $prog;
           mushrun($user,$$commands[$i]);
        }
-       signal_still_running($current);
+       signal_still_running();
     }
 }
 
@@ -580,18 +590,22 @@ sub max_args
 sub cmd_dolist
 {
     my $txt = shift;
+    my $current= $$prog{cmd_last};
     my %last;
 
     return err("Permission Denied.") if(!perm($user,"DOLIST"));
 
     my $cmd = $$user{cmd_data};
     if(!defined $$cmd{dolist_list}) {                 # initialize "loop"
-        my ($first,$second) = max_args(2,"=",balanced_split($txt,"=",3));
+        my ($first,$second) = max_args(2,"=",
+                                 balanced_split($txt,"=",3));
         $$cmd{dolist_cmd} = [ balanced_split($second,";",3) ];
-        $$cmd{dolist_list} = [ split(' ',$first) ];
+        $$cmd{dolist_list} = [ split(' ',evaluate($first,$user)) ];
         $$cmd{dolist_count} = 0;
+        my $array = $$cmd{dolist_list};
     } 
     $$cmd{dolist_count}++;
+
 
     if($$cmd{dolist_count} > 500) {                       # no big @dolists
        return err("dolist execeeded maxium count of 500, stopping");
@@ -600,19 +614,19 @@ sub cmd_dolist
     my $list = $$cmd{dolist_list};
     return 0 if($#$list < 0);                           # oops already done
 
-    my $item = pop(@$list);                        # pull next ## off list
+    my $item = shift(@$list);                        # pull next ## off list
 
     my $commands = $$cmd{dolist_cmd};
     for my $i (0 .. $#$commands) {
-        spin_run(\%last,$prog,{ "##" => $item, cmd => $$commands[$i]});
+        my $new = $$commands[$i];
+        $new =~ s/\#\#/$item/g;
+        spin_run(\%last,$prog,{ cmd => $new });
     }
 
     if($#$list < 0) {                                                # done
        return 0;
     } else {                                          # signal still running
-       signal_still_running();
-      
-       return 1;
+       return signal_still_running($current);
     }
 }
 
@@ -680,10 +694,15 @@ sub cmd_password
 #    
 sub signal_still_running
 {
-    my $stack = $$prog{stack};
-    my $cmd = $$prog{cmd_last};
+    my $cmd;
 
-    push(@$stack,$cmd);
+    if($#_ == 0) {
+       $cmd = shift;
+    } else {
+       $cmd = $$prog{cmd_last};
+    }
+
+    push(@{$$prog{stack}},$cmd);
 }
 
 sub cmd_sleep
@@ -752,6 +771,7 @@ sub mush_split2
 sub cmd_switch
 {
     my (@list) = (balanced_split(shift,',',3));
+    my %last;
 
     if(!perm($user,"SWITCH")) {
        return err("Permission Denied.");
@@ -1033,7 +1053,7 @@ sub cmd_list
 
    if(!perm($user,"LIST")) {
       return err("Permission Denied.");
-   } elsif($txt =~ /^\s*site.*$/) {
+   } elsif($txt =~ /^\s*site.*$/i) {
        echo($user,"%s",table("select ste_id Id, " .
                         "       ste_pattern Pattern, " .
                         "       vao_value Type,".
@@ -1045,6 +1065,10 @@ sub cmd_list
                         "   and vao_table = 'site'"
                        )
            );
+   } elsif($txt =~ /^\s*functions\s*$/i) {
+       echo($user,"Functions: %s",uc(list_functions()));
+   } elsif($txt =~ /^\s*commands\s*$/i) {
+       echo($user,"Commands: %s\n",uc(join(' ',sort keys %command)));
    } else {
        echo($user,"Undefined option '%s' used.",$txt);
    }
@@ -1128,19 +1152,17 @@ sub cmd_pemit
 {
    my $txt = shift;
 
+   printf("CMD_PEMIT: '%s'\n",$txt);
    if(!perm($user,"PEMIT")) {
       return err("Permission Denied.");
-   } elsif($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
-      my $target = locate_object($user,$1,"local");
+   } elsif($txt =~ /^\s*([^ ]+)\s*=/s) {
+      my $target = locate_object($user,evaluate($1,$user),"local");
+      my $txt=$';
       if($target eq undef) {
          return echo($user,"I don't see that here");
       } 
-
-#      printf("pemit: '%s'\n",$2);
-#      printf("USER:    '%s'\n",obj_name($user));
-#      printf("ENACTOR: '%s'\n",obj_name($enactor));
-#      printf("TARGET:  '%s'\n",obj_name($target));
-      echo($target,"%s",evaluate($2,$enactor));
+      $txt =~ s/^\s+|\s+$//g if($$user{source});
+      echo($target,"%s",evaluate($',$enactor));
    } else {
       echo($user,"syntax: \@pemit <object> = <message>");
    }
@@ -2022,7 +2044,7 @@ sub cmd_set
    if(!perm($user,"SET")) {
       return err("Permission Denied.");
    } elsif($txt =~ /^\s*([^ ]+?)\/\s*([^ =]+?)\s*= *(.*) *$/s) { # attribute
-      ($target,$attr,$value) = (locate_object($user,$1),$2,$3);
+      ($target,$attr,$value) = (locate_object($user,evaluate($1,$user)),evaluate($2,$user),$3);
       return echo($user,"Unknown object '%s'",$1) if !$target;
       controls($user,$target) || return echo($user,"Permission denied");
 

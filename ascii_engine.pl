@@ -37,6 +37,7 @@ sub mush_command
                 }) {
       $$hash{cmd} =~ s/\*/\(.*\)/g;
       $$hash{cmd} =~ s/\?/(.{1})/g;
+      $$hash{cmd} =~ s/\+/\\+/g;
       $$hash{txt} =~ s/\r\s*|\n\s*//g;
       if($cmd =~ /^$$hash{cmd}$/) {
          mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
@@ -69,6 +70,7 @@ sub mushrun
    my $txt;
 
    return if $cmd =~ /^\s*$/ && !defined $$user{inattr};
+   $cmd = $1 if($cmd =~ /^\s*{(.*)}\s*$/s);
    if(defined $$user{inattr}) {                               # handle inattr
       my $hash = $$user{inattr};
       my $stack = $$hash{content};
@@ -167,7 +169,7 @@ sub spin
 
    eval {
 #      ualarm(800_000);                                # die at 8 milliseconds
-      ualarm(1_200_000);                                # die at 8 milliseconds
+#      ualarm(1_200_000);                                # die at 8 milliseconds
 
       for my $pid (keys %{@info{engine}}) {
          my $thread = @{@info{engine}}{$pid};
@@ -201,7 +203,7 @@ sub spin
                                                       # stop at 4 milliseconds
                   if(Time::HiRes::gettimeofday() - $start > .5) {
 #                     printf("Time slice ran long, exiting correctly\n");
-                     ualarm(0);
+#                     ualarm(0);
                      return;
                   }
                }
@@ -209,7 +211,7 @@ sub spin
          }
       }
    };
-   ualarm(0);                                                 # cancel alarm
+#   ualarm(0);                                                 # cancel alarm
 #   printf("Count: $count\n");
 
    if($@ =~ /alaerm/i) {

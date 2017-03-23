@@ -726,7 +726,7 @@ sub owner
    my $object = obj(shift);
 
    if(hasflag($object,"PLAYER")) {            # players are owned by god,
-      return $$object{obj_id};                # but really they own themselves
+      return fetch($object);                # but really they own themselves
    } elsif(defined $$object{obj_owner}) {
       return fetch($$object{obj_owner});
    } else {
@@ -1083,10 +1083,9 @@ sub set_atr_flag
           return "Set.";
        }
     } else {
-       return "#-1 Permission Denied.";
+       return "#-1 Permission Denied."; 
     }
-}
-
+} 
 
 sub perm
 {
@@ -1095,6 +1094,7 @@ sub perm
    return 0 if(defined $$target{loggedin} && !$$target{loggedin});
 
    $perm =~ s/@//;
+   my $owner = owner($$target{obj_id});
    my $result = one_val($db,
                   "select min(fpr_permission) value " .
                   "  from flag_permission fpr1, ".
@@ -1111,14 +1111,14 @@ sub perm
                   "         and flg2.fde_flag_id = flg1.fde_flag_id " .
                   "         and flg2.obj_id = flg1.obj_id " .
                   "   ) " .
-                  "group by obj_id, fpr_name",
-                  owner($$target{obj_id}),
+                  "group by obj_id",
+                  $$owner{obj_id},
                   $perm
                  );
     if($result eq undef) {
        return 0;
     } else {
-       return $result - 1;
+       return ($result > 0) ? 1 : 0;
     }
 }
 
@@ -1295,9 +1295,9 @@ sub set
 {
    my ($obj,$attribute,$value) = (obj(@_[0]),@_[1],@_[2]);
 
-   if($attribute !~ /^\s*([a-z0-9_-]+)\s*$/i) {
+   if($attribute !~ /^\s*([#a-z0-9\_\-]+)\s*$/i) {
       echo($user,"Attribute name is bad, use the following characters: " .
-           "A-Z, 0-9, and _");
+           "A-Z, 0-9, and _ : $attribute");
    } elsif($value =~ /^\s*$/) {
       sql($db,
           "delete " .

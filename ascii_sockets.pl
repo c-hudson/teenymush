@@ -185,6 +185,25 @@ sub server_hostname
    return $name;                         # or last resort, return ip address
 }
 
+sub get_free_port
+{
+   my ($i,%used);
+   my $max = (scalar keys %connected) + 2;
+
+   for my $key (keys %connected) {
+      my $hash = @connected{$key};
+      if(defined $$hash{port}) {
+         @used{$$hash{port}} = 1;
+      };
+   }
+
+   for($i=1;$i < $max;$i++) {
+      return $i if(!defined @used{$i});
+   }
+
+   return $i;                                        # should never happen
+}
+
 
 #
 # server_handle_sockets
@@ -213,7 +232,8 @@ sub server_handle_sockets
                             ip       => $new->peerhost,
                             loggedin => 0,
                             raw      => 0,
-                            start    => time()
+                            start    => time(),
+                            port     => get_free_port()
                           };
                add_site_restriction($hash);
                @connected{$new} = $hash;

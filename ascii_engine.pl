@@ -250,7 +250,7 @@ sub spin_run
 {
    my ($last,$prog,$cmd,$command) = @_;
 
-   my ($tmp_user,$tmp_enactor) = ($user,$enactor);
+   my ($tmp_user,$tmp_enactor,$switch) = ($user,$enactor,{});
    ($user,$enactor) = ($$prog{user},$$prog{enactor});
    ($$last{user},$$last{enactor},$$last{cmd}) = ($user,$enactor,$cmd);
    $$prog{cmd_last} = $cmd;
@@ -278,9 +278,14 @@ sub spin_run
          }
       }
 
+      while($arg =~ /^\s*\/([^ =]+)( |$)/) {
+         $$switch{lc($1)} = 1;
+         $arg = $';
+      }
+
       if($cmd_name ne "@@") {
          $$user{cmd_data} = $cmd;
-         &{@{@command{$cmd_name}}{fun}}($arg,$prog);
+         &{@{@command{$cmd_name}}{fun}}($arg,$prog,$switch);
       }
    }
    ($user,$enactor) = ($tmp_user,$tmp_enactor);

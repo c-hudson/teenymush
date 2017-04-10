@@ -168,6 +168,8 @@ delete @honey{keys %honey};
                          fun  => sub { return;}                          };
 @command{"\@lock"}   = { help => "Test Command",
                          fun  => sub { cmd_lock(@_);}                    };
+@command{"\@boot"}   = { help => "Severs the player's connection to the game",
+                         fun  => sub { cmd_boot(@_);}                    };
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); },
@@ -463,6 +465,41 @@ sub cmd_var
     } else {
        echo($user,"usage: \@var <variable> = <variables>");
     }
+}
+
+sub cmd_boot
+{
+   my ($txt,$prog,$switch) = @_;
+
+   if(perm($user,"BOOT") || hasflag($user,"WIZARD")) {
+   
+      $txt =~ s/^\s+|\s+$//g;
+      if(defined $$switch{port}) {
+         return echo($user,"That's not a number!") if($txt !~ /^\d+$/);
+      }
+
+      for my $key (keys %connected) {
+         my $hash = @connected{$key};
+   
+         if((defined $$switch{port} && $$hash{port} == $txt) ||
+            (!defined $$switch{port} && lc($$hash{obj_name}) eq lc($txt))) {
+            echo($hash,"%s has \@booted you.",$$user{obj_name});
+            echo($user,"You \@booted %s off!",$$hash{obj_name});
+            echo_room($hash,"%s has been \@booted.",$$hash{obj_name});
+            my $sock=$$hash{sock};
+            printf($sock "%s",getfile("logoff.txt"));
+            server_disconnect($sock);
+            return;
+         }
+      }
+      if(defined $$switch{port}) {
+         echo($user,"Unknown port specified");
+      } else {
+         echo($user,"Unknown person specified");
+      }
+   } else {
+      return err("Permission Denied.");
+   }
 }
 
 sub cmd_killpid
@@ -2478,17 +2515,21 @@ sub who
 {
    my $flag = shift;
    my ($max,@who,$idle,$count,$out,$extra) = (2);
-   my $hasperm = (perm($user,"WHO") && !$flag) ? 1 : 0;
+#   my $hasperm = (perm($user,"WHO") && !$flag) ? 1 : 0;
+   my $hasperm = ($flag || !hasflag($user,"WIZARD")) ? 0 : 1;
+
 
    # query the database for connected user, location, and socket
    # details.
    for my $key (keys %connected) {
       my $hash = @connected{$key};
+
       if(!defined $$hash{connect_time} && $$hash{raw} == 0) {
          push(@who,{ obj_name      => "[Connecting]",
                      sck_socket    => $$hash{sock},
                      start_time    => $$hash{start},
                      sck_hostname  => $$hash{hostname},
+                     port          => $$hash{port} . "-foo",
                      con_source_id =>  " - ",
                    });
       }
@@ -2514,17 +2555,17 @@ sub who
       
    # show headers for normal / wiz who 
    if($hasperm) {
-      $out .= sprintf("%-15s%10s%5s %-*s %s\r\n","Player Name","On For","Idle",
-                      $max,"Loc","Hostname");
+      $out .= sprintf("%-15s%10s%5s %-*s %-4s %s\r\n","Player Name","On For","Idle",
+                      $max,"Loc","Port","Hostname");
    } else {
       $out .= sprintf("%-15s%10s%5s  %s\r\n","Player Name","On For","Idle",
                       "\@doing");
    }
-   
+
+   $max = 3 if($max < 3);
 
    # generate detail for every connected user
    for my $hash (@who) {
-
       # determine idle details
       my $extra_data = @connected{$$hash{sck_socket}};
 
@@ -2546,9 +2587,9 @@ sub who
 
       # show connected user details
       if($hasperm) {
-         $out .= sprintf("%-15s%4s %02d:%02d %4s  %-*s %s%s\r\n",
+         $out .= sprintf("%-15s%4s %02d:%02d %4s %-*s %-4s %s%s\r\n",
              $$hash{obj_name},$extra,$$online{h},$$online{m},$$idle{max_val} .
-             $$idle{max_abr},$max,$$hash{con_source_id},
+             $$idle{max_abr},$max,$$hash{con_source_id},$$extra_data{port},
              short_hn($$hash{sck_hostname}),
              ($$extra_data{site_restriction} == 69) ? " [HoneyPoted]" : ""
             );

@@ -1741,3 +1741,19 @@ sub isatrflag
                    );
 }
 
+sub read_config
+{
+   my $count=0;
+   for my $line (split(/\n/,getfile("ascii_config.dat"))) {
+      $line =~ s/\r|\n//g;
+      if($line =~/^\s*#/) {
+         # comment, ignore
+      } elsif($line =~ /^\s*([^ =]+)\s*=\s*(.+?)\s*$/) {
+         @info{$1} = $2;
+      } else {
+         printf("Invalid data in ascii_config.dat:\n") if($count == 0);
+         printf("    %s\n",$line);
+         $count++;
+      }
+   }
+}

@@ -44,7 +44,7 @@ delete @honey{keys %honey};
                          fun  => sub { return &cmd_pose(@_); },
                          nsp  => 1                                       };
 @command{";"}        = { help => "Posing without a space after your name",
-                         fun  => sub { return &cmd_pose(@_[0],@_[1],1); },
+                         fun  => sub { return &cmd_pose(@_[0],@_[1],@_[2],1); },
                          nsp  => 1                                       };
 @command{"emote"}    = { help => "Posing without a space after your name",
                          fun  => sub { return &cmd_pose(@_[0],@_[1],1); },
@@ -170,6 +170,8 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_lock(@_);}                    };
 @command{"\@boot"}   = { help => "Severs the player's connection to the game",
                          fun  => sub { cmd_boot(@_);}                    };
+@command{"\@readcache"}={ help => "Re-reads the servers config file(s)",
+                         fun  => sub { cmd_readcache(@_);}               };
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); },
@@ -765,6 +767,16 @@ sub cmd_sleep
     if($$cmd{sleep} >= time()) {
        signal_still_running();
     }
+}
+
+sub cmd_readcache
+{
+   if(!hasflag($user,"WIZARD")) {
+      echo($user,"Permission denied.");
+   } else {
+      read_config();
+      echo($user,"Done.");
+   }
 }
 
 #
@@ -2414,7 +2426,7 @@ sub cmd_look
 
 sub cmd_pose
 {
-   my ($txt,$prog,$flag) = @_;
+   my ($txt,$prog,$switch,$flag) = @_;
 
    my $space = ($flag) ? "" : " ";
    echo($user,"%s%s%s",name($user),$space,evaluate($txt));

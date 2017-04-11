@@ -351,11 +351,14 @@ sub server_disconnect
 sub server_start
 {
    my $port = shift;
+   my $count = 0;
    printf("Listening on port $port\n");
 
    $listener = IO::Socket::INET->new(LocalPort=>$port,Listen=>1,Reuse=>1);
    $readable = IO::Select->new();          # setup socket polling routines
    $readable->add($listener);
+
+   read_config();
 
    # main loop;
    while(1) {

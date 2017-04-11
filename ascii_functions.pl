@@ -82,6 +82,7 @@ my %fun =
    capstr    => sub { return &fun_capstr(@_);                           },
    lcstr     => sub { return &fun_lcstr(@_);                            },
    ucstr     => sub { return &fun_ucstr(@_);                            },
+   mudname   => sub { return &fun_mudname(@_);                          },
    decode_entities => sub { return &fun_de(@_);                         },
 );
 
@@ -124,6 +125,15 @@ sub good_args
       return 1 if($count eq @possible[$i]);
    }
    return 0;
+}
+
+sub fun_mudname
+{
+   if(defined @info{mudname}) {
+      return @info{mudname};
+   } else {
+      return "TeenyMUSH";
+   }
 }
 
 sub fun_lwho

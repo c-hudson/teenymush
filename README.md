@@ -9,7 +9,14 @@ such as TinyFugue to connect to the server to make the interaction easier.
 
 Connecting
 ~~~~~~~~~~
-      Typically users will use a client program to connect to the server. Many different clients have been created over the years from TinyFugue, Potato MUSH Client, or Plantain MUSH Client. You provide the client with an internet address and port and the client will connect. At that point you may connect to an existing character or a guest character via the connect command. Connecting via the guest character would be accomplished by typing 'connect guest'. The TeenyMUSH development site may be found at teenymush.ddns.net at port 4096.
+      Typically users will use a client program to connect to the server.
+Many different clients have been created over the years from TinyFugue,
+Potato MUSH Client, or Plantain MUSH Client. You provide the client with
+an internet address and port and the client will connect. At that point
+you may connect to an existing character or a guest character via the
+connect command. Connecting via the guest character would be accomplished
+by typing 'connect guest'. The TeenyMUSH development site may be found at
+teenymush.ddns.net at port 4096.
 
 Interacting
 ~~~~~~~~~~~

@@ -1,7 +1,11 @@
 TeenyMUSH
 ~~~~~~~~~
 
-      This server is an implementation an ASCII based virtual world where users may telnet into the server and interact with other users. The world can be customized to meet the needs of its owner and/or users without modifying internal server code. Typically users will use a client program such as TinyFugue to connect to the server to make the interaction easier.
+      This server is an implementation an ASCII based virtual world where
+users may telnet into the server and interact with other users. The world
+can be customized to meet the needs of its owner and/or users without
+modifying internal server code. Typically users will use a client program
+such as TinyFugue to connect to the server to make the interaction easier.
 
 Connecting
 ~~~~~~~~~~

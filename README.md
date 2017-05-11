@@ -1,10 +1,9 @@
 TeenyMUSH
 ~~~~~~~~~
-      This code is a TinyMUSH like code base can be used to implement
-ASCII based virtual world. Users may  where telnet into the server and
-interact with other users. The world can be customized to meet the needs
+      This is an implimentation of a TinyMUSH like server in Perl and
+MySQL. The server can be used to create a ASCII based virtual world.
+Users can telnet into the server and interact with other users in a
+world of their creation. The world can be customized to meet the needs
 of its owner and/or users without modifying internal server code.
-Typically users will use a client program such as TinyFugue to connect
-to the server to make the interaction easier.
 
 see http://teenymush.blogspot.in/ for more details.

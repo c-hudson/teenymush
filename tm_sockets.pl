@@ -143,8 +143,7 @@ sub server_process_line
                my ($cmd,$arg) = lookup_command(\%honey,$1,$',0);
                &{@honey{$cmd}}($arg);                            # invoke cmd
             } elsif(loggedin($hash) || hasflag($hash,"OBJECT")) {
-               $$user{source} = 1;
-               mushrun($user,$input);
+               mushrun($user,$input,1);
                add_last_info($input);                                   #logit
             } else {
                my ($cmd,$arg) = lookup_command(\%offline,$1,$',0);

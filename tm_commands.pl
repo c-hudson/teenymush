@@ -197,9 +197,15 @@ delete @honey{keys %honey};
 sub cmd_huh         { echo($user,"Huh?  (Type \"help\" for help.)");     }
 sub cmd_offline_huh { my $sock = $$user{sock};
                       printf($sock "%s",getfile("login.txt"));           }
-sub cmd_version     { echo($user,"TeenyMUSH :  Version 0.1 [cmhudson\@gmail.com]");
+sub cmd_version     { if(@info{version} =~ /^TeenyMUSH ([\d\.]+)$/i) {
+                         echo($user,"TeenyMUSH :  Version $1 " .
+                                    "[cmhudson\@gmail.com]");
+                      } else {
+                         echo($user,"TeenyMUSH :  Version N/A " .
+                                    "[cmhudson\@gmail.com]");
+                      }
                       echo($user,"   Source :  https://github.com/c-hudson" .
-                                 "/Ascii");                              }
+                                     "/teenymush");                        }
 
 sub cmd_reset
 {
@@ -600,7 +606,7 @@ sub cmd_while
        my $commands = $$cmd{while_cmd};
        for my $i (0 .. $#$commands) {
           $$user{child} = $prog;
-          mushrun($user,$$commands[$i]);
+          mushrun($user,$$commands[$i],0);
        }
        signal_still_running();
     }
@@ -839,11 +845,12 @@ sub cmd_switch
 
           if($first =~ /^\s*$txt\s*$/i) {
              $$user{child} = $prog;
-             return mushrun($user,$cmd);
+             return mushrun($user,$cmd,0);
           } 
        } else {
+          @list[0] = $1 if(@list[0] =~ /^\s*{.*}\s*$/);
           $$user{child} = $prog;
-          return mushrun($user,@list[0]);
+          return mushrun($user,@list[1],0);
        }
     }
 }
@@ -1201,7 +1208,6 @@ sub cmd_pemit
 {
    my $txt = shift;
 
-   printf("CMD_PEMIT: '%s'\n",$txt);
    if(!perm($user,"PEMIT")) {
       return err("Permission Denied.");
    } elsif($txt =~ /^\s*([^ ]+)\s*=/s) {
@@ -1211,7 +1217,9 @@ sub cmd_pemit
          return echo($user,"I don't see that here");
       } 
       $txt =~ s/^\s+|\s+$//g if($$user{source});
-      echo($target,"%s",evaluate($',$enactor));
+
+      my $txt = evaluate($',$enactor);
+      echo($target,"%s",evaluate($',$enactor)) if($txt !~ /^\s*$/);
    } else {
       echo($user,"syntax: \@pemit <object> = <message>");
    }
@@ -2092,7 +2100,7 @@ sub cmd_set
 
    if(!perm($user,"SET")) {
       return err("Permission Denied.");
-   } elsif($txt =~ /^\s*([^ ]+?)\/\s*([^ =]+?)\s*= *(.*) *$/s) { # attribute
+   } elsif($txt =~ /^\s*([^ =]+?)\/\s*([^ =]+?)\s*= *(.*) *$/s) { # attribute
       ($target,$attr,$value) = (locate_object($user,evaluate($1,$user)),evaluate($2,$user),$3);
       return echo($user,"Unknown object '%s'",$1) if !$target;
       controls($user,$target) || return echo($user,"Permission denied");
@@ -2108,7 +2116,7 @@ sub cmd_set
       }
       commit($db);
 
-   } elsif($txt =~ /^\s*([^ ]+?)\s*= *(.*?) *$/s) { # flag?
+   } elsif($txt =~ /^\s*([^ =]+?)\s*= *(.*?) *$/s) { # flag?
       ($target,$flag) = (locate_object($user,$1),$2);
       return echo($user,"Unknown object '%s'",$1) if !$target;
       controls($user,$target) || return echo($user,"Permission denied");
@@ -2439,16 +2447,16 @@ sub cmd_set2
 #   $txt =~ s/\r\n/<BR>/g;
 
    if(!perm($user,"SET")) {
-      return err("Permission Denied.");
-   } elsif($txt =~ /^\s*&([^& ]+)\s*([^ ]+)\s*= *(.*?) *$/) {
+      return err("Permi~sion Denied.");
+   } elsif($txt =~ /^\s*&([^& =]+)\s*([^ =]+)\s*= *(.*?) *$/) {
       $$user{inattr} = {
          attr => $1,
          object => $2,
          content => [ $3 ]
       };
-   } elsif($txt =~ /^\s*([^& ]+)\s*([^ ]+)\s*= *(.*?) *$/s) {
+   } elsif($txt =~ /^\s*([^& =]+)\s*([^ =]+)\s*= *(.*?) *$/s) {
       cmd_set("$2/$1=$3");
-   } elsif($txt =~ /^\s*([^ ]+)\s*([^ ]+)\s*$/s) {
+   } elsif($txt =~ /^\s*([^ =]+)\s*([^ =]+)\s*$/s) {
       cmd_set("$2/$1=");
    } else {
       echo($user,"Unable to parse &attribute command");

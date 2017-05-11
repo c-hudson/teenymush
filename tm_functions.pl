@@ -82,7 +82,9 @@ my %fun =
    capstr    => sub { return &fun_capstr(@_);                           },
    lcstr     => sub { return &fun_lcstr(@_);                            },
    ucstr     => sub { return &fun_ucstr(@_);                            },
+   setinter  => sub { return &fun_setinter(@_);                         },
    mudname   => sub { return &fun_mudname(@_);                          },
+   version   => sub { return &fun_version(@_);                          },
    decode_entities => sub { return &fun_de(@_);                         },
 );
 
@@ -135,6 +137,32 @@ sub fun_mudname
       return "TeenyMUSH";
    }
 }
+
+sub fun_version
+{
+   if(defined @info{version}) {
+      return @info{version};
+   } else {
+      return "TeenyMUSH";
+   }
+}
+
+sub fun_setinter
+{
+   my (%list, %out);
+
+   for my $i (split(/,/,@_[0])) {
+       @list{$i} = 1;
+   }
+
+   for my $i (split(/,/,@_[1])) {
+      if(defined @out{$i}) {
+         @out{$i} = 1;
+      }
+  }
+  return sort keys %out;
+}
+
 
 sub fun_lwho
 {
@@ -201,7 +229,7 @@ sub fun_hasflag
    good_args($#_,2) ||
       return "#-1 FUNCTION (HASFLAG) EXPECTS 2 ARGUEMENTS";
 
-   return 0 if($_[1] =~ /^s*(nospoof|haven|dark|royal)\s*$/i);
+   return 0 if($_[1] =~ /^s*(nospoof|haven|dark|royal|royalty)\s*$/i);
 
    my $target = locate_object($$prog{user},$_[0]);
  
@@ -310,7 +338,7 @@ sub fun_match
    $delim = " " if $delim eq undef; 
 
    for my $word (safe_split($txt,$delim)) {
-      return $count if(match_glob($pat,$word));
+      return $count if(match_glob(lc($pat),lc($word)));
       $count++;
    }
    return 0;
@@ -441,7 +469,7 @@ sub fun_rest
    }
 
    $delim = " " if($delim eq undef);
-   my $loc = index($txt,$delim);
+   my $loc = index(evaluate($txt,$user),$delim);
 
    if($loc == -1) {
       return $txt;
@@ -464,7 +492,7 @@ sub fun_first
       $txt =~ s/\s+/ /g;
       $delim = " ";
    }
-   my $loc = index($txt,$delim);
+   my $loc = index(evaluate($txt,$user),$delim);
 
    if($loc == -1) {
       return $txt;
@@ -670,7 +698,7 @@ sub fun_get
       ($obj,$atr) = ($txt,@_[0]);
    }
 
-   my $target = locate_object($user,$obj,"LOCAL");
+   my $target = locate_object($user,evaluate($obj,$user),"LOCAL");
 
    if($target eq undef ) {
       return "#-1 Unknown object";
@@ -722,6 +750,7 @@ sub fun_extract
    my (@list,$last);
    $idelim = " " if($idelim eq undef);
    $odelim = " " if($odelim eq undef);
+   return if $first == 0;
 
    if($first !~ /^\s*\d+\s*$/) {
       return "#-1 EXTRACT EXPECTS NUMERIC VALUE FOR SECOND ARGUMENT";
@@ -1011,9 +1040,11 @@ sub fun_iter
 {
    my @result;
 
+#   printf("ITER: '%s' -> '%s'\n",@_[0],@_[1]);
    for my $item (split(/ /,evaluate(@_[0]))) {
        my $new = @_[1];
        $new =~ s/##/$item/g;
+#       printf("   '@_[2]' -> '$new'\n");
        push(@result,evaluate($new,$user));
    }
 
@@ -1075,9 +1106,9 @@ sub parse_function
       @array[0] = $';                              # strip ending ] if there
       for my $i (1 .. $#array) {                            # eval arguments
          # evaluate args before passing them to function
-         if(!defined @exclude{$fun} || (!defined @{@exclude{$fun}}{$i} && 
-            !defined @{@exclude{$fun}}{all})) {
-            my $foo=@array[$i];
+
+         if(!(defined @exclude{$fun} && (defined @{@exclude{$fun}}{$i} ||
+            defined @{@exclude{$fun}}{all}))) {
             @array[$i] = evaluate(@array[$i],$target);
          }
       }
@@ -1173,12 +1204,16 @@ sub evaluate_string
    #
    if($txt =~ /^([a-zA-Z_]+)\((.*)\)$/) {
       my $fun = $1;
-      my $result = parse_function($1,"$2)",2,$target);
+      my $result = parse_function($fun,"$2)",2,$target);
       if($result ne undef) {
          shift(@$result);
          if(fun_lookup($fun) eq "huh") {
             printf("undefined function: '%s'\n",$fun);
          }
+         my $r=&{@fun{fun_lookup($fun)}}(@$result);
+#         printf("Fun: %s(%s)\n",$fun,join(',',@$result));
+#         printf("   Result: '%s'\n",$r);
+#         return $r;
          return &{@fun{fun_lookup($fun)}}(@$result);
       }
    }
@@ -1196,7 +1231,7 @@ sub evaluate_string
       $out .= "\\" x (length($esc) / 2);
 
       if(length($esc) % 2 == 0) {
-         my $result = parse_function($1,$',1,$target);
+         my $result = parse_function($fun,$',1,$target);
 
          if($result eq undef) {
             $txt = $after;
@@ -1207,6 +1242,8 @@ sub evaluate_string
                printf("undefined function: '%s'\n",$fun);
             }
             my $r = &{@fun{fun_lookup($fun)}}(@$result);
+#            printf("FUN: %s(%s)\n",$fun,join(',',@$result));
+#            printf("   Result: '%s'\n",$r);
             $out .= $r;
          }
       } else {                                # start of function escaped out

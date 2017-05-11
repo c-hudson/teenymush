@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# ascii_engine
+# tm_engine
 #    This file contains any functions required to handle the scheduling of
 #    running of mush commands. The hope is to balance the need for socket
 #    IO verses the need to run mush commands.
@@ -40,9 +40,9 @@ sub mush_command
       $$hash{cmd} =~ s/\+/\\+/g;
       $$hash{txt} =~ s/\r\s*|\n\s*//g;
       if($cmd =~ /^$$hash{cmd}$/) {
-         mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
+         mushrun($hash,$$hash{txt},0,$1,$2,$3,$4,$5,$6,$7,$8,$9);
       } else {
-         mushrun($hash,$$hash{txt});
+         mushrun($hash,$$hash{txt},0);
       }
       $match=1;                                   # signal mush command found
    }
@@ -64,9 +64,10 @@ sub priority
 #    Add the command to the que of what to run. The command will be run
 #    later.
 #
+# $source (1 = direct user input, 0 = indirect user input)
 sub mushrun
 {
-   my ($hash,$cmd,@wildcard) = @_;
+   my ($hash,$cmd,$source,@wildcard) = @_;
    my $txt;
 
    return if $cmd =~ /^\s*$/ && !defined $$user{inattr};
@@ -102,7 +103,7 @@ sub mushrun
 
     # copy over command(s)
     my $stack=$$prog{stack};
-    if(defined $$hash{source} && $$hash{source} == 1) {
+    if($source) {
        unshift(@$stack,{ cmd => $cmd });
     } else {
        for my $i ( balanced_split($cmd,';',3,1) ) {
@@ -114,7 +115,6 @@ sub mushrun
        set_digit_variables(undef,@wildcard);             # copy over %0 .. %9
     }
     delete @$hash{child};
-#    delete @$hash{source};
 }
 
 sub set_digit_variables

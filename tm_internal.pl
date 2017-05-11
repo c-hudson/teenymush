@@ -346,9 +346,9 @@ sub handle_object_listener
       if($$hash{cmd} ne $msg) {
          $$hash{cmd} =~ s/\*/\(.*\)/g;
          if($msg =~ /^$$hash{cmd}$/) {
-            mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
+            mushrun($hash,$$hash{txt},0,$1,$2,$3,$4,$5,$6,$7,$8,$9);
          } else {
-            mushrun($hash,$$hash{txt});
+            mushrun($hash,$$hash{txt},0);
          }
       }
    }
@@ -404,12 +404,12 @@ sub handle_listener
          # a very messy select... so the code will just weed it out here
          #
          if($msg =~ /^$$hash{cmd}$/) {
-            mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
+            mushrun($hash,$$hash{txt},0,$1,$2,$3,$4,$5,$6,$7,$8,$9);
          }
       } elsif($msg =~ /^$$hash{cmd}$/i) {
-         mushrun($hash,$$hash{txt},$1,$2,$3,$4,$5,$6,$7,$8,$9);
+         mushrun($hash,$$hash{txt},0,$1,$2,$3,$4,$5,$6,$7,$8,$9);
       } else {
-         mushrun($hash,$$hash{txt});
+         mushrun($hash,$$hash{txt},0);
       }
       $match=1;                                   # signal mush command found
    }
@@ -1092,6 +1092,7 @@ sub perm
    my ($target,$perm) = (obj(shift),shift);
 
    return 0 if(defined $$target{loggedin} && !$$target{loggedin});
+   return 1;
 
    $perm =~ s/@//;
    my $owner = owner($$target{obj_id});
@@ -1744,14 +1745,14 @@ sub isatrflag
 sub read_config
 {
    my $count=0;
-   for my $line (split(/\n/,getfile("ascii_config.dat"))) {
+   for my $line (split(/\n/,getfile("tm_config.dat"))) {
       $line =~ s/\r|\n//g;
       if($line =~/^\s*#/) {
          # comment, ignore
       } elsif($line =~ /^\s*([^ =]+)\s*=\s*(.+?)\s*$/) {
          @info{$1} = $2;
       } else {
-         printf("Invalid data in ascii_config.dat:\n") if($count == 0);
+         printf("Invalid data in tm_config.dat:\n") if($count == 0);
          printf("    %s\n",$line);
          $count++;
       }

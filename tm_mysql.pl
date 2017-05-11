@@ -11,11 +11,11 @@ $log = {} if(ref($log) ne "HASH");
 
 #
 # get_db_credentials
-#    Load the database credentials from the ascii_conf.dat file
+#    Load the database credentials from the tm_conf.dat file
 #
 sub get_db_credentials
 {
-   for my $line (split(/\n/,getfile("ascii_config.dat"))) {
+   for my $line (split(/\n/,getfile("tm_config.dat"))) {
       $line =~ s/\r|\n//g;
       if($line =~ /^\s*(user|pass|database)\s*=\s*([^ ]+)\s*$/) {
          $$db{$1} = $2;

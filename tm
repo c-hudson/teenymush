@@ -84,7 +84,7 @@ sub load_code_in_file
 #
 # load_all_code
 #    Check the current directory for any perl files to load. See if the
-#    file has changed and reload it if it has. Exclude ascii_main.pl
+#    file has changed and reload it if it has. Exclude tm_main.pl
 #    which should never be reloaded.
 #
 sub load_all_code
@@ -96,8 +96,8 @@ sub load_all_code
       return "Could not open current directory for reading";
 
    for my $file (readdir($dir))  {
-      if($file =~ /^ascii_.*.pl$/i && $file !~ /(backup|test)/ && 
-         $file !~ /^ascii_(main).pl$/i) {
+      if($file =~ /^tm_.*.pl$/i && $file !~ /(backup|test)/ && 
+         $file !~ /^tm_(main).pl$/i) {
          my $current = (stat($file))[9];         # should be file be reloaded?
          if(!defined @code{$file} || @{@code{$file}}{mod} != $current) {
             @code{$file} = {} if not defined @code{$file};
@@ -114,10 +114,12 @@ sub load_all_code
    return join(', ',@file);                           # return succ/fail list
 }
 
-printf("Loading: ascii_mysql.pl\n");
-load_code_in_file("ascii_mysql.pl");                       # only call of main
+@info{version} = "TeenyMUSH 0.5";
+
+printf("Loading: tm_mysql.pl\n");
+load_code_in_file("tm_mysql.pl");                       # only call of main
 load_all_code(1);                                # initial load of code
-printf("Loading: ascii_main.pl\n");
-load_code_in_file("ascii_main.pl");                       # only call of main
+printf("Loading: tm_main.pl\n");
+load_code_in_file("tm_main.pl");                       # only call of main
 
 printf("### DONE ###\n");            # should never get here unless @shutdown

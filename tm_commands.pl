@@ -1210,16 +1210,17 @@ sub cmd_pemit
 
    if(!perm($user,"PEMIT")) {
       return err("Permission Denied.");
-   } elsif($txt =~ /^\s*([^ ]+)\s*=/s) {
+   } elsif($txt =~ /^\s*([^ =]+)\s*=/s) {
       my $target = locate_object($user,evaluate($1,$user),"local");
       my $txt=$';
+
       if($target eq undef) {
          return echo($user,"I don't see that here");
       } 
       $txt =~ s/^\s+|\s+$//g if($$user{source});
 
       my $txt = evaluate($',$enactor);
-      echo($target,"%s",evaluate($',$enactor)) if($txt !~ /^\s*$/);
+      echo($target,"%s",$txt) if($txt !~ /^\s*$/);
    } else {
       echo($user,"syntax: \@pemit <object> = <message>");
    }
@@ -2101,17 +2102,18 @@ sub cmd_set
    if(!perm($user,"SET")) {
       return err("Permission Denied.");
    } elsif($txt =~ /^\s*([^ =]+?)\/\s*([^ =]+?)\s*= *(.*) *$/s) { # attribute
-      ($target,$attr,$value) = (locate_object($user,evaluate($1,$user)),evaluate($2,$user),$3);
+      ($target,$attr,$value) = (locate_object($user,evaluate($1,$user)),
+          evaluate($2,$user),$3);
       return echo($user,"Unknown object '%s'",$1) if !$target;
       controls($user,$target) || return echo($user,"Permission denied");
 
       if(isatrflag($value)) {
          echo($user,set_atr_flag($target,$attr,$value));
       } else {
-         if($$user{source} == 0) {
+
+         if(source() == 0) {              # don't evaluate player input, yet
             $value = evaluate($value,$enactor);
          }
-#         printf("SET: '%s' -> '%s'\n",$attr,$value);
          set($target,evaluate($attr,$$prog{user}),$value);
       }
       commit($db);
@@ -2131,11 +2133,12 @@ sub cmd_set
 sub list_attr
 {
    my ($obj,$atr) = @_;
-   my ($query,@where,$result,$found);
+   my ($query,@where,@result);
 
+   $atr =~ s/\*/%/g;
+   $atr =~ s/_/\\_/g;
    if($atr ne undef) {
-      $query = "and lower(substr(atr_name,1,length(?))) = lower(?) ";
-      push(@where,$atr);
+      $query = "and lower(atr_name) like lower(?) ";
       push(@where,$atr);
    }
 
@@ -2158,19 +2161,21 @@ sub list_attr
        $$obj{obj_id},
        @where
       )}) { 
-       $found = 1;
        if($$hash{atr_flag} eq undef) {
-          $result .= sprintf("%s: %s\n",$$hash{atr_name},$$hash{atr_value});
+          push(@result,sprintf("%s: %s",$$hash{atr_name},$$hash{atr_value}));
        } else {
-          $result .= sprintf("%s[%s]: %s\n",@$hash{atr_name},$$hash{atr_flag},
-              $$hash{atr_value});
+          push(@result,sprintf("%s[%s]: %s",@$hash{atr_name},$$hash{atr_flag},
+              $$hash{atr_value}));
+       }
+       if(uc($$hash{atr_name}) eq uc($atr)) {
+          return @result[$#result];
        }
    }
 
-   if(!$found) {
+   if($#result == -1) {
       return "No matching attributes";
    } else {
-      return $result;
+      return join("\n",@result);
    }
 }
 

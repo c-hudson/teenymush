@@ -104,10 +104,10 @@ sub mushrun
     # copy over command(s)
     my $stack=$$prog{stack};
     if($source) {
-       unshift(@$stack,{ cmd => $cmd });
+       unshift(@$stack,{ cmd => $cmd, source => 1 });
     } else {
        for my $i ( balanced_split($cmd,';',3,1) ) {
-          push(@$stack,{ cmd => $i });
+          push(@$stack,{ cmd => $i, source => 0 });
        }
     }
 
@@ -257,7 +257,7 @@ sub spin_run
 
    $$cmd{cmd} =~ s/^\s*{//;
 
-   if(!defined $$user{internal}) {
+#   if(!defined $$user{internal}) {
       $$user{internal} = {                                   # internal data
          cmd => $cmd,                                       # to pass around
          command => $command,
@@ -265,7 +265,7 @@ sub spin_run
          enactor => $enactor,
          prog => $prog
       };
-   }
+#   }
 
    if($$cmd{cmd} =~ /^\s*([^ ]+)(\s*)/) {
       my ($cmd_name,$arg) = lookup_command(\%command,$1,"$2$'",1);

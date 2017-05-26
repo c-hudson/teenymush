@@ -147,20 +147,24 @@ sub fun_version
    }
 }
 
+#
+# fun_setinter
+#    Return any matching item in both lists
+#
 sub fun_setinter
 {
    my (%list, %out);
 
    for my $i (split(/,/,@_[0])) {
+       $i =~ s/^\s+|\s+$//g;
        @list{$i} = 1;
    }
 
    for my $i (split(/,/,@_[1])) {
-      if(defined @out{$i}) {
-         @out{$i} = 1;
-      }
+      $i =~ s/^\s+|\s+$//g;
+      @out{$i} = 1 if(defined @list{$i});
   }
-  return sort keys %out;
+  return join(' ',sort keys %out);
 }
 
 
@@ -450,6 +454,7 @@ sub fun_after
    if($#_ != 0 && $#_ != 1) {
       return "#-1 Function (AFTER) EXPECTS 1 or 2 ARGUMENTS";
    }
+   printf("AFTER: '%s' -> '%s'\n",@_[0],@_[1]);
 
    my $loc = index(@_[0],@_[1]);
    if($loc == -1) {
@@ -633,6 +638,7 @@ sub fun_name
    if($result eq undef) {
       return "#-1";
    } else {
+#     printf("NAME(%s) = '%s'\n",@_[0],$$result{obj_name});
       return $$result{obj_name};
    }
 }
@@ -703,7 +709,7 @@ sub fun_get
    if($target eq undef ) {
       return "#-1 Unknown object";
    } elsif(!controls($user,$target)) {
-      return "#-1 Permission Denied";
+      return "#-1 Permission Denied $$user{obj_id} -> $$target{obj_id}";
    }
    return get($target,$atr);
 }
@@ -724,7 +730,8 @@ sub fun_setq
    $register =~ s/^\s+|\s+$//g;
    $value =~ s/^\s+|\s+$//g;
 
-   @{$$prog{var}}{"setq_$register"} = evaluate($value,$$prog{user});
+   my $result = evaluate($value,$$prog{user});
+   @{$$prog{var}}{"setq_$register"} = $result;
    return undef;
 }
 
@@ -1040,11 +1047,9 @@ sub fun_iter
 {
    my @result;
 
-#   printf("ITER: '%s' -> '%s'\n",@_[0],@_[1]);
    for my $item (split(/ /,evaluate(@_[0]))) {
        my $new = @_[1];
        $new =~ s/##/$item/g;
-#       printf("   '@_[2]' -> '$new'\n");
        push(@result,evaluate($new,$user));
    }
 
@@ -1119,6 +1124,27 @@ sub parse_function
 }
 
 
+#
+# unescape
+#    Escapes have already been counted and applied, but the array still
+#    contains the original number of escapes. This function will just
+#    weed out the extras while not modifying the orignal as the data
+#    may need to be rolled back.
+#
+sub unescape_join
+{
+   my ($array,$start,$stop) = @_;
+   my @out;
+
+   for my $i ($start .. $stop) {
+      if($$array[$i] =~ /^\\/) {
+         push(@out,"\\" x (length($$array[$i]) / 2));
+      } else {
+         push(@out,$$array[$i]);
+      }
+   }
+   return join('',@out);
+}
 
 #
 # balanced_split
@@ -1129,32 +1155,20 @@ sub parse_function
 sub balanced_split
 {
    my ($txt,$delim,$type,$debug) = @_;
-   my ($last,$i,$esc,@stack,$escaped,@depth) = (0,-1,-1);
-#   my %pair = ( '(' => ')', '{' => '}', '"' => '"',);
+   my ($last,$i,@stack,$escaped,@depth) = (0,-1);
    my %pair = ( '(' => ')', '{' => '}');
    $delim = "," if $delim eq undef;
 
    $txt = $1 if($type == 3 && $txt =~ /^\s*{(.*)}\s*$/);
-#   my @array = grep {!/^$/} split(/([\\\[\]\{\}\(\)$delim"])/,$txt);
-   my @array = grep {!/^$/} split(/([\\\[\]\{\}\(\)$delim])/,$txt);
+   my @array = grep {!/^$/} split(/([\[\]\{\}\(\)$delim])|(\\+)/,$txt);
    while(++$i <= $#array) {
 
-      if($esc > 0 && @array[$i] ne "\\") { # end of escaped characters
-         for my $y ($esc .. ($i-1)) {
-            if($y == $i) {
-               @array[$y] = "\\" x (($i - $esc) / 2);
-            } else {
-               @array[$y] = undef;
-            }
-         }
-         $escaped = ($esc % 2 == 0) ? 0 : 1;
-         $esc = -1;
-      }
-
-      if(@array[$i] eq undef || length(@array[$i]) > 1 || $escaped) {
+      if(@array[$i] =~ /^\\/) {                             # count escapes
+         $escaped = length(@array[$i]) % 2;
+      } elsif($escaped) {                             # item escaped, skipped
          $escaped = 0;
-      } elsif(@array[$i] eq "\\") {
-         $esc = $i if($esc == -1);
+      } elsif(@array[$i] eq undef || length(@array[$i]) > 1) {
+         # empty or text string
       } elsif($#depth >=0 && @{@depth[$#depth]}{ch} eq @array[$i]) {
          pop(@depth);                                      # found pair match
       } elsif(defined @pair{@array[$i]}) {
@@ -1164,10 +1178,10 @@ sub balanced_split
                         stack => $#stack+1
                      });
       } elsif($#depth == -1 && @array[$i] eq $delim) { # delim at right depth
-         push(@stack,join('',@array[$last .. ($i-1)]));
+         push(@stack,unescape_join(\@array,$last,$i-1));
          $last = $i+1;
       } elsif($type <= 2 && $#depth == -1 && @array[$i] eq ")") { # func end
-         push(@stack,join('',@array[$last .. ($i-1)]));
+         push(@stack,unescape_join(\@array,$last,$i-1));
          $last = $i+1;
          $i = $#array;
       }
@@ -1189,6 +1203,20 @@ sub balanced_split
    }
 }
 
+#
+# script
+#    Create some output that can be tested against another mush
+#
+sub script
+{
+   my ($fun,$args,$result) = @_;
+
+   return;
+   if($args !~ /(v|u|get|r)\(/i && $fun !~ /^(v|u|get|r)$/) {
+      printf("think [switch(%s(%s),%s,,{WRONG %s(%s) -> %s})]\n",
+          $fun,$args,$result,$fun,$args,$result);
+   }
+}
 
 #
 # evaluate_string
@@ -1211,9 +1239,8 @@ sub evaluate_string
             printf("undefined function: '%s'\n",$fun);
          }
          my $r=&{@fun{fun_lookup($fun)}}(@$result);
-#         printf("Fun: %s(%s)\n",$fun,join(',',@$result));
-#         printf("   Result: '%s'\n",$r);
-#         return $r;
+         script($fun,join(',',@$result),$r);
+         return $r;
          return &{@fun{fun_lookup($fun)}}(@$result);
       }
    }
@@ -1242,8 +1269,7 @@ sub evaluate_string
                printf("undefined function: '%s'\n",$fun);
             }
             my $r = &{@fun{fun_lookup($fun)}}(@$result);
-#            printf("FUN: %s(%s)\n",$fun,join(',',@$result));
-#            printf("   Result: '%s'\n",$r);
+            script($fun,join(',',@$result),$r);
             $out .= $r;
          }
       } else {                                # start of function escaped out

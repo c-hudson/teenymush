@@ -292,19 +292,13 @@ sub force
 sub controls
 {
    my ($enactor,$target,$flag) = (obj(shift),obj(shift),shift);
-
-   if(!defined $$target{obj_owner} && defined $$target{obj_id}) {
-      $target = fetch($$target{obj_id});
-   }
- 
-   if($$enactor{obj_id} eq $$target{obj_id}) {                    # is object
+  
+   if(owner_id($enactor) == owner_id($target)) {
+      return 1; 
+   } elsif(hasflag($enactor,"WIZARD")) {
       return 1;
-   } elsif($$target{obj_owner} eq $$enactor{obj_id}) {   # is owned by object
-      return 1;
-   } elsif(perm($enactor,"CONTROLS")) {                    # i have the power
-      return 1;                                                      # He-man
    } else {
-      return 0;                                                    # skeletor
+      return 0;
    }
 }
 
@@ -732,6 +726,22 @@ sub owner
    } else {
       my $child = fetch($$object{obj_id});
       return fetch($$child{obj_owner});
+   }
+}
+
+sub owner_id
+{
+   my $object = obj(shift);
+
+   if(defined $$object{obj_owner}) {
+      return $$object{obj_owner};
+   } elsif(hasflag($object,"PLAYER")) {           # players are owned by god,
+      return $$object{obj_id};               # but really they own themselves
+   } else {
+      return one_val("select obj_owner value " .
+                     "  from object " . 
+                     " where obj_id = ?",
+                     $$object{obj_id})  || return -1;
    }
 }
 
@@ -1756,5 +1766,20 @@ sub read_config
          printf("    %s\n",$line);
          $count++;
       }
+   }
+}
+
+#
+# source
+#    Return if the source of the input is a player[1] or a object[0].
+#
+sub source
+{
+   if(defined $$user{internal} &&
+      defined @{$$user{internal}}{cmd} &&
+      defined @{@{$$user{internal}}{cmd}}{source}) {
+      return @{@{$$user{internal}}{cmd}}{source};
+   } else {
+      return 0;
    }
 }

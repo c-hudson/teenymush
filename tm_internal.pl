@@ -75,7 +75,7 @@ sub string_escaped
 # evaluate
 #    Take a string and evaluate any functions, and mush variables
 #
-sub evaluate_substitutions
+sub evaluate_substitutions_old
 {
     my ($txt,$target) = @_;
     my $tmp = $enactor;
@@ -156,6 +156,56 @@ sub evaluate_substitutions
     $txt =~ s/%r/\n/ig;
     return $txt;
 }
+
+sub evaluate_substitutions
+{
+   my ($t,$target) = @_;
+   my ($tmp,$out,$seq) = ($enactor);
+
+   if($target ne undef) {
+      $enactor = $user;
+      $user = $target;
+   } 
+
+   while($t =~ /(\\|%[brtn#0-9]|%v[0-9]|%w[0-9]|%=<[^>]+>|%{[^}]+})/) {
+      ($seq,$t)=($1,$');                                   # store variables
+      $out .= $`;
+
+      if($seq eq "\\") {                               # skip over next char
+         $out .= substr($t,0,1);
+         $t = substr($t,1);
+      } elsif($seq eq "%b") {                                        # space
+         $out .= " ";
+      } elsif($seq eq "%r") {                                       # return
+         $out .= "\n";
+      } elsif($seq eq "%t") {                                          # tab
+         $out .= "\t";
+      } elsif($seq eq "%#") {                                # current dbref
+         $out .= "#".(($enactor ne undef) ? $$enactor{obj_id} : $$user{obj_id});
+      } elsif($seq eq "%n") {                                # current dbref
+         $out .= ($enactor ne undef) ? $$enactor{obj_name} : $$user{obj_name};
+      } elsif($seq =~ /^%([0-9])$/ || $seq =~ /^%{([^}]+)}$/) {  # temp vars
+         if($1 eq "hostname") {
+            $out .= $$user{raw_hostname};
+         } elsif($1 eq "socket") {
+            $out .= $$user{raw_socket};
+         } elsif($1 eq "enactor") {
+            $out .= $$enactor{obj_name};
+         } else {
+            $out .= @{$$prog{var}}{$1} if(defined $$prog{var});
+         }
+      } elsif($seq =~ /^%(v|w)[0-9]$/ || $seq =~ /^%=<([^>]+)>$/) {  # attrs
+         $out .= get($user,$1);
+      }
+   }
+
+   if($target ne undef) {
+      $user = $enactor;
+      $enactor = $tmp;
+   }
+   return $out . $t;
+}
+
 
 #
 # text
@@ -448,6 +498,7 @@ sub echo
    my $match = 0;
 
    if(!$$target{loggedin} && defined $$target{sock}) {
+      $fmt .= "\n" if($fmt !~ /\n$/);             # add return if none exists
       my $sock = $$target{sock};
       return printf($sock $fmt,@args);
    }
@@ -586,6 +637,39 @@ sub name
    }
 
    return $$target{obj_name}; 
+}
+
+sub echo_flag
+{
+   my ($flags,$fmt,@args) = @_;
+   my ($list,@where,$connected);
+
+   for my $flag (split(/,/,$flags)) {
+      if($flag eq "CONNECTED") {
+         $connected = 1;
+      } else {
+         $list .= " and " if($#where != -1) ;
+         $list .= "exists (select 1 " .
+                  "          from flag flg, " .
+                  "               flag_definition fde " .
+                  "         where obj.obj_id = flg.obj_id " . 
+                  "           and flg.fde_flag_id = fde.fde_flag_id " .
+                  "           and fde_name = ?) ";
+         push(@where,$flag);
+      }
+   }
+
+   printf("WHERE: '%s'\n",join(',',@where));
+   for my $player (@{sql($db,                    # search room target is in
+                         "select obj.* " . 
+                         "  from object obj" .
+                         (($connected) ? ", socket sck" : "") .
+                         " where $list " .
+                         (($connected) ? "and sck.obj_id = obj.obj_id " : ""),
+                         @where
+                   )}) {
+      echo($player,$fmt,@args);
+   }
 }
 
 #
@@ -940,7 +1024,7 @@ sub set_flag
        return "#-1 Unknown Flag.";
     }
 
-    if(!perm($user,$$hash{fde_name})) {
+    if(!perm($user,$$hash{fde_name}) && $flag ne "PLAYER") {
        return "#-1 PERMission Denied.";
     }
 
@@ -1180,7 +1264,10 @@ sub create_object
    my $owner = $$user{obj_id};
 
    # check quota
-   return 0 if($type ne "PLAYER" && quota_left($$user{obj_id}) <= 0);
+   if($type ne "PLAYER" && quota_left($$user{obj_id}) <= 0) {
+      printf("No quota, no create\n");
+      return 0;
+   }
   
    if($type eq "PLAYER") {
       $where = 3;
@@ -1211,12 +1298,14 @@ sub create_object
    my $hash = one($db,"select last_insert_id() obj_id") ||
       return rollback($db);
 
+
    set_flag($$hash{obj_id},$type,1);
    if($type eq "PLAYER" || $type eq "OBJECT") {
       move(fetch($$hash{obj_id}),fetch($where));
    }
 
-e  return $$hash{obj_id};
+   printf("created object_id: '$$hash{obj_id}'\n");
+   return $$hash{obj_id};
 }
 
 
@@ -1284,7 +1373,8 @@ sub print_var
 
 sub inuse_player_name
 {
-   my ($name,$target) = @_;
+   my ($name) = @_;
+   $name =~ s/^\s+|\s+$//g;
 
    my $result = one_val($db,
                   "select if(count(*) = 0,0,1) value " .
@@ -1294,10 +1384,8 @@ sub inuse_player_name
                   "   and fde.fde_name = 'PLAYER' " .
                   "   and atr_id is null " .
                   "   and fde_type = 1 " .
-                  "   and lower(obj_name) = lower(?) " .
-                  "   and obj.obj_id != ?",
-                  $name,
-                  $$target{obj_id}
+                  "   and lower(obj_name) = lower(?) ",
+                  $name
                  );
    return $result;
 }
@@ -1350,6 +1438,7 @@ sub get
    my $hash;
 
    $obj = { obj_id => $obj } if ref($obj) ne "HASH";
+   $attribute = "description" if(lc($attribute) eq "desc");
 
    if(($hash = one($db,"select atr_value from attribute " .
                          " where obj_id = ? " .

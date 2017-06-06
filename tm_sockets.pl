@@ -90,6 +90,7 @@ sub lookup_command
       } elsif(mush_command($hash,trim($cmd . " " . $txt,1))) { # mush command
          return ("\@\@",$cmd . " " . $txt);    
       } else {                                                  # no match
+#         printf("HUH: '%s'\n",$txt);
          return ('huh',trim($txt));
       }
    }
@@ -304,6 +305,9 @@ sub server_disconnect
          commit($db);
       } elsif(defined $$hash{connect_time}) {                # Player Socket
          echo_room($hash,"%s has disconnected.",name($hash));
+         echo_flag("CONNECTED,PLAYER,MONITOR",
+                   "[Monitor] %s has disconnected.",name($hash));
+
 
          my $key = connected_user($hash);
          delete @{@connected_user{$$hash{obj_id}}}{$key};

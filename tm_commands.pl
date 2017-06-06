@@ -848,9 +848,9 @@ sub cmd_switch
              return mushrun($user,$cmd,0);
           } 
        } else {
-          @list[0] = $1 if(@list[0] =~ /^\s*{.*}\s*$/);
+          @list[0] = $1 if(@list[0] =~ /^\s*{(.*)}\s*$/);
           $$user{child} = $prog;
-          return mushrun($user,@list[1],0);
+          return mushrun($user,@list[0],0);
        }
     }
 }
@@ -1180,7 +1180,7 @@ sub cmd_toad
    }
 
    if(loc($target) ne loc($user)) {
-      echo($user,"%s was \@toaded.",name($target));
+      echo($user,"%s was \@toaded.",obj_name($target,1),name($target));
    }
 
    echo_room($target,"%s was \@toaded.",name($target));
@@ -1290,7 +1290,7 @@ sub cmd_name
          return echo($user,"I don't see that here.");
       my $name = trim($2);
 
-      if(hasflag($target,"PLAYER") && inuse_player_name($2,$target)) {
+      if(hasflag($target,"PLAYER") && inuse_player_name($2)) {
          return echo($user,"That name is already in use");
       } elsif($name =~ /^\s*(\#|\*)/) {
          return echo($user,"Invalid name. Names may not start with * or #");
@@ -1785,15 +1785,17 @@ sub create_exit
 
 sub cmd_create
 {
-   my $txt = shift;
+   my $txt = trim(shift);
 
    if(!perm($user,"CREATE")) {
       return err("Permission Denied");
    } elsif(quota_left($user) <= 0) {
       return err("You are out of QUOTA to create objects.");
+   } if(length($txt) > 50) {
+      return err("Object name may not be greater then 50 characters");
    }
 
-   my $dbref = create_object(trim($txt),undef,"OBJECT") ||
+   my $dbref = create_object($txt,undef,"OBJECT") ||
       return err("Unable to create object");
 
    echo($user,"Object created as: %s(#%sO)",trim($txt),$dbref);
@@ -2022,6 +2024,9 @@ sub cmd_connect
 
             printf("    %s@%s\n",$$hash{obj_name},$$user{hostname});
             echo_room($user,"%s has connected.",name($user));          # users
+
+            echo_flag("CONNECTED,PLAYER,MONITOR",
+                      "[Monitor] %s has connected.",name($user))
          } else {
             sql(e($db,1),
                 "insert into socket_history ".
@@ -2198,8 +2203,8 @@ sub cmd_ex
    my $perm = controls($user,$target,1);
 
    if($atr ne undef) {
-      echo($user,"%s",list_attr($target,$atr));
-      return;
+      return echo($user,"%s",list_attr($target,$atr)) if $perm;
+      return echo($user,"Permission denied.");
    }
 
    echo($user,"%s",obj_name($target,$perm));
@@ -2220,15 +2225,18 @@ sub cmd_ex
          echo($user,"Firstsite: %s\n",$$target{obj_created_by});
          echo($user,"Lastsite: %s\n",lastsite($$target{obj_id}));
       }
-      echo($user,
-           "Last: %s",
-           one_val($db,
-                   "select ifnull(max(con_timestamp),'N/A') value " .
-                   "  from connect " .
-                   " where obj_id = ?",
-                   $$target{obj_id}
-                  )
-          );
+      my $last = one_val($db,
+                         "select ifnull(max(skh_end_time), " .
+                         "              max(skh_start_time) " .
+                         "             ) value " .
+                         "  from socket_history " .
+                         " where obj_id = ? ",
+                         $$target{obj_id}
+                        );
+       
+      $last = "N/A" if $last eq undef;
+
+      echo($user,"Last: %s",$last);
    }
 
    if($perm) {                                             # show attributes
@@ -2478,7 +2486,7 @@ sub cmd_say
 
 sub cmd_reload_code
 {
-   if(perm($user,"RELOAD")) {
+   if(hasflag($user,"WIZARD")) {
       my $result = load_all_code($user);
 
       if($result eq undef) {

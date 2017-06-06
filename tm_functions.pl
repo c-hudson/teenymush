@@ -85,6 +85,7 @@ my %fun =
    setinter  => sub { return &fun_setinter(@_);                         },
    mudname   => sub { return &fun_mudname(@_);                          },
    version   => sub { return &fun_version(@_);                          },
+   inuse     => sub { return &inuse_player_name(@_);                    },
    decode_entities => sub { return &fun_de(@_);                         },
 );
 
@@ -454,7 +455,6 @@ sub fun_after
    if($#_ != 0 && $#_ != 1) {
       return "#-1 Function (AFTER) EXPECTS 1 or 2 ARGUMENTS";
    }
-   printf("AFTER: '%s' -> '%s'\n",@_[0],@_[1]);
 
    my $loc = index(@_[0],@_[1]);
    if($loc == -1) {

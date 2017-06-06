@@ -16,7 +16,15 @@ use Time::HiRes "ualarm";
 sub mush_command
 {
    my ($data,$cmd) = @_;
-   my $match= 0;
+   my ($match,$questions,@where)= (0);
+
+   (@where[0],@where[1]) = (loc($user),$$user{obj_id});
+   if(defined @info{master_room}) {
+      $questions = "?,?,?";
+      push(@where,@info{master_room});
+   } else {
+      $questions = "?,?";
+   }
 
    # look for any attributes in the same room as the player
    for my $hash (@{sql("select obj.obj_id, " .
@@ -29,10 +37,9 @@ sub mush_command
                        "   and ? like  " .
                        "         replace(replace(substr(atr_value,1," .
                        "         instr(atr_value,':')-1),'*','%'),'?','_')" .
-                       "   and con.con_source_id in ( ?, ? ) ",
+                       "   and con.con_source_id in ( $questions ) ",
                        "\$" . lc($cmd),
-                       loc($user),
-                       $$user{obj_id}
+                       @where
                       )
                 }) {
       $$hash{cmd} =~ s/\*/\(.*\)/g;

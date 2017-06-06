@@ -39,6 +39,7 @@ sub sql
    @info{sqldone} = 0;
 
    delete @$con{rows};
+#   printf("SQL: '%s'\n",$sql);
 
    #
    # clean up the sql a little

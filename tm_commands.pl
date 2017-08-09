@@ -2821,11 +2821,13 @@ sub cmd_say
 
    my $say = evaluate($self,$prog,$txt);
 
+   my $start = time();
    necho(self   => $self,
          prog   => $prog,
          source => [ "You say, \"%s\"",$say ],
          room   => [ $self, "%s says, \"%s\"",name($self),$say ],
         );
+   printf("necho run time: '%s'\n",time() - $start);
 }
 
 sub cmd_reload_code

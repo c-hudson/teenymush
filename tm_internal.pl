@@ -333,6 +333,7 @@ sub handle_object_listener
 #
 sub handle_listener
 {
+   return;
    my ($prog,$self,$target,$txt,@args) = @_;
    my $match = 0;
 
@@ -378,9 +379,9 @@ sub handle_listener
             mushrun($self,$hash,$$hash{txt},0,$1,$2,$3,$4,$5,$6,$7,$8,$9);
          }
       } elsif($msg =~ /^$$hash{cmd}$/i) {
-         mushrun($self,$hash,$$hash{txt},0,$1,$2,$3,$4,$5,$6,$7,$8,$9);
+        mushrun($self,$hash,$$hash{txt},0,$1,$2,$3,$4,$5,$6,$7,$8,$9);
       } else {
-         mushrun($self,$hash,$$hash{txt},0);
+        mushrun($self,$hash,$$hash{txt},0);
       }
       $match=1;                                   # signal mush command found
    }
@@ -431,6 +432,17 @@ sub lcon
    return @result;
 }
 
+sub filter_chars
+{
+   my $txt = shift;
+   $txt .= "\n" if($txt !~ /\n$/);                # add return if none exists
+   $txt =~ s/\n/\r\n/g if($txt !~ /\r/);                      # add linefeeds
+   $txt =~ tr/\x80-\xFF//d;                             # strip control chars
+
+   return $txt;
+}
+
+
 
 # echo(self   => $self,
 #      prog   => $prog,
@@ -438,11 +450,10 @@ sub lcon
 #      source => [ "msg", @args ],
 #      target => [ $target, "msg", @args ]
 # )
- 
+
 sub necho
 {
    my %args = @_;
-   my $msg;
 
    if(defined @{@args{self}}{loggedin} && !@{@args{self}}{loggedin}) {
       # skip checks for non-connected players
@@ -455,7 +466,7 @@ sub necho
       if(ref(@args{room}) ne "ARRAY") {
          die("Echo expects a room argument expects array data");
       } elsif(ref(@{@args{room}}[0]) ne "HASH") {
-         die("Echo expects first room argument to be HASH data");
+         die("Echo expects first room argument to be HASH data '%s'",@{@args{room}}[0]);
       }
    }
 
@@ -464,19 +475,25 @@ sub necho
          my $array = @args{$type};
          my $target = shift(@$array);
          my $fmt = shift(@$array);
-         for my $obj (lcon(loc($target))) {
-            if($$obj{obj_id} ne $$target{obj_id}) {
-               necho(self   => @args{self},
-                     prog   => @args{prog},
-                     target => [ $obj, $fmt, @$array ],
-                     hint   => "ECHO_ROOM"
-                    );
-            }
+         my $msg = filter_chars(sprintf($fmt,@{@args{$type}}));
+         for my $sock (@{sql("select c1.obj_id, sck_socket " .
+                             "  from content c1, ".
+                             "       content c2, " .
+                             "       socket s " .
+                             " where c1.con_source_id = c2.con_source_id ".
+                             "   and c1.obj_id = s.obj_id ".
+                             "   and c2.obj_id = ? " .
+                             "   and c1.obj_id != ? ",
+                             $$target{obj_id},
+                             $$target{obj_id}
+                      )}) {
+             my $s = @{@connected{$$sock{sck_socket}}}{sock};
+             printf($s "%s%s",nospoof(@args{self},$$sock{obj_id}),$msg);
          }
          handle_listener(@args{self},@args{prog},$target,$fmt,@$array);
       }
    }
-
+ 
    unshift(@{@args{source}},@args{self}) if(defined @args{source});
 
    for my $type ("source", "target") {
@@ -487,14 +504,11 @@ sub necho
       }
 
       my ($target,$fmt) = (shift(@{@args{$type}}), shift(@{@args{$type}}));
-      my $msg = sprintf($fmt,@{@args{$type}});
-      $msg .= "\n" if($msg !~ /\n$/);               # add return if none exists
-      $msg =~ s/\n/\r\n/g if($msg !~ /\r/);                     # add linefeeds
-      $msg =~ tr/\x80-\xFF//d;
+      my $msg = filter_chars(sprintf($fmt,@{@args{$type}}));
 
       if(!defined @args{hint} ||
          (@args{hint} eq "ECHO_ROOM" && loc($target) != loc(owner($target)))) {
-         echo_output_to_puppet_owner($target,@args{prog},$msg);
+#         echo_output_to_puppet_owner($target,@args{prog},$msg);
       }
 
       if(defined @{@args{self}}{loggedin} && !@{@args{self}}{loggedin}) {
@@ -502,7 +516,7 @@ sub necho
          my $s = @{@connected{$$self{sock}}}{sock};
          printf($s "%s",$msg);
       } else {
-         log_output(@args{self},$target,$msg);
+#         log_output(@args{self},$target,$msg);
 
          if(hasflag($target,"PLAYER")) {         # echo to all player's sockets
             for my $sock (@{sql($db,

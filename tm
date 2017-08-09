@@ -22,7 +22,7 @@ my (%command,                       # commands for after player has connected
     %info,                                                # misc info storage
     $user,                                             # current user details
     $enactor,                                # object who initated the action
-    $prog,                                      # currently running mush code
+    $obj
    );
 
 #
@@ -65,7 +65,7 @@ sub load_code_in_file
    if(!-e $file) {
       printf("Fatal: Could not find '%s' to load.\n",$file);
    } else {
-      my $data = getfile($file,\%code);                      # read code in
+      my $data = qq[#line 1 "$file"\n] . getfile($file,\%code);                      # read code in
 
       @{@code{$file}}{size} = length($data);
       if($verbose) {                                  # show whats happening

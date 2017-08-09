@@ -48,6 +48,7 @@ sub sql
    $sql =~ s/\s{2,999}/ /g;
    @info{sql_last} = $sql;
    @info{sql_last_args} = join(',',@args);
+   @info{sql_last_code} = code();
 
    # connected/reconnect to DB if needed
    if(!defined $$con{db} || !$$con{db}->ping) {
@@ -69,7 +70,10 @@ sub sql
       $sth->bind_param($i+1,@args[$i]);
    }
 
-   $sth->execute( ) || die("Could not execute sql");
+   if(!$sth->execute( )) {
+      printf("%s",code());
+      die("Could not execute sql");
+   }
    @$con{rows} = $sth->rows;
 
    # produce an error if expectations are not met
@@ -187,7 +191,6 @@ sub one_val
    my ($sql,@args) = @_;
 
    my $array = sql($con,$sql,@args);
-
    return ($$con{rows} == 1) ? @{$$array[0]}{value} : undef;
 }
 
@@ -225,6 +228,7 @@ sub rollback
    my $con = (ref(@_[0]) eq "HASH") ? shift : $db;
    my ($fmt,@args) = @_;
 
+#   printf("ROLLBACK CALLED %s\n",code("long"));
    @$con{db}->rollback;
    return undef;
 }
@@ -232,6 +236,7 @@ sub rollback
 sub fetch
 {
    my $obj = obj(@_[0]);
+   my $debug = shift;
 
    my $hash=one($db,"select * from object where obj_id = ?",$$obj{obj_id}) ||
       return undef;

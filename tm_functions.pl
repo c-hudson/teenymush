@@ -28,7 +28,7 @@ my %fun =
    repeat    => sub { return &fun_repeat(@_);                           },
    time      => sub { return &fun_time(@_);                             },
    flags     => sub { return &fun_flags(@_);                            },
-   quota     => sub { return quota_left($$user{obj_id})                 },
+   quota     => sub { return &fun_quota_left(@_);                       },
 #  sql       => sub { return &fun_sql(@_);                              },
    input     => sub { return &fun_input(@_);                            },
    has_input => sub { return &fun_has_input(@_);                        },
@@ -130,8 +130,17 @@ sub good_args
    return 0;
 }
 
+sub quota
+{
+   my $self = shift;
+
+   return quota_left($self);
+}
+
 sub fun_mudname
 {
+   my ($self,$prog) = (shift,shift);
+
    if(defined @info{mudname}) {
       return @info{mudname};
    } else {
@@ -141,6 +150,8 @@ sub fun_mudname
 
 sub fun_version
 {
+   my ($self,$prog) = (shift,shift);
+
    if(defined @info{version}) {
       return @info{version};
    } else {
@@ -154,6 +165,7 @@ sub fun_version
 #
 sub fun_setinter
 {
+   my ($self,$prog) = (shift,shift);
    my (%list, %out);
 
    for my $i (split(/,/,@_[0])) {
@@ -171,6 +183,7 @@ sub fun_setinter
 
 sub fun_lwho
 {
+   my ($self,$prog) = (shift,shift);
    my @who;
 
    for my $key (@{sql($db,
@@ -185,40 +198,62 @@ sub fun_lwho
 }
 sub fun_lcstr
 {
-    good_args($#_,1) ||
-      return "#-1 FUNCTION (LCSTR) EXPECTS 1 ARGUEMENT ($#_)";
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (LCSTR) EXPECTS 1 ARGUEMENT ($#_)";
 
     return lc(shift);
 }
 
+#
+# lowercase the provided string
+#
 sub fun_ucstr
 {
+   my ($self,$prog) = (shift,shift);
+
     good_args($#_,1) ||
       return "#-1 FUNCTION (UCSTR) EXPECTS 1 ARGUEMENT ($#_)";
 
     return uc(shift);
 }
 
+#
+# capitalize the provided string
+#
 sub fun_capstr
 {
-    good_args($#_,1) ||
-      return "#-1 FUNCTION (SQUISH) EXPECTS 1 ARGUEMENT ($#_)";
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (SQUISH) EXPECTS 1 ARGUEMENT ($#_)";
 
     return ucfirst(shift);
 }
+
+#
+# fun_squish
+#     1. Convert multiple spaces into a single space,
+#     2. remove any leading or ending spaces
+#
 sub fun_squish
 {
-    my $txt = @_[0];
+   my ($self,$prog) = (shift,shift);
+   my $txt = @_[0];
 
-    good_args($#_,1) ||
-      return "#-1 FUNCTION (SQUISH) EXPECTS 1 ARGUEMENT ($#_)";
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (SQUISH) EXPECTS 1 ARGUEMENT ($#_)";
 
-    $txt =~ s/^\s+|\s+$//g;
-    $txt =~ s/\s+/ /g;
-    return $txt;
+   $txt =~ s/^\s+|\s+$//g;
+   $txt =~ s/\s+/ /g;
+   return $txt;
 }
+
 sub fun_eq
 {
+   my ($self,$prog) = (shift,shift);
+
    good_args($#_,2) ||
       return "#-1 FUNCTION (EQ) EXPECTS 2 ARGUEMENTS";
 
@@ -231,12 +266,14 @@ sub fun_eq
 
 sub fun_hasflag
 {
+   my ($self,$prog) = (shift,shift);
+
    good_args($#_,2) ||
       return "#-1 FUNCTION (HASFLAG) EXPECTS 2 ARGUEMENTS";
 
    return 0 if($_[1] =~ /^s*(nospoof|haven|dark|royal|royalty)\s*$/i);
 
-   my $target = locate_object($$prog{user},$_[0]);
+   my $target = locate_object($self,$_[0]);
  
    return "#-1 Unknown Object" if($target eq undef);
 
@@ -252,6 +289,8 @@ sub fun_hasflag
 
 sub fun_gt
 {
+   my ($self,$prog) = (shift,shift);
+
    good_args($#_,2) ||
       return "#-1 FUNCTION (GT) EXPECTS 2 ARGUEMENTS";
    return (@_[0] > @_[1]) ? 1 : 0;
@@ -259,6 +298,8 @@ sub fun_gt
 
 sub fun_gte
 {
+   my ($self,$prog) = (shift,shift);
+
    good_args($#_,2) ||
       return "#-1 FUNCTION (GTE) EXPECTS 2 ARGUEMENTS";
    return (@_[0] >= @_[1]) ? 1 : 0;
@@ -266,6 +307,8 @@ sub fun_gte
 
 sub fun_lt
 {
+   my ($self,$prog) = (shift,shift);
+
    good_args($#_,2) ||
       return "#-1 FUNCTION (LT) EXPECTS 2 ARGUEMENTS";
    return (@_[0] < @_[1]) ? 1 : 0;
@@ -273,6 +316,8 @@ sub fun_lt
 
 sub fun_lte
 {
+   my ($self,$prog) = (shift,shift);
+
    good_args($#_,2) ||
       return "#-1 FUNCTION (LT) EXPECTS 2 ARGUEMENTS";
    return (@_[0] <= @_[1]) ? 1 : 0;
@@ -280,6 +325,8 @@ sub fun_lte
 
 sub fun_or
 {
+   my ($self,$prog) = (shift,shift);
+
    for my $i (0 .. $#_) {
       return 1 if($_[$i]);
    }
@@ -289,6 +336,8 @@ sub fun_or
 
 sub fun_isnum
 {
+   my ($self,$prog) = (shift,shift);
+
    good_args($#_,1) ||
       return "#-1 FUNCTION (ISNUM) EXPECTS 1 ARGUEMENT";
 
@@ -297,6 +346,8 @@ sub fun_isnum
 
 sub fun_lnum
 {
+   my ($self,$prog) = (shift,shift);
+
    good_args($#_,1) ||
       return "#-1 FUNCTION (LNUM) EXPECTS 1 ARGUEMENT";
 
@@ -307,14 +358,18 @@ sub fun_lnum
 
 sub fun_and
 {
-    for my $i (0 .. $#_) {
-       return 0 if($_[$i] eq 0);
-    }
-    return 1;
+   my ($self,$prog) = (shift,shift);
+
+   for my $i (0 .. $#_) {
+      return 0 if($_[$i] eq 0);
+   }
+   return 1;
 }
 
 sub fun_not
 {
+   my ($self,$prog) = (shift,shift);
+
    good_args($#_,1) ||
       return "#-1 FUNCTION (NOT) EXPECTS 1 ARGUEMENTS";
 
@@ -324,6 +379,8 @@ sub fun_not
 
 sub fun_words
 {
+   my ($self,$prog) = (shift,shift);
+
    my ($txt,$delim) = @_;
 
    good_args($#_,1,2) ||
@@ -334,6 +391,8 @@ sub fun_words
 
 sub fun_match
 {
+   my ($self,$prog) = (shift,shift);
+
    my ($txt,$pat,$delim) = @_;
    my $count = 1;
 
@@ -351,6 +410,8 @@ sub fun_match
 
 sub fun_center
 {
+   my ($self,$prog) = (shift,shift);
+
    my ($txt,$size) = @_;
 
    if(!good_args($#_,2)) {
@@ -366,27 +427,31 @@ sub fun_center
 
 sub fun_switch
 {
-   my $first = evaluate(shift,$$prog{user});
+   my ($self,$prog) = (shift,shift);
+
+   my $first = evaluate($self,$prog,shift);
 
    while($#_ >= 0) {
       if($#_ >= 1) {
-         my $txt = evaluate(shift,$$prog{user});
+         my $txt = evaluate($self,$prog,shift);
          $txt =~ s/\*/\(.*\)/g;
          $txt =~ s/^\s+|\s+$//g;
 
          if($first =~ /^\s*$txt\s*$/i) {
-            return evaluate(@_[0],$$prog{user});
+            return evaluate($self,$prog,@_[0]);
          } else {
             shift;
          }
       } else {
-         return evaluate(shift,$$prog{user});
+         return evaluate($self,$prog,shift);
       }
    }
 }
 
 sub fun_member
 {
+   my ($self,$prog) = (shift,shift);
+
    my ($txt,$word,$delim) = @_;
    my $i = 1;
 
@@ -405,6 +470,8 @@ sub fun_member
 
 sub fun_index
 {
+   my ($self,$prog) = (shift,shift);
+
    my ($txt,$delim,$first,$size) = @_;
    my $i = 1;
 
@@ -426,6 +493,8 @@ sub fun_index
 
 sub fun_replace
 {
+   my ($self,$prog) = (shift,shift);
+
    my ($txt,$positions,$word,$idelim,$odelim) = @_;
    my $i = 1;
 
@@ -452,6 +521,8 @@ sub fun_replace
 
 sub fun_after
 {
+   my ($self,$prog) = (shift,shift);
+
    if($#_ != 0 && $#_ != 1) {
       return "#-1 Function (AFTER) EXPECTS 1 or 2 ARGUMENTS";
    }
@@ -460,7 +531,7 @@ sub fun_after
    if($loc == -1) {
       return undef;
    } else {
-      my $result = substr(@_[0],$loc + length(@_[1]));
+      my $result = substr(evaluate($self,$prog,@_[0]),$loc + length(@_[1]));
       $result =~ s/^\s+//g;
       return $result;
    }
@@ -468,13 +539,14 @@ sub fun_after
 
 sub fun_rest
 {
-   my ($txt,$delim) = @_;
-   if($#_ != 0 && $#_ != 1) {
+   my ($self,$prog,$txt,$delim) = @_;
+
+   if($#_ != 2 && $#_ != 3) {
       return "#-1 Function (REST) EXPECTS 1 or 2 ARGUMENTS";
    }
 
    $delim = " " if($delim eq undef);
-   my $loc = index(evaluate($txt,$user),$delim);
+   my $loc = index(evaluate($self,$prog,$txt),$delim);
 
    if($loc == -1) {
       return $txt;
@@ -487,6 +559,8 @@ sub fun_rest
 
 sub fun_first
 {
+   my ($self,$prog) = (shift,shift);
+
    my ($txt,$delim) = @_;
    if($#_ != 0 && $#_ != 1) {
       return "#-1 Function (FIRST) EXPECTS 1 or 2 ARGUMENTS";
@@ -497,7 +571,7 @@ sub fun_first
       $txt =~ s/\s+/ /g;
       $delim = " ";
    }
-   my $loc = index(evaluate($txt,$user),$delim);
+   my $loc = index(evaluate($self,$prog,$txt),$delim);
 
    if($loc == -1) {
       return $txt;
@@ -510,16 +584,18 @@ sub fun_first
 
 sub fun_before
 {
-   if($#_ != 0 && $#_ != 1) {
+   my ($self,$prog,$txt,$delim) = @_;
+
+   if($#_ != 3 && $#_ != 3) {
       return "#-1 Function (BEFORE) EXPECTS 1 or 2 ARGUMENTS";
    }
  
-   my $loc = index(@_[0],@_[1]);
+   my $loc = index($txt,$delim);
 
    if($loc == -1) {
       return undef;
    } else {
-      my $result = substr(@_[0],0,$loc);
+      my $result = substr(evaluate($self,$prog,$txt),0,$loc);
       $result =~ s/\s+$//;
       return $result;
    }
@@ -528,6 +604,7 @@ sub fun_before
 
 sub fun_loadavg
 {
+   my ($self,$prog) = (shift,shift);
    my $file;
 
    if(-e "/proc/loadavg") {
@@ -551,6 +628,8 @@ sub fun_loadavg
 #
 sub fun_secs
 {
+   my ($self,$prog) = (shift,shift);
+
    return time();
 }
 
@@ -560,6 +639,8 @@ sub fun_secs
 #
 sub fun_div
 {
+   my ($self,$prog) = (shift,shift);
+
    return "#-1 Add requires at least two arguments" if $#_ < 1;
 
    if($_[1] eq 0) {
@@ -575,6 +656,8 @@ sub fun_div
 #
 sub fun_add
 {
+   my ($self,$prog) = (shift,shift);
+
    my $result = 0;
 
    return "#-1 Add requires at least one argument" if $#_ < 0;
@@ -587,6 +670,8 @@ sub fun_add
 
 sub fun_sub
 {
+   my ($self,$prog) = (shift,shift);
+
    my $result = @_[0];
 
    return "#-1 Sub requires at least one argument" if $#_ < 0;
@@ -599,11 +684,15 @@ sub fun_sub
 
 sub fun_de
 {
+   my ($self,$prog) = (shift,shift);
+
    decode_entities(@_[0]);
 }
 
 sub fun_edit
 {
+   my ($self,$prog) = (shift,shift);
+
    my ($txt,$from,$to) = @_;
 
    good_args($#_,3) ||
@@ -616,10 +705,12 @@ sub fun_edit
 
 sub fun_num
 {
+   my ($self,$prog) = (shift,shift);
+
    good_args($#_,1) ||
       return "#-1 FUNCTION (NUM) EXPECTS 1 ARGUMENT";
 
-   my $result = locate_object($user,$_[0]);
+   my $result = locate_object($self,$_[0]);
  
    if($result eq undef) {
       return "#-1";
@@ -630,10 +721,12 @@ sub fun_num
 
 sub fun_name
 {
+   my ($self,$prog) = (shift,shift);
+
    good_args($#_,1) ||
       return "#-1 FUNCTION (NAME) EXPECTS 1 ARGUMENT";
 
-   my $result = locate_object($user,$_[0]);
+   my $result = locate_object($self,$_[0]);
  
    if($result eq undef) {
       return "#-1";
@@ -645,10 +738,12 @@ sub fun_name
 
 sub fun_type
 {
+   my ($self,$prog) = (shift,shift);
+
    good_args($#_,1) ||
       return "#-1 FUNCTION (TYPE) EXPECTS 1 ARGUMENT";
 
-   my $obj = locate_object($user,$_[0]);
+   my $obj = locate_object($self,$_[0]);
 
    return one_val("select fde_name value " . 
                      "  from object obj, " .
@@ -665,16 +760,18 @@ sub fun_type
 
 sub fun_u
 {
+   my ($self,$prog) = (shift,shift);
+
    my $txt = shift;
    my ($obj,$attr);
 
    my $prev = get_digit_variables($prog);                   # save %0 .. %9
-   set_digit_variables(undef,@_);              # update to new values
+   set_digit_variables($self,$prog,@_);              # update to new values
 
    if($txt =~ /\//) {                    # input in object/attribute format?
-      ($obj,$attr) = (locate_object($$prog{user},$`,"LOCAL"),$');
+      ($obj,$attr) = (locate_object($self,$`,"LOCAL"),$');
    } else {                                  # nope, just contains attribute
-      ($obj,$attr) = ($$prog{user},$txt);
+      ($obj,$attr) = ($self,$txt);
    }
    my $foo = $$obj{obj_name};
 
@@ -683,18 +780,21 @@ sub fun_u
    } elsif(!controls($$prog{user},$obj)) {
       return "#-1 PerMISSion Denied";
    }
+
    my $data = get($obj,$attr);
    $data =~ s/^\s+|\s+$//gm;
    $data =~ s/\n|\r//g;
 
-   my $result = evaluate($data,$obj);
-   set_digit_variables(undef,$prev);                       # restore %0 .. %9
+   my $result = evaluate($self,$prog,$data);
+   set_digit_variables($self,$prog,$prev);                # restore %0 .. %9
    return $result;
 }
 
 
 sub fun_get
 {
+   my ($self,$prog) = (shift,shift);
+
    my $txt = $_[0];
    my ($obj,$atr);
 
@@ -704,12 +804,12 @@ sub fun_get
       ($obj,$atr) = ($txt,@_[0]);
    }
 
-   my $target = locate_object($user,evaluate($obj,$user),"LOCAL");
+   my $target = locate_object($self,evaluate($self,$prog,$obj),"LOCAL");
 
    if($target eq undef ) {
       return "#-1 Unknown object";
-   } elsif(!controls($user,$target)) {
-      return "#-1 Permission Denied $$user{obj_id} -> $$target{obj_id}";
+   } elsif(!controls($self,$target)) {
+      return "#-1 Permission Denied $$self{obj_id} -> $$target{obj_id}";
    }
    return get($target,$atr);
 }
@@ -717,11 +817,15 @@ sub fun_get
 
 sub fun_v
 {
-   return get($user,$_[0]);
+   my ($self,$prog) = (shift,shift);
+
+   return get($self,$_[0]);
 }
 
 sub fun_setq
 {
+   my ($self,$prog) = (shift,shift);
+
    my ($register,$value) = @_;
 
    good_args($#_,2) ||
@@ -730,13 +834,15 @@ sub fun_setq
    $register =~ s/^\s+|\s+$//g;
    $value =~ s/^\s+|\s+$//g;
 
-   my $result = evaluate($value,$$prog{user});
+   my $result = evaluate($self,$prog,$value);
    @{$$prog{var}}{"setq_$register"} = $result;
    return undef;
 }
 
 sub fun_r
 {
+   my ($self,$prog) = (shift,shift);
+
    my ($register) = @_;
 
    good_args($#_,1) ||
@@ -753,6 +859,8 @@ sub fun_r
 
 sub fun_extract
 {
+   my ($self,$prog) = (shift,shift);
+
    my ($txt,$first,$length,$idelim,$odelim) = @_;
    my (@list,$last);
    $idelim = " " if($idelim eq undef);
@@ -775,6 +883,8 @@ sub fun_extract
 
 sub fun_remove
 {
+   my ($self,$prog) = (shift,shift);
+
    my ($list,$words,$delim) = @_;
    my (%remove, @result);
 
@@ -806,6 +916,8 @@ sub fun_remove
 
 sub fun_ljust
 {
+   my ($self,$prog) = (shift,shift);
+
    if(@_[1] =~ /^\s*$/) {
       return @_[0];
    } elsif(@_[1] !~ /^\s*(\d+)\s*$/) {
@@ -817,6 +929,8 @@ sub fun_ljust
 
 sub fun_rjust
 {
+   my ($self,$prog) = (shift,shift);
+
    my ($text,$size) = @_;
 
    if($size =~ /^\s*$/) {
@@ -831,18 +945,21 @@ sub fun_rjust
 
 sub fun_strlen
 {
+   my ($self,$prog) = (shift,shift);
+
 #    return length(evaluate(shift));
-    return length(shift);
+    return length(evaluate($self,$prog,shift));
 }
 
 sub fun_sql
 {
-    my (@txt) = @_;
+   my ($self,$prog) = (shift,shift);
 
-    my $sql = join(' ',@txt);
-    $sql =~ s/\_/%/g;
-#    printf("SQL: $sql\n");
-    table($sql);
+   my (@txt) = @_;
+
+   my $sql = join(' ',@txt);
+   $sql =~ s/\_/%/g;
+   return table($sql);
 }
 
 #
@@ -851,6 +968,8 @@ sub fun_sql
 #
 sub fun_substr
 {
+   my ($self,$prog) = (shift,shift);
+
    my ($txt,$start,$end) = @_; 
 
    if(!($#_ == 2 || $#_ == 3)) {
@@ -870,13 +989,15 @@ sub fun_substr
 #    
 sub has_socket
 {
-   my $txt = shift;
+   my ($self,$prog) = (shift,shift);
 
+   my $txt = shift;
    my $con = one_val("select count(*) value " .
                      "  from socket " .
                      " where upper(sck_tag) = upper(trim(?))",
                      $txt
                     );
+   printf("has_socket: '%s'\n",($con == 0) ? 0 : 1);
    return ($con == 0) ? 0 : 1;
 }
 
@@ -898,6 +1019,8 @@ sub socket_status
 # 
 sub fun_input
 {
+   my ($self,$prog) = (shift,shift);
+
     my $txt = shift;
 
     @info{io} = {} if !defined @info{io};
@@ -912,6 +1035,9 @@ sub fun_input
           return socket_status(uc($1));
        } else {
           my $buffer = $$data{buffer};
+#          my $txt = shift(@$buffer);
+#          printf("IN: '%s'\n",$txt);
+#          return $txt;
           return shift(@$buffer);
        }
    } else {
@@ -921,6 +1047,8 @@ sub fun_input
 
 sub fun_flags
 {
+   my ($self,$prog) = (shift,shift);
+
    if($#_ != 0) {
       return "#-1 flags expects an argument but found " . ($#_+1);
    } elsif(@_[0] =~ /^\s*#(\d+)\s*$/) {
@@ -939,11 +1067,11 @@ sub fun_flags
 #
 sub fun_space
 {
-    my ($count) = @_;
+    my ($self,$prog,$count) = @_;
 
     if($count =~ /^\s*$/) {
        $count = 1;
-    } elsif(!($#_ == -1 or $#_ == 0)) {
+    } elsif($#_ != 1 && $#_ != 2) {
        return "#-1 Space expects 0 or 1 numeric value but found " . ($#_ +1);
     } elsif($count !~ /^\s*\d+\s*/) {
        return "#-1 Space expects a numeric value";
@@ -958,6 +1086,8 @@ sub fun_space
 #
 sub fun_repeat
 {
+   my ($self,$prog) = (shift,shift);
+
     my ($txt,$count) = @_;
 
     if($#_ != 1) {
@@ -973,6 +1103,8 @@ sub fun_repeat
 #
 sub fun_time
 {
+   my ($self,$prog) = (shift,shift);
+
     if($#_ != -1 && $#_ != 0) {
        return "#-1 Time expects no arguments but found " . ($#_ +1);
     }
@@ -985,6 +1117,8 @@ sub fun_time
 #
 sub fun_cat
 {
+   my ($self,$prog) = (shift,shift);
+
    my @data = @_;
    my $out;
 
@@ -1007,6 +1141,7 @@ sub mysql_pattern
    $txt =~ tr/\x80-\xFF//d;
    $txt =~ s/[\;\%\/\\]//g;
    $txt =~ s/\*/\%/g;
+   $txt =~ s/_/\\_/g;
    return $txt;
 }
 
@@ -1016,17 +1151,20 @@ sub mysql_pattern
 #
 sub fun_lattr
 {
+   my ($self,$prog) = (shift,shift);
+
    my $txt = shift;
    my ($obj,$atr,@list);
 
    if($txt =~ /\s*\/\s*/) {                               # input has a slash 
       ($obj,$atr) = ($`,$');                          # designating a pattern
+   } elsif($txt =~ /^\s*$/) {                                      # no input
+      return "#-1 FUNCTION (LATTR) EXPECTS 1 ARGUMENTS";
    } else {
-      ($obj,$atr) = ($txt ,"*");                   # no slash, match anything
+      ($obj,$atr) = ("me",$txt);                         # only attr provided
    }
 
-   $txt = "me" if $txt eq undef;                # default to searching enactor
-   my $target = locate_object($user,$obj,"LOCAL");
+   my $target = locate_object($self,$obj,"LOCAL");
    return "#-1 Unknown object" if $target eq undef;  # oops, can't find object
 
    for my $attr (@{sql($db,                     # query db for attribute names
@@ -1045,12 +1183,14 @@ sub fun_lattr
 
 sub fun_iter
 {
+   my ($self,$prog) = (shift,shift);
+
    my @result;
 
-   for my $item (split(/ /,evaluate(@_[0]))) {
+   for my $item (split(/ /,evaluate($self,$prog,@_[0]))) {
        my $new = @_[1];
        $new =~ s/##/$item/g;
-       push(@result,evaluate($new,$user));
+       push(@result,evaluate($self,$prog,$new));
    }
 
    return join((@_[2] eq undef) ? " " : @_[2],@result);
@@ -1084,8 +1224,12 @@ sub escaped
 #
 sub fun_lookup
 {
+   my ($self,$prog) = (shift,shift);
+
    if(!defined @fun{lc($_[0])}) {
       printf("undefined function '%s'\n",@_[0]);
+      printf("TXT: '%s'\n",@_[1]);
+      printf("%s",code("long"));
    }
    return (defined @fun{lc($_[0])}) ? lc($_[0]) : "huh";
 }
@@ -1099,7 +1243,7 @@ sub fun_lookup
 #
 sub parse_function 
 {
-   my ($fun,$txt,$type,$target) = @_;
+   my ($self,$prog,$fun,$txt,$type) = @_;
 
    my @array = balanced_split($txt,",",$type);
    return undef if($#array == -1);
@@ -1114,7 +1258,7 @@ sub parse_function
 
          if(!(defined @exclude{$fun} && (defined @{@exclude{$fun}}{$i} ||
             defined @{@exclude{$fun}}{all}))) {
-            @array[$i] = evaluate(@array[$i],$target);
+            @array[$i] = evaluate($self,$prog,@array[$i]);
          }
       }
       return \@array;
@@ -1222,26 +1366,24 @@ sub script
 # evaluate_string
 #    Take a string and parse/run any functions in the string.
 #
-sub evaluate_string
+sub evaluate
 {
-   my ($txt,$target) = @_;
+   my ($self,$prog,$txt) = @_;
    my $out;
 
    #
    # handle string containing a single non []'ed function
    #
    if($txt =~ /^([a-zA-Z_]+)\((.*)\)$/) {
-      my $fun = $1;
-      my $result = parse_function($fun,"$2)",2,$target);
+      my $fun = fun_lookup($self,$prog,$1,$txt);
+      my $result = parse_function($self,$prog,$fun,"$2)",2);
       if($result ne undef) {
          shift(@$result);
-         if(fun_lookup($fun) eq "huh") {
-            printf("undefined function: '%s'\n",$fun);
-         }
-         my $r=&{@fun{fun_lookup($fun)}}(@$result);
+         printf("undefined function: '%s'\n",$fun) if($fun eq "huh");
+         my $r=&{@fun{$fun}}($self,$prog,@$result);
          script($fun,join(',',@$result),$r);
+
          return $r;
-         return &{@fun{fun_lookup($fun)}}(@$result);
       }
    }
 
@@ -1253,22 +1395,19 @@ sub evaluate_string
    # pick functions out of string when enclosed in []'s 
    #
    while($txt =~ /([\\]*)\[([a-zA-Z_]+)\(/) {
-      my ($esc,$fun,$before,$after) = ($1,$2,$`,$');
-      $out .= evaluate_substitutions($before);
+      my ($esc,$fun,$before,$after) = ($1,fun_lookup($self,$prog,$2,$txt),$`,$');
+      $out .= evaluate_substitutions($self,$prog,$before);
       $out .= "\\" x (length($esc) / 2);
 
       if(length($esc) % 2 == 0) {
-         my $result = parse_function($fun,$',1,$target);
+         my $result = parse_function($self,$prog,$fun,$',1);
 
          if($result eq undef) {
             $txt = $after;
             $out .= "[" . $1 . "(";
          } else {                                    # good function, run it
             $txt = shift(@$result);
-            if(fun_lookup($fun) eq "huh") {
-               printf("undefined function: '%s'\n",$fun);
-            }
-            my $r = &{@fun{fun_lookup($fun)}}(@$result);
+            my $r = &{@fun{$fun}}($self,$prog,@$result);
             script($fun,join(',',@$result),$r);
             $out .= $r;
          }
@@ -1278,8 +1417,8 @@ sub evaluate_string
       }
    }
 
-   if($txt ne undef) {
-      return $out . evaluate_substitutions($txt);   # return results + leftovers
+   if($txt ne undef) {                         # return results + leftovers
+      return $out . evaluate_substitutions($self,$prog,$txt);
    } else {
       return $out;
    }

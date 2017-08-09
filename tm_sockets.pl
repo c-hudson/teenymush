@@ -57,7 +57,8 @@ sub add_site_restriction
 #
 sub lookup_command
 {
-   my ($hash,$cmd,$txt,$type,$debug) = (@_[0],lc(@_[1]),@_[2],@_[3],@_[4]);
+   my ($self,$hash,$cmd,$txt,$type,$debug) =
+      (@_[0],@_[1],lc(@_[2]),@_[3],@_[4],@_[5]);
    my $match;
 
    if(defined $$hash{$cmd}) {                       # match on internal cmd
@@ -68,7 +69,7 @@ sub lookup_command
             length($cmd) == 1
            )
           ) {
-      return (substr($cmd,0,1),trim(substr(@_[1],1) . $txt));
+      return (substr($cmd,0,1),trim(substr($cmd,1) . $txt));
    } else {                                     # match on partial cmd name
       $txt =~ s/^\s+|\s+$//g;
       for my $key (keys %$hash) {              #  find partial unique match
@@ -87,10 +88,9 @@ sub lookup_command
          return ('huh',trim($txt));
       } elsif($txt =~ /^\s*$/ && $type && locate_exit($cmd)) {  # exit match
          return ("go",$cmd);
-      } elsif(mush_command($hash,trim($cmd . " " . $txt,1))) { # mush command
+      } elsif(mush_command($self,$hash,trim($cmd . " " . $txt,1))) { #mush cmd
          return ("\@\@",$cmd . " " . $txt);    
       } else {                                                  # no match
-#         printf("HUH: '%s'\n",$txt);
          return ('huh',trim($txt));
       }
    }
@@ -141,14 +141,14 @@ sub server_process_line
          if($input =~ /^\s*([^ ]+)/ || $input =~ /^\s*$/) {
             $user = $hash;
             if($$user{site_restriction} == 69) {
-               my ($cmd,$arg) = lookup_command(\%honey,$1,$',0);
+               my ($cmd,$arg) = lookup_command($data,\%honey,$1,$',0);
                &{@honey{$cmd}}($arg);                            # invoke cmd
             } elsif(loggedin($hash) || hasflag($hash,"OBJECT")) {
-               mushrun($user,$input,1);
+               mushrun($user,$user,$input,1);
                add_last_info($input);                                   #logit
             } else {
-               my ($cmd,$arg) = lookup_command(\%offline,$1,$',0);
-               &{@offline{$cmd}}($arg);                          # invoke cmd
+               my ($cmd,$arg) = lookup_command($data,\%offline,$1,$',0);
+               &{@offline{$cmd}}($hash,{},$arg);                  # invoke cmd
             }
          }
       };
@@ -157,12 +157,19 @@ sub server_process_line
          printf("# %s crashed the server with: %s\n%s",name($hash),$_[1],$@); 
          printf("LastSQL: '%s'\n",@info{sql_last});
          printf("         '%s'\n",@info{sql_last_args});
+         printf("         '%s'\n",@info{sql_last_code});
          rollback($db);
    
          my $msg = sprintf("%s crashed the server with: %s",name($hash),$_[1]);
-         echo($hash,"%s",$msg);
+         necho(self   => $hash,
+               prog   => {},
+               source => [ "%s",$msg ]
+              );
          if($msg ne $$user{crash}) {
-           echo_room($hash,"%s",$msg);
+            necho(self   => $hash,
+                  prog   => {},
+                  room   => [ $hash, "%s",$msg ]
+                 );
             $$user{crash} = $msg;
          }
          delete @$hash{buf};
@@ -262,9 +269,9 @@ sub server_handle_sockets
                                                          # breakapart by line
             while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
                @{@connected{$s}}{buf} = $';                # store left overs
-#               if(@{@connected{$s}}{raw} == 2) {
-#                  printf("#%s# %s\n",@{@connected{$s}}{raw},$`);
-#               }
+               if(@{@connected{$s}}{raw} == 2) {
+                  printf("#%s# %s\n",@{@connected{$s}}{raw},$`);
+               }
 
                server_process_line(@connected{$s},$`);         # process line
             }
@@ -296,7 +303,10 @@ sub server_disconnect
       my $hash = @connected{$id};
 
       if(defined $$hash{raw} && $$hash{raw} > 0) {             # MUSH Socket
-         echo($hash,"[ Connection closed ]");
+         necho(self => $hash,
+               prog => {},
+               "[ Connection closed ]"
+              );
          sql($db,                             # delete socket table row
              "delete from socket " .
              " where sck_socket = ? ",
@@ -304,8 +314,11 @@ sub server_disconnect
             );
          commit($db);
       } elsif(defined $$hash{connect_time}) {                # Player Socket
-         echo_room($hash,"%s has disconnected.",name($hash));
-         echo_flag("CONNECTED,PLAYER,MONITOR",
+         necho(self => $hash,
+               prog => {},
+               room => [ $hash, "%s has disconnected.",name($hash) ]
+              );
+         echo_flag($hash,{},"CONNECTED,PLAYER,MONITOR",
                    "[Monitor] %s has disconnected.",name($hash));
 
 
@@ -353,15 +366,20 @@ sub server_disconnect
 #
 sub server_start
 {
-   my $port = shift;
-   my $count = 0;
-   printf("Listening on port $port\n");
+   read_config();
 
-   $listener = IO::Socket::INET->new(LocalPort=>$port,Listen=>1,Reuse=>1);
+   my $count = 0;
+
+   if(@info{port} !~ /^\s*\d+\s*$/) {
+      printf("Invalid Port of '%s' defined in tm_config.dat\n",@info{port}); 
+      exit();
+   } else {
+      printf("Listening on port @info{port}\n");
+   }
+
+   $listener = IO::Socket::INET->new(LocalPort=>@info{port},Listen=>1,Reuse=>1);
    $readable = IO::Select->new();          # setup socket polling routines
    $readable->add($listener);
-
-   read_config();
 
    # main loop;
    while(1) {

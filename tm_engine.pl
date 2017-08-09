@@ -15,8 +15,9 @@ use Time::HiRes "ualarm";
 
 sub mush_command
 {
-   my ($data,$cmd) = @_;
+   my ($self,$data,$cmd) = @_;
    my ($match,$questions,@where)= (0);
+#   printf("MUSH_COMMAND: '%s'\n",print_var($data));
 
    (@where[0],@where[1]) = (loc($user),$$user{obj_id});
    if(defined @info{master_room}) {
@@ -25,9 +26,10 @@ sub mush_command
    } else {
       $questions = "?,?";
    }
+#   printf("mush_command: '%s' '%s' '%s'\n%s\n",$self,$data,$cmd,code("long"));
 
    # look for any attributes in the same room as the player
-   for my $hash (@{sql("select obj.obj_id, " .
+   for my $hash (@{sql("select obj.*, " .
                        "       substr(atr_value,2,instr(atr_value,':')-2) cmd,".
                        "       substr(atr_value,instr(atr_value,':')+1) txt,".
                        "       0 source " .
@@ -47,9 +49,9 @@ sub mush_command
       $$hash{cmd} =~ s/\+/\\+/g;
       $$hash{txt} =~ s/\r\s*|\n\s*//g;
       if($cmd =~ /^$$hash{cmd}$/) {
-         mushrun($hash,$$hash{txt},0,$1,$2,$3,$4,$5,$6,$7,$8,$9);
+         mushrun($self,$hash,$$hash{txt},0,$1,$2,$3,$4,$5,$6,$7,$8,$9);
       } else {
-         mushrun($hash,$$hash{txt},0);
+         mushrun($self,$hash,$$hash{txt},0);
       }
       $match=1;                                   # signal mush command found
    }
@@ -74,33 +76,41 @@ sub priority
 # $source (1 = direct user input, 0 = indirect user input)
 sub mushrun
 {
-   my ($hash,$cmd,$source,@wildcard) = @_;
-   my $txt;
+   my ($self,$obj,$cmd,$source,@wildcard) = @_;
+   my ($prog,$txt);
 
-   return if $cmd =~ /^\s*$/ && !defined $$user{inattr};
-   $cmd = $1 if($cmd =~ /^\s*{(.*)}\s*$/s);
-   if(defined $$user{inattr}) {                               # handle inattr
-      my $hash = $$user{inattr};
+   if(!defined $$user{inattr}) {
+       if($cmd =~ /^\s*$/) {
+          return;
+       } elsif($cmd =~ /^\s*{(.*)}\s*$/s) {
+          $cmd = $1;
+       }
+   }
+      
+   if(defined $$self{inattr}) {                               # handle inattr
+      my $hash = $$self{inattr};
       my $stack = $$hash{content};
       if($cmd =~ /^\s*$/) {
          $txt = "$$hash{attr} $$hash{object}=" . join("\r\n",@$stack);
-         delete @$user{inattr};
-         cmd_set2($txt);
+         delete @$self{inattr};
+         cmd_set2($self,{},$txt);
          return;
       } else {
-         my $stack = @{$$user{inattr}}{content};
+         my $stack = @{$$self{inattr}}{content};
          push(@$stack,$cmd);
          return;
       }
-   } elsif(defined $$hash{child}) {                   # add as child process
-      $prog = $$hash{child};
+   } elsif(defined $$self{child}) {                   # add as child process
+      $prog = $$self{child};
    } else {
       $prog = {                                      # add as parent process
          stack => [ ],
-         enactor => $user,
-         user => $hash,
+         enactor => $self,                                         # remove?
+         user => $self,                                            # remove?
+         created_by => $self,
+         obj => $obj,
          var => {},
-         priority => priority($hash),
+         priority => priority($self),
          calls => 0
       };
 
@@ -118,21 +128,21 @@ sub mushrun
        }
     }
 
-    if(!defined $$hash{child}) {
-       set_digit_variables(undef,@wildcard);             # copy over %0 .. %9
+    if(!defined $$self{child}) {
+       set_digit_variables($self,$prog,@wildcard);       # copy over %0 .. %9
     }
-    delete @$hash{child};
+    delete @$self{child};
 }
 
 sub set_digit_variables
 {
-   my $target = shift;
+   my ($self,$prog) = (shift,shift);
 
-   if(ref(@_[0]) eq "HASH") {
+   if(ref($_[0]) eq "HASH") {
       my $new = shift;
       for my $i (0 .. 9) {
-         if($target ne undef) {
-            @{$$prog{var}}{$i} = evaluate($$new{$i},$target);
+         if($self ne undef) {
+            @{$$prog{var}}{$i} = evaluate($self,$prog,$$new{$i});
          } else {
             @{$$prog{var}}{$i} = $$new{$i};
          }
@@ -141,8 +151,8 @@ sub set_digit_variables
       my @var = @_;
 
       for my $i (0 .. 9 ) {
-         if($target ne undef) {
-            @{$$prog{var}}{$i} = evaluate(@var[$i],$target);
+         if($self ne undef) {
+            @{$$prog{var}}{$i} = evaluate($self,$prog,@var[$i]);
          } else {
             @{$$prog{var}}{$i} = @var[$i];
          }
@@ -152,6 +162,7 @@ sub set_digit_variables
 
 sub get_digit_variables
 {
+    my $prog = shift;
     my $result = {};
   
     for my $i (0 .. 9) {
@@ -194,7 +205,7 @@ sub spin
             } else {
                for(my $i=0;$#$command >= 0 && $i <= $$program{priority};$i++) {
                   my $cmd = shift(@$command);
-                  printf("CMD: '%s'\n",join(',',@$cmd)) if(ref($cmd) eq "ARRAY");
+#                  printf("CMD: '%s'\n",join(',',@$cmd)) if(ref($cmd) eq "ARRAY");
                   $$user{cmd_data} = $cmd;
                   delete @$cmd{still_running};
                   spin_run(\%last,$program,$cmd,$command);
@@ -241,10 +252,15 @@ sub spin
 
          my $msg = sprintf("%s CRASHed the server with: %s",name($user),
              @{@last{cmd}}{cmd});
-         echo($user,"%s",$msg);
+         necho(self => $user,
+               prog => {},
+               source => [ "%s", $msg ]
+              );
          if($msg ne $$user{crash}) {
-            echo_room($user,"%s",$msg);
-            $$user{crash} = $msg;
+            necho(self => $user,
+                  prog => {},
+                  room => [ "%s", $msg ]
+                 );
          }
       }
 }
@@ -275,13 +291,19 @@ sub spin_run
 #   }
 
    if($$cmd{cmd} =~ /^\s*([^ ]+)(\s*)/) {
-      my ($cmd_name,$arg) = lookup_command(\%command,$1,"$2$'",1);
+      my ($cmd_name,$arg)=lookup_command($$prog{obj},\%command,$1,"$2$'",1);
 
       if(hasflag($user,"VERBOSE")) {
          if($arg eq undef) {
-            echo(owner($user),"> %s",$cmd_name);
+            necho(self => $user,
+                  prog => $prog,
+                  target => [ owner($user), "> %s",$cmd_name ]
+                 );
          } else {
-            echo(owner($user),"> %s %s",$cmd_name,$arg);
+            necho(self => $user,
+                  prog => $prog,
+                  target => [ owner($user), "> %s",$cmd_name,$arg ]
+                 );
          }
       }
 
@@ -292,7 +314,7 @@ sub spin_run
 
       if($cmd_name ne "@@") {
          $$user{cmd_data} = $cmd;
-         &{@{@command{$cmd_name}}{fun}}($arg,$prog,$switch);
+         &{@{@command{$cmd_name}}{fun}}($$prog{obj},$prog,$arg,$switch);
       }
    }
    ($user,$enactor) = ($tmp_user,$tmp_enactor);
@@ -301,4 +323,27 @@ sub spin_run
 sub spin_done
 {
     die("alarm");
+}
+
+#
+# signal_still_running
+#
+#    This command puts the currently running command back into the
+#    queue of running commands. The assumption is that all commands
+#    will be done after the first run... and therefor are removed
+#    from the queue.. so we have to add it back in.
+#  
+sub signal_still_running
+{
+    my $prog = shift;
+
+    my $cmd;
+
+    if($#_ == 0) {
+       $cmd = shift;
+    } else {
+       $cmd = $$prog{cmd_last};
+    }
+
+    push(@{$$prog{stack}},$cmd);
 }

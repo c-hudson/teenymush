@@ -185,6 +185,7 @@ delete @honey{keys %honey};
 @command{"\@tel"}    = { fun  => sub { return &cmd_teleport(@_); },
                          alias=> 1                                       };
 @command{"\@\@"}     = { fun  => sub { return;}                          };
+@command{"\@split"}  = { fun  => sub { cmd_split(@_); }                  };
 
  
 # ------------------------------------------------------------------------#
@@ -505,13 +506,25 @@ sub cmd_var
 {
     my ($self,$prog,$txt) = @_;
 
+    $$prog{var} = {} if !defined $$prog{var};
     if($txt =~ /^\s*([^ ]+)\+\+\s*$/) {
        @{$$prog{var}}{$1}++;
+#       necho(self   => $self,
+#             prog   => $prog,
+#             source => [ "Set." ],
+#            );
     } elsif($txt =~ /^\s*([^ ]+)\-\-\s*$/) {
        @{$$prog{var}}{$1}--;
+#       necho(self   => $self,
+#             prog   => $prog,
+#             source => [ "Set." ],
+#            );
     } elsif($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
-       $$prog{var} = {} if !defined $$prog{var};
        @{$$prog{var}}{$1} = evaluate($self,$prog,$2); 
+#       necho(self   => $self,
+#             prog   => $prog,
+#             source => [ "Set." ],
+#            );
     } else {
        necho(self   => $self,
              prog   => $prog,
@@ -647,14 +660,59 @@ sub test
 {
    my $txt = shift;
 
-   if($txt =~ / <= /)     { return (trim($`) <= trim($')) ? 1 : 0;  }
-   elsif($txt =~ / == /)  { return (trim($`) == trim($')) ? 1 : 0;  }
-   elsif($txt =~ / >= /)  { return (trim($`) >= trim($')) ? 1 : 0;  }
-   elsif($txt =~ / > /)   { return (trim($`) >  trim($')) ? 1 : 0;  }
-   elsif($txt =~ / < /)   { return (trim($`) <  trim($')) ? 1 : 0;  }
-   elsif($txt =~ / eq /)  { return (trim($`) eq trim($')) ? 1 : 0;  }
-   elsif($txt =~ / ne /)  { return ( trim($`) ne trim($')) ? 1 : 0; }
+   if($txt =~ / <= /)     { return (lc(trim($`)) <= lc(trim($'))) ? 1 : 0;  }
+   elsif($txt =~ / == /)  { return (lc(trim($`)) == lc(trim($'))) ? 1 : 0;  }
+   elsif($txt =~ / >= /)  { return (lc(trim($`)) >= lc(trim($'))) ? 1 : 0;  }
+   elsif($txt =~ / > /)   { return (lc(trim($`)) >  lc(trim($'))) ? 1 : 0;  }
+   elsif($txt =~ / < /)   { return (lc(trim($`)) <  lc(trim($'))) ? 1 : 0;  }
+   elsif($txt =~ / eq /)  { return (lc(trim($`)) eq lc(trim($'))) ? 1 : 0;  }
+   elsif($txt =~ / ne /)  { return (lc(trim($`)) ne lc(trim($'))) ? 1 : 0; }
    else                   { return 0;                               }
+}
+
+sub cmd_split
+{
+    my ($self,$prog,$txt) = @_;
+    my $max = 10;
+    my @stack;
+   
+    if($txt =~ /,/) {
+       my $target = locate_object($self,$`,"LOCAL") ||
+         return err($self,$prog,"I can't find that");
+       my $txt = get($target,$');
+       $txt =~ s/\r\s*|\n\s*//g;
+#       necho(self => $self,
+#             prog => $prog,
+#             source => [ "! %s", $txt ]
+#            );
+       
+
+      unshift(@stack,$txt);
+
+      while($#stack > -1 && $max--) {
+          necho(self => $self,
+                prog => $prog,
+                source => [ "! %s", @stack[0] ]
+               );
+          my $before = $#stack;
+          my $item = shift(@stack);
+
+          if($item =~ /;/) {
+             for my $i (balanced_split($item,';',3,1)) {
+                printf("    Adding: $i\n");
+                unshift(@stack,$i);
+             }
+          }
+          if($before == $#stack) {
+             necho(self => $self,
+                   prog => $prog,
+                   source => [ "# %s ($before==$#stack)", $item ]
+                  );
+          }
+       }
+    } else {
+       err($self,$prog,"Usage: \@split <object>,<attribute>");
+    }
 }
 
 # cmd_while
@@ -667,17 +725,21 @@ sub cmd_while
 
     my $cmd = $$prog{cmd_last};
 
-
     if(!defined $$cmd{while_test}) {                 # initialize "loop"
         $first = 1;
         if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/s) {
            ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
            $$cmd{while_cmd} = [ balanced_split($2,";",3) ];
+           my $a = $$cmd{while_cmd};
+           for my $i (0 .. $#$a) {
+              printf("# %s\n",$$a[$i]);
+           }
+        } else {
            return err($self,$prog,"usage: while (<expression>) { commands }");
         }
     }
     $$cmd{while_count}++;
-    printf("WHILE: '%s' -> '%s' -> '%s'\n",$$cmd{while_test},evaluate($self,$prog,$$cmd{while_test}),test(evaluate($self,$prog,$$cmd{while_test})));
+#    printf("WHILE: '%s' -> '%s' -> '%s'\n",$$cmd{while_test},evaluate($self,$prog,$$cmd{while_test}),test(evaluate($self,$prog,$$cmd{while_test})));
 
     if($$cmd{while_count} >= 1000) {
        printf("#*****# while exceeded maxium loop of 1000, stopped\n");
@@ -928,14 +990,11 @@ sub cmd_switch
 
           if($first =~ /^\s*$txt\s*$/i) {
              $$prog{child} = $prog;
-          printf("G_SWITCH(%s): '%s' -> '%s'\n",$first,$txt,$cmd);
              return mushrun($self,$self,$cmd,0);
-          } 
-          printf("I_SWITCH(%s): '%s' -> '%s'\n",$first,$txt,$cmd);
+          }
        } else {
           @list[0] = $1 if(@list[0] =~ /^\s*{(.*)}\s*$/);
           $$self{child} = $prog;
-          printf("D_SWITCH: '%s'\n",@list[0]);
           return mushrun($self,$self,@list[0],0);
        }
     }
@@ -1071,16 +1130,21 @@ sub cmd_telnet
          );
         commit;
       @info{io} = {} if(!defined @info{io});
-      delete @{@info{io}}{uc($1)};
+      @{@info{io}}{uc($1)} = {};                     # clear previous buffer
+      @{@{@info{io}}{uc($1)}}{buffer} = [];                      # if exists
+#      delete @{@info{io}}{uc($1)};
+
       necho(self   => $self,
             prog   => $prog,
             source => [ "Connection started to: %s:%s\n",$2,$3 ],
+            debug  => 1,
            );
    } else {
       necho(self   => $self,
             prog   => $prog,
-            source => [ "usage: \@telnet <id>=<hostname>:<port>" ],
+            source => [ "usage: \@telnet <id>=<hostname>:<port> {$txt}" ],
            );
+      printf("%s\n",code("long"));
    }
 }
 
@@ -2460,7 +2524,7 @@ sub list_attr
 sub cmd_ex
 {
    my ($self,$prog,$txt) = @_;
-   my ($target,$desc,@exit,@content,$atr);
+   my ($target,$desc,@exit,@content,$atr,$out);
 
    ($txt,$atr) = ($`,$') if($txt =~ /\//);
 
@@ -2485,43 +2549,23 @@ sub cmd_ex
       return err($self,$prog,"Permission denied.");
    }
 
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "%s",obj_name($target,$perm) ]
-        );
+
+   $out .= obj_name($target,$perm);
    my $owner = fetch(($$target{obj_owner} == -1) ? 0 : $$target{obj_owner});
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "Owner: %s  Flags: %s",obj_name($owner,$perm),
-                     flag_list($target,1)
-                   ]
-        );
+   $out .= "\nOwner: " . obj_name($owner,$perm) . 
+           "  Flags: " . flag_list($target,1);
 
    if(($desc = get($$target{obj_id},"DESCRIPTION")) && $desc ne undef) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "%s", $desc ]
-           );
+      $out .= "\n$desc";
    } else {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "You see nothing special." ]
-           );
+      $out .= "\nYou see nothing special.";
    }
 
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "Created: %s\n",$$target{obj_created_date} ]
-        );
-
+   $out .= "\nCreated: $$target{obj_created_date}";
    if(hasflag($target,"PLAYER")) {
       if($perm) {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "Firstsite: %s\nLastsite: %s",
-                            $$target{obj_created_by},
-                            lastsite($$target{obj_id}) ]
-              );
+         $out .= "Firstsite: $$target{obj_created_by}\n" .
+                 "Lastsite: " . lastsite($$target{obj_id});
       }
       my $last = one_val($db,
                          "select ifnull(max(skh_end_time), " .
@@ -2532,22 +2576,16 @@ sub cmd_ex
                          $$target{obj_id}
                         );
        
-      $last = "N/A" if $last eq undef;
-
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "Last: %s",$last ],
-           );
+      if($last eq undef) {
+         $out .= "\nLast: N/A";
+      } else {
+         $out .= "\nLast: ". $last;
+      }
    }
 
    if($perm) {                                             # show attributes
       my $attr = list_attr($target);
-      if($attr ne undef) {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "%s",list_attr($target) ],
-              );
-      }
+      $out .= "\n" . $attr if($attr ne undef);
    }
 
 
@@ -2570,10 +2608,7 @@ sub cmd_ex
    }
 
    if($#content > -1) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "Contents:\n" . join("\n",@content) ],
-           );
+      $out .= "\nContents:\n" . join("\n",@content);
    }
 
    if(hasflag($target,"EXIT")) {
@@ -2582,29 +2617,17 @@ sub cmd_ex
                     " where obj_id = ?",
                     $$target{obj_id});
       if($con eq undef || $$con{con_source_id} eq undef) {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "Source: ** No where **" ],
-              );
+         $out .= "\nSource: ** No where **";
       } else {
          my $src = fetch($$con{con_source_id});
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "Source: %s",obj_name($src,$perm) ],
-              );
+         $out .= "\nSource: " . obj_name($src,$perm);
       }
 
       if($con eq undef || $$con{con_dest_id} eq undef) {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "Destination: ** No where **" ],
-              );
+         $out .= "\nDesination: ** No where **";
       } else {
          my $dst = fetch($$con{con_dest_id});
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "Destination: %s", obj_name($dst,$perm) ],
-              );
+         $out .= "\nDestination: " . obj_name($dst,$perm);
       }
    }
 
@@ -2624,21 +2647,17 @@ sub cmd_ex
       push(@exit,obj_name($hash));
    }
    if($#exit >= 0) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "Exits:\n%s",join("\n",@exit) ],
-           );
+      $out .= "\nExits:\n%s",join("\n",@exit);
    }
 
    if($perm && (hasflag($target,"PLAYER") || hasflag($target,"OBJECT"))) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "Home: %s\nLocation: %s",
-                        obj_name(fetch($$target{obj_home}),$perm),
-                        obj_name(fetch(loc($target)),$perm)
-                      ]
-           );
+      $out .= "\nHome: " . obj_name(fetch($$target{obj_home}),$perm) .
+              "\nLocation: " . obj_name(fetch($$target{obj_home}),$perm);
    }
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ "%s", $out ]
+        );
 }
 
 sub cmd_inventory
@@ -2675,7 +2694,9 @@ sub cmd_inventory
 sub cmd_look
 {
    my ($self,$prog,$txt) = @_;
-   my ($flag,$desc,$target,@exit);
+   my ($flag,$desc,$target,@exit,$out);
+   my $owner = owner_id($self);
+   my $perm = hasflag($self,"WIZARD");
 
    if($txt =~ /^\s*$/) {
       $target = loc_obj($self);
@@ -2684,20 +2705,11 @@ sub cmd_look
       return err($self,$prog,"I don't see that here.");
    }
 
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "%s",obj_name($target) ],
-        );
+   $out = obj_name($target);
    if(($desc = get($$target{obj_id},"DESCRIPTION")) && $desc ne undef) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "%s",evaluate($target,$prog,$desc) ],
-           );
+      $out .= "\n" . evaluate($self,$prog,$desc);
    } else {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "You see nothing special." ],
-           );
+      $out .= "\nYou see nothing special.";
    }
 
    if(!hasflag($target,"ROOM") ||
@@ -2719,7 +2731,8 @@ sub cmd_look
           "               'N' " .
           "            else " .
           "               'Y' " .
-          "         END online" .
+          "         END online," .
+          "         min(obj.obj_owner) obj_owner ".
           "    from content con, " .
           "         (  select fde.fde_order, obj_id, fde_letter, fde_name " .
           "              from flag flg, flag_definition fde " .
@@ -2752,27 +2765,24 @@ sub cmd_look
              }
           } elsif($$hash{obj_type} =~ /^(PLAYER|OBJECT)$/ && 
                  $$hash{flags} !~ /D/){
-             if(++$flag == 1) {
-                necho(self   => $self,
-                      prog   => $prog,
-                      source => [ "Contents:" ],
-                     );
+             $out .= "\nContents:" if(++$flag == 1);
+             if($$hash{obj_owner} == $owner || $perm) {
+                 $out .= "\n$$hash{obj_name}(#$$hash{obj_id}$$hash{flags})";
+             } else {
+                 $out .= "\n$$hash{obj_name}";
              }
-             necho(self   => $self,
-                   prog   => $prog,
-                   source => [ "%s",obj_name($hash) ],
-                  );
           }
       }
    }
-   if($#exit >= 0) {                                    # add exits if any
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "Exits:\n" .
-                        join("  ",@exit) ],
-           );
+   $out .= "\nExits:\n" . join("   ",@exit) if($#exit >= 0);   # add any exits
+   necho(self   => $self,
+         prog   => $prog,
+         source => ["%s",$out ]
+        );
+
+   if(($desc = get($target,"ADESCRIBE")) && $desc ne undef) {
+      mushrun($self,$target,$desc,0);           # handle adesc
    }
-   force($prog,$target,get($target,"ADESCRIBE"));                 # handle adesc
 }
 
 
@@ -2798,13 +2808,7 @@ sub cmd_set2
    my ($self,$prog,$txt) = @_;
 #   $txt =~ s/\r\n/<BR>/g;
 
-   if($txt =~ /^\s*&([^& =]+)\s+([^ =]+)\s*= *(.*?) *$/) {
-      $$user{inattr} = {
-         attr => $1,
-         object => $2,
-         content => [ $3 ]
-      };
-   } elsif($txt =~ /^\s*([^& =]+)\s+([^ =]+)\s*= *(.*?) *$/s) {
+   if($txt =~ /^\s*([^& =]+)\s+([^ =]+)\s*= *(.*?) *$/s) {
       cmd_set($self,$prog,"$2/$1=$3");
    } elsif($txt =~ /^\s*([^ =]+)\s+([^ =]+)\s*$/s) {
       cmd_set($self,$prog,"$2/$1=");
@@ -2827,7 +2831,6 @@ sub cmd_say
          source => [ "You say, \"%s\"",$say ],
          room   => [ $self, "%s says, \"%s\"",name($self),$say ],
         );
-   printf("necho run time: '%s'\n",time() - $start);
 }
 
 sub cmd_reload_code

@@ -68,6 +68,22 @@ sub priority
    return (perm($obj,"HIGH_PRORITY") ? 50 : 1);
 }
 
+sub inattr
+{
+   my ($self,$source) = @_;
+
+   if($source != 1 ||
+      ref($self) ne "HASH" ||
+      !defined $$self{sock} ||
+      !defined @connected{$$self{sock}} ||
+      ref(@connected{$$self{sock}}) ne "HASH" ||
+      !defined @{@connected{$$self{sock}}}{inattr}) {
+      return undef;
+   } else {
+      @{@connected{$$self{sock}}}{inattr};
+   }
+}
+
 #
 # mushrun
 #    Add the command to the que of what to run. The command will be run
@@ -77,26 +93,34 @@ sub priority
 sub mushrun
 {
    my ($self,$obj,$cmd,$source,@wildcard) = @_;
+   my $multi = inattr($self,$source);
    my ($prog,$txt);
 
-   if(!defined $$user{inattr}) {
+   if(!$multi) {
        if($cmd =~ /^\s*$/) {
           return;
        } elsif($cmd =~ /^\s*{(.*)}\s*$/s) {
           $cmd = $1;
        }
    }
-      
-   if(defined $$self{inattr}) {                               # handle inattr
-      my $hash = $$self{inattr};
-      my $stack = $$hash{content};
-      if($cmd =~ /^\s*$/) {
-         $txt = "$$hash{attr} $$hash{object}=" . join("\r\n",@$stack);
-         delete @$self{inattr};
+     
+
+   # look for special multi-line set command and set inattr flag
+   if($source == 1 && $cmd =~ /^\s*&&([^& =]+)\s+([^ =]+)\s*= *(.*?) *$/) {
+      @{@connected{$$self{sock}}}{inattr} = {
+         attr    => $1,
+         object  => $2,
+         content => [ $3 ]
+      };
+      return;
+   } elsif($source == 1 && $multi ) {
+      my $stack = $$multi{content};
+      if($cmd =~ /^\s*$/) {                                   # attr is done
+         $txt = "$$multi{attr} $$multi{object}=" . join("\r\n",@$stack);
+         delete @{@connected{$$self{sock}}}{inattr};
          cmd_set2($self,{},$txt);
-         return;
-      } else {
-         my $stack = @{$$self{inattr}}{content};
+         return; 
+      } else {                                          # another line of atr
          push(@$stack,$cmd);
          return;
       }
@@ -189,7 +213,7 @@ sub spin
 #      ualarm(800_000);                                # die at 8 milliseconds
 #      ualarm(1_200_000);                                # die at 8 milliseconds
 
-      for my $pid (keys %{@info{engine}}) {
+      for my $pid (sort { $a cmp $b } keys %{@info{engine}}) {
          my $thread = @{@info{engine}}{$pid};
 
          if($#$thread == -1) {                         # this program is done
@@ -294,17 +318,17 @@ sub spin_run
       my ($cmd_name,$arg)=lookup_command($$prog{obj},\%command,$1,"$2$'",1);
 
       if(hasflag($user,"VERBOSE")) {
-         if($arg eq undef) {
-            necho(self => $user,
-                  prog => $prog,
-                  target => [ owner($user), "> %s",$cmd_name ]
-                 );
-         } else {
-            necho(self => $user,
-                  prog => $prog,
-                  target => [ owner($user), "> %s",$cmd_name,$arg ]
-                 );
-         }
+#         if($arg eq undef) {
+#            necho(self => $user,
+#                  prog => $prog,
+#                  target => [ owner($user), "> %s",$cmd_name ]
+#                 );
+#         } else {
+#            necho(self => $user,
+#                  prog => $prog,
+#                  target => [ owner($user), "> %s",$cmd_name,$arg ]
+#                 );
+#         }
       }
 
       while($arg =~ /^\s*\/([^ =]+)( |$)/) {

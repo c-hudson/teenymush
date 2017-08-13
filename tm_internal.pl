@@ -454,26 +454,28 @@ sub filter_chars
 sub necho
 {
    my %args = @_;
+   my $prog = @args{prog};
+   my $self = @args{self};
 
    if(defined @{@args{self}}{loggedin} && !@{@args{self}}{loggedin}) {
       # skip checks for non-connected players
    } elsif(!defined @args{self}) {             # checked passed in arguments
-      die("Echo expects a self argument passed in");
+      err($self,$prog,"Echo expects a self argument passed in");
    } elsif(!defined @args{prog}) {
-      printf("%s\n",code("long"));
-      die("Echo expects a prog argument passed in");
+      err($self,$prog,"Echo expects a prog argument passed in");
    } elsif(defined @args{room}) {
       if(ref(@args{room}) ne "ARRAY") {
-         die("Echo expects a room argument expects array data");
+         err($self,$prog,"Echo expects a room argument expects array data");
       } elsif(ref(@{@args{room}}[0]) ne "HASH") {
-         die("Echo expects first room argument to be HASH data '%s'",@{@args{room}}[0]);
+         err($self,$prog,"Echo expects first room argument to be HASH " .
+             "data '%s'",@{@args{room}}[0]);
       }
    }
 
    for my $type ("room", "room2") {                       # handle room echos
       if(defined @args{$type}) {
          my $array = @args{$type};
-         my $target = shift(@$array);
+         my $target = obj(shift(@$array));
          my $fmt = shift(@$array);
          my $msg = filter_chars(sprintf($fmt,@{@args{$type}}));
          for my $sock (@{sql("select c1.obj_id, sck_socket " .
@@ -506,10 +508,10 @@ sub necho
       my ($target,$fmt) = (shift(@{@args{$type}}), shift(@{@args{$type}}));
       my $msg = filter_chars(sprintf($fmt,@{@args{$type}}));
 
-      if(!defined @args{hint} ||
-         (@args{hint} eq "ECHO_ROOM" && loc($target) != loc(owner($target)))) {
-#         echo_output_to_puppet_owner($target,@args{prog},$msg);
-      }
+#      if(!defined @args{hint} ||
+#         (@args{hint} eq "ECHO_ROOM" && loc($target) != loc(owner($target)))) {
+         echo_output_to_puppet_owner($target,@args{prog},$msg,@args{debug});
+#      }
 
       if(defined @{@args{self}}{loggedin} && !@{@args{self}}{loggedin}) {
          my $self = @args{self};
@@ -535,7 +537,7 @@ sub necho
 
 sub echo_output_to_puppet_owner
 {
-   my ($self,$prog,$msg) = @_;
+   my ($self,$prog,$msg,$debug) = @_;
 
    if(hasflag($self,"PUPPET")) {                      # forward if puppet
       for my $player (@{sql($db,
@@ -961,13 +963,13 @@ sub locate_exit
 #
 sub set_flag
 {
-    my ($self,$prog,$object,$flag,$override) = 
+    my ($self,$prog,$obj,$flag,$override) = 
        (obj($_[0]),$_[1],obj($_[2]),$_[3],$_[4]);
     my $who = $$user{obj_name};;
     my ($remove,$count);
 
     printf("%s\n",code("long"));
-    if(!$override && !controls($user,$object)) {
+    if(!$override && !controls($user,$obj)) {
        return err($self,$prog,"#-1 PERMission denied.");
     }
 
@@ -1008,7 +1010,7 @@ sub set_flag
                                " where obj_id = ? " .
                                "   and fde_flag_id = ?" .
                                "   and atr_id is null ",
-                               $$object{obj_id},
+                               $$obj{obj_id},
                                $$hash{fde_flag_id});
 
        # add flag to the object/user
@@ -1016,12 +1018,14 @@ sub set_flag
           sql($db,"delete from flag " .
                   " where obj_id = ? " .
                   "   and fde_flag_id = ?",
-                  $$object{obj_id},
+                  $$obj{obj_id},
                   $$hash{fde_flag_id});
           commit;
           if($flag =~ /^\s*(PUPPET|MONITOR)\s*$/i) {
-             echo_room($object,"%s is no longer listening.",
-                $$object{obj_name});
+             necho(self => $self,
+                   prog => $prog,
+                   room => [$obj,"%s is no longer listening.",$$obj{obj_name} ]
+                  );
           }
           return "Flag Removed.";
        } elsif($remove) {
@@ -1030,15 +1034,17 @@ sub set_flag
           return "Already Set.";
        } else {
           if($flag =~ /^\s*(PUPPET|MONITOR)\s*$/i) {
-             echo_room($object,"%s is now listening.",
-                $$object{obj_name});
+             necho(self => $self,
+                   prog => $prog,
+                   room => [$obj,"%s is now listening.", $$obj{obj_name} ]
+                  );
           }
           sql($db,
               "insert into flag " .
               "   (obj_id,ofg_created_by,ofg_created_date,fde_flag_id)" .
               "values " .
               "   (?,?,now(),?)",
-              $$object{obj_id},
+              $$obj{obj_id},
               $who,
               $$hash{fde_flag_id});
           commit;

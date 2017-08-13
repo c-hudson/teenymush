@@ -1,8 +1,8 @@
--- MySQL dump 10.13  Distrib 5.5.54, for debian-linux-gnu (armv7l)
+-- MySQL dump 10.13  Distrib 5.5.55, for debian-linux-gnu (armv7l)
 --
 -- Host: localhost    Database: ascii
 -- ------------------------------------------------------
--- Server version	5.5.54-0+deb8u1
+-- Server version	5.5.55-0+deb8u1
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
@@ -33,8 +33,10 @@ CREATE TABLE `attribute` (
   `atr_last_updated_date` date DEFAULT NULL,
   PRIMARY KEY (`atr_id`),
   UNIQUE KEY `attribute_unq` (`obj_id`,`atr_name`),
+  KEY `attribute_idx1` (`obj_id`),
+  KEY `attribute_idx2` (`atr_name`),
   CONSTRAINT `attribute_ibfk_1` FOREIGN KEY (`obj_id`) REFERENCES `object` (`obj_id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=1900 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=2018 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -76,6 +78,7 @@ CREATE TABLE `content` (
   `con_updated_date` datetime DEFAULT NULL,
   PRIMARY KEY (`obj_id`,`con_type`),
   KEY `obj_id` (`obj_id`),
+  KEY `content_idx2` (`con_source_id`),
   CONSTRAINT `content_ibfk_1` FOREIGN KEY (`obj_id`) REFERENCES `object` (`obj_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -98,9 +101,12 @@ CREATE TABLE `flag` (
   UNIQUE KEY `table_idx2` (`obj_id`,`fde_flag_id`),
   KEY `obj_id` (`obj_id`),
   KEY `fde_flag_id` (`fde_flag_id`),
+  KEY `flag_idx1` (`obj_id`),
+  KEY `flag_idx2` (`fde_flag_id`),
+  KEY `flag_idx3` (`atr_id`),
   CONSTRAINT `flag_ibfk_1` FOREIGN KEY (`obj_id`) REFERENCES `object` (`obj_id`) ON DELETE CASCADE,
   CONSTRAINT `flag_ibfk_2` FOREIGN KEY (`fde_flag_id`) REFERENCES `flag_definition` (`fde_flag_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=246 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=271 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -183,8 +189,9 @@ CREATE TABLE `object` (
   `obj_home` int(11) NOT NULL,
   `obj_quota` int(11) DEFAULT NULL,
   `obj_doing` varchar(50) DEFAULT NULL,
-  PRIMARY KEY (`obj_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=166 DEFAULT CHARSET=latin1;
+  PRIMARY KEY (`obj_id`),
+  KEY `owner_idx1` (`obj_owner`)
+) ENGINE=InnoDB AUTO_INCREMENT=219 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -201,7 +208,7 @@ CREATE TABLE `output` (
   `out_source` int(11) DEFAULT NULL,
   `out_destination` int(11) DEFAULT NULL,
   PRIMARY KEY (`out_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=267123 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=304232 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -240,8 +247,9 @@ CREATE TABLE `socket` (
   `sck_hostname` varchar(255) NOT NULL,
   `sck_port` int(11) DEFAULT NULL,
   `sck_tag` varchar(50) DEFAULT NULL,
-  PRIMARY KEY (`sck_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=1378 DEFAULT CHARSET=latin1;
+  PRIMARY KEY (`sck_id`),
+  KEY `socket_idx1` (`obj_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=1584 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -260,7 +268,7 @@ CREATE TABLE `socket_history` (
   `skh_end_time` datetime DEFAULT NULL,
   `skh_success` int(11) NOT NULL,
   PRIMARY KEY (`skh_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=715 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=869 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -288,4 +296,4 @@ CREATE TABLE `valid_option` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2017-06-08  5:00:01
+-- Dump completed on 2017-08-12 22:01:07

@@ -984,32 +984,19 @@ sub fun_substr
 }
 
 #
-# has_socket
+# socket_Exists
 #    Check the database to see if the named socket exists or not
 #    
-sub has_socket
+sub socket_exists
 {
-   my ($self,$prog) = (shift,shift);
-
    my $txt = shift;
+
    my $con = one_val("select count(*) value " .
                      "  from socket " .
                      " where upper(sck_tag) = upper(trim(?))",
                      $txt
                     );
-   printf("has_socket: '%s'\n",($con == 0) ? 0 : 1);
    return ($con == 0) ? 0 : 1;
-}
-
-sub socket_status
-{
-   my ($tag) = @_;
-
-   if(!has_socket($tag)) {
-      return "#-1 Connection Closed",
-   } else {
-      return "#-1 NO Data Found",
-   }
 }
 
 #
@@ -1019,30 +1006,31 @@ sub socket_status
 # 
 sub fun_input
 {
-   my ($self,$prog) = (shift,shift);
+   my ($self,$prog,$txt) = @_;
 
-    my $txt = shift;
-
-    @info{io} = {} if !defined @info{io};
-    my $input = @info{io};
-
-    if($txt =~ /^\s*([^ ]+)\s*$/) {
-       return socket_status(uc($1)) if(!defined $$input{uc($1)});
-
-       my $data = $$input{uc($1)};
-
-       if(!defined $$data{buffer} || $#{$$data{buffer}} == -1) {
-          return socket_status(uc($1));
-       } else {
-          my $buffer = $$data{buffer};
-#          my $txt = shift(@$buffer);
-#          printf("IN: '%s'\n",$txt);
-#          return $txt;
-          return shift(@$buffer);
-       }
-   } else {
+    if($txt =~ /^\s*([^ ]+)\s*$/) {                           # strip spaces
+       $txt = $1;
+    } else {
        return "#-1 Usage: [input(<socket>)]";
-   }
+    }
+
+    if(!defined @info{io} || !defined @{@info{io}}{uc($1)}) {    # is socket
+       return "#-1 Unknown socket $txt";                           # defined
+    }
+
+    my $input = @{@info{io}}{uc($1)};                      # shortcut 2 data
+
+    # check if there is any buffered data and return it.
+    # if not, the socket could have closed
+    if(!defined $$input{buffer} || $#{$$input{buffer}} == -1) {
+       if(socket_exists(uc($1))) {
+          return "#-1 No data found";                  # wait for more data?
+       } else {
+          return "#-1 Connection closed";                    # socket closed
+       }
+    } else {
+       return shift(@{$$input{buffer}});                # return buffered data
+    }
 }
 
 sub fun_flags

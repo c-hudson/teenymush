@@ -58,7 +58,7 @@ sub add_site_restriction
 sub lookup_command
 {
    my ($self,$hash,$cmd,$txt,$type,$debug) =
-      (@_[0],@_[1],lc(@_[2]),@_[3],@_[4],@_[5]);
+      ($_[0],$_[1],lc($_[2]),$_[3],$_[4],$_[5]);
    my $match;
 
    if(defined $$hash{$cmd}) {                       # match on internal cmd
@@ -144,11 +144,15 @@ sub server_process_line
                my ($cmd,$arg) = lookup_command($data,\%honey,$1,$',0);
                &{@honey{$cmd}}($arg);                            # invoke cmd
             } elsif(loggedin($hash) || hasflag($hash,"OBJECT")) {
-               mushrun($user,$user,$input,1);
                add_last_info($input);                                   #logit
+               return mushrun(self   => $user,
+                              runas  => $user,
+                              source => 1,
+                              cmd    => $input,
+                             );
             } else {
                my ($cmd,$arg) = lookup_command($data,\%offline,$1,$',0);
-               &{@offline{$cmd}}($hash,{},$arg);                  # invoke cmd
+               &{@offline{$cmd}}($hash,prog($user,$user),$arg);  # invoke cmd
             }
          }
       };
@@ -158,16 +162,16 @@ sub server_process_line
          printf("LastSQL: '%s'\n",@info{sql_last});
          printf("         '%s'\n",@info{sql_last_args});
          printf("         '%s'\n",@info{sql_last_code});
-         rollback($db);
+         my_rollback($db);
    
          my $msg = sprintf("%s crashed the server with: %s",name($hash),$_[1]);
          necho(self   => $hash,
-               prog   => {},
+               prog   => prog($hash,$hash),
                source => [ "%s",$msg ]
               );
          if($msg ne $$user{crash}) {
             necho(self   => $hash,
-                  prog   => {},
+                  prog   => prog($hash,$hash),
                   room   => [ $hash, "%s",$msg ]
                  );
             $$user{crash} = $msg;
@@ -301,10 +305,11 @@ sub server_disconnect
    # notify connected users of disconnect
    if(defined @connected{$id}) {
       my $hash = @connected{$id};
+      my $prog = prog($hash,$hash);
 
       if(defined $$hash{raw} && $$hash{raw} > 0) {             # MUSH Socket
          necho(self => $hash,
-               prog => {},
+               prog => $prog,
                "[ Connection closed ]"
               );
          sql($db,                             # delete socket table row
@@ -312,13 +317,13 @@ sub server_disconnect
              " where sck_socket = ? ",
              $id
             );
-         commit($db);
+         my_commit($db);
       } elsif(defined $$hash{connect_time}) {                # Player Socket
          necho(self => $hash,
-               prog => {},
+               prog => $prog,
                room => [ $hash, "%s has disconnected.",name($hash) ]
               );
-         echo_flag($hash,{},"CONNECTED,PLAYER,MONITOR",
+         echo_flag($hash,$prog,"CONNECTED,PLAYER,MONITOR",
                    "[Monitor] %s has disconnected.",name($hash));
 
 
@@ -348,7 +353,7 @@ sub server_disconnect
                  " where sck_id = ? ",
                  $sck_id
                 );
-             commit($db);
+             my_commit($db);
          }
       }
    }

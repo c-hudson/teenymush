@@ -105,7 +105,7 @@ sub safe_split
     for($pos=0;$pos < $size;$pos++) {
        if(substr($txt,$pos,$dsize) eq $delim) {
           push(@result,substr($txt,$start,$pos-$start));
-          @result[$#result] =~ s/^\s+|\s+$//g;
+          $result[$#result] =~ s/^\s+|\s+$//g;
           $start = $pos + $dsize;
        }
     }
@@ -125,7 +125,7 @@ sub good_args
    $count++;
 
    for my $i (0 .. $#possible) {
-      return 1 if($count eq @possible[$i]);
+      return 1 if($count eq $possible[$i]);
    }
    return 0;
 }

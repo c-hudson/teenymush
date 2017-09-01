@@ -31,7 +31,7 @@ sub err
          source => [ $fmt,@args ],
         );
 
-   rollback;
+   my_rollback;
 
    return sprintf($fmt,@args);
    # insert log entry? 
@@ -51,10 +51,9 @@ sub code
    my $type = shift;
    my @stack;
 
-
    if(Carp::shortmess =~ /#!\/usr\/bin\/perl/) {
 
-      if($type eq undef || $type eq "short") {
+      if(!$type || $type eq "short") {
          for my $line (split(/\n/,$`)) {
             if($line =~ /at ([^ ]+) line (\d+)\s*$/) {
                push(@stack,"$1:$2");
@@ -65,7 +64,7 @@ sub code
          return $`;
       }
    } else {
-      return "no match";
+      return Carp::shortmess;
    }
 }
 
@@ -95,7 +94,7 @@ sub evaluate_substitutions
 #      $user = $target;
 #   } 
 
-   while($t =~ /(\\|%[brtn#0-9]|%v[0-9]|%w[0-9]|%=<[^>]+>|%{[^}]+})/i) {
+   while($t =~ /(\\|%[brtn#0-9]|%v[0-9]|%w[0-9]|%=<[^>]+>|%\{[^}]+\})/i) {
       ($seq,$t)=($1,$');                                   # store variables
       $out .= $`;
 
@@ -112,7 +111,7 @@ sub evaluate_substitutions
          $out .= "#" . @{$$prog{created_by}}{obj_id};
       } elsif($seq eq "%n") {                                # current dbref
          $out .= @{$$prog{created_by}}{obj_name};
-      } elsif($seq =~ /^%([0-9])$/ || $seq =~ /^%{([^}]+)}$/) {  # temp vars
+      } elsif($seq =~ /^%([0-9])$/ || $seq =~ /^%\{([^}]+)\}$/) {  # temp vars
          if($1 eq "hostname") {
             $out .= $$user{raw_hostname};
          } elsif($1 eq "socket") {
@@ -180,18 +179,18 @@ sub table
    for my $hash (@{sql($db,$sql,@args)}) {
       push(@data,$hash);                                     # store results
       for my $key (keys %$hash) {
-         if(length($$hash{$key}) > @max{$key}) {         # determine  if max
+         if(length($$hash{$key}) > $max{$key}) {         # determine  if max
              @max{$key} = length($$hash{$key});
          }
                              # make max minium size that of the column name
-         @max{$key} = length($key) if(length($key) > @max{$key});
+         @max{$key} = length($key) if(length($key) > $max{$key});
       }
    }
 
    return "No data found" if($#data == -1);
 
    for my $i (0 .. $#data) {                        # cycle through each row
-      my $hash = @data[$i];
+      my $hash = $data[$i];
       delete @line[0 .. $#line];
 
       if($#pos == -1) {                            # create sort order once
@@ -199,10 +198,10 @@ sub table
       }
       for my $key (@pos) {                       # cycle through each column
          if($i == 0) {
-            push(@header,"-" x @max{$key});        # add first row of header
-            push(@keys,sprintf("%-*s",@max{$key},$key));
+            push(@header,"-" x $max{$key});        # add first row of header
+            push(@keys,sprintf("%-*s",$max{$key},$key));
          }
-         push(@line,sprintf("%-*s",@max{$key},$$hash{$key}));   # add column
+         push(@line,sprintf("%-*s",$max{$key},$$hash{$key}));   # add column
       }
       if($i == 0) {                          # add second/third row of header
          $out .= join(" | ",@keys) . "\n"; # add 
@@ -249,7 +248,7 @@ sub force
          $$user{sock} = $$hash{$key};                          # any will do
       }
 
-      &{@{@command{$cmd}}{fun}}($arg);                        # run command
+      &{@{$command{$cmd}}{fun}}($arg);                        # run command
       for my $i (1 .. 9) {                                # restore $1 - $9
           $$user{$i} = $$temp{$i};
       }
@@ -288,6 +287,10 @@ sub handle_object_listener
 
 #   printf("handle_object_listener: CALLED ($$target{obj_id}:%s)\n",$msg);
 #   printf("target: '%s' -> '%s'\n",$$target{hostname},$$target{raw});
+#    printf("handle_object_listen: '%s'\n",$msg);
+#    printf("%s\n",code("long"));
+    echo_output_to_puppet_owner($target,prog($target,$target),$msg);
+
    for my $hash (@{sql("select obj.obj_id, " .
                     "       substr(atr_value,2,instr(atr_value,':')-2) cmd,".
                     "       substr(atr_value,instr(atr_value,':')+1) txt ".
@@ -333,8 +336,7 @@ sub handle_object_listener
 #
 sub handle_listener
 {
-   return;
-   my ($prog,$self,$target,$txt,@args) = @_;
+   my ($self,$prog,$runas,$txt,@args) = @_;
    my $match = 0;
 
    my $msg = sprintf($txt,@args);
@@ -362,7 +364,7 @@ sub handle_listener
                     "   and flg.atr_id is null " .
                     "   and fde_type = 1 " .
                     "   and fde_name = ? ",
-                    $$target{obj_id},
+                    $$runas{obj_id},
                     "\^" . lc($msg),
                     "LISTENER"
                    )
@@ -376,12 +378,26 @@ sub handle_listener
          # a very messy select... so the code will just weed it out here
          #
          if($msg =~ /^$$hash{cmd}$/) {
-            mushrun($self,$hash,$$hash{txt},0,$1,$2,$3,$4,$5,$6,$7,$8,$9);
+            mushrun(self   => $self,
+                    runas => $hash,
+                    cmd    => $$hash{txt},
+                    wild   => [0,$1,$2,$3,$4,$5,$6,$7,$8,$9],
+                    source => 0,
+                   );
          }
       } elsif($msg =~ /^$$hash{cmd}$/i) {
-        mushrun($self,$hash,$$hash{txt},0,$1,$2,$3,$4,$5,$6,$7,$8,$9);
+        mushrun(self   => $self,
+                runas  => $hash,
+                source => 0,
+                cmd    => $$hash{txt},
+                wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ]
+               );
       } else {
-        mushrun($self,$hash,$$hash{txt},0);
+        mushrun(self   => $self,
+                runas  => $hash,
+                source => 0,
+                cmd    => $$hash{txt},
+               );
       }
       $match=1;                                   # signal mush command found
    }
@@ -390,17 +406,12 @@ sub handle_listener
 
 sub nospoof
 {
-   my ($self,$dest) = (obj(@_[0]),obj(@_[1]));
+   my ($prog,$dest) = (obj($_[0]),obj($_[1]));
 
    if(hasflag($dest,"NOSPOOF")) {
-      return "[" . 
-             $$self{obj_name} . 
-             "(#" . 
-             $$self{obj_id} . 
-             flag_list($self) . 
-             ")] ";
+#      printf("%s\n",code("long"));
+      return "[" . obj_name($$prog{created_by}) . "] ";
    }
-   return undef;
 }
 
 sub ts
@@ -451,84 +462,114 @@ sub filter_chars
 #      target => [ $target, "msg", @args ]
 # )
 
+
+sub log_output
+{
+   my ($src,$dst,$txt) = @_;
+
+   sql($db,                                     #store output in output table
+       "insert into output" .
+       "(" .
+       "   out_text, " .
+       "   out_source, ".
+       "   out_destination ".
+       ") values ( ".
+       "   ?, " .
+       "   ?, " .
+       "   ? " .
+       ")",
+       substr($txt,1,63999),
+       $$src{obj_id},
+       $$dst{obj_id}
+      );
+}
+
+
+
 sub necho
 {
-   my %args = @_;
-   my $prog = @args{prog};
-   my $self = @args{self};
+   my %arg = @_;
+   my $prog = $arg{prog};
+   my $self = $arg{self};
 
-   if(defined @{@args{self}}{loggedin} && !@{@args{self}}{loggedin}) {
+   if($arg{self} eq undef) {
+      printf("%s\n",print_var(\%arg));
+      printf("%s\n",code("long"));
+   }
+   if(defined @{$arg{self}}{loggedin} && !@{$arg{self}}{loggedin}) {
       # skip checks for non-connected players
-   } elsif(!defined @args{self}) {             # checked passed in arguments
+   } elsif(!defined $arg{self}) {             # checked passed in arguments
       err($self,$prog,"Echo expects a self argument passed in");
-   } elsif(!defined @args{prog}) {
+   } elsif(!defined $arg{prog}) {
       err($self,$prog,"Echo expects a prog argument passed in");
-   } elsif(defined @args{room}) {
-      if(ref(@args{room}) ne "ARRAY") {
+   } elsif(defined $arg{room}) {
+      if(ref($arg{room}) ne "ARRAY") {
          err($self,$prog,"Echo expects a room argument expects array data");
-      } elsif(ref(@{@args{room}}[0]) ne "HASH") {
+      } elsif(ref(@{$arg{room}}[0]) ne "HASH") {
          err($self,$prog,"Echo expects first room argument to be HASH " .
-             "data '%s'",@{@args{room}}[0]);
+             "data '%s'",@{$arg{room}}[0]);
       }
    }
 
    for my $type ("room", "room2") {                       # handle room echos
-      if(defined @args{$type}) {
-         my $array = @args{$type};
+      if(defined $arg{$type}) {
+         my $array = $arg{$type};
          my $target = obj(shift(@$array));
          my $fmt = shift(@$array);
-         my $msg = filter_chars(sprintf($fmt,@{@args{$type}}));
+         my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
          for my $sock (@{sql("select c1.obj_id, sck_socket " .
                              "  from content c1, ".
                              "       content c2, " .
                              "       socket s " .
                              " where c1.con_source_id = c2.con_source_id ".
                              "   and c1.obj_id = s.obj_id ".
+                             "   and sck_type = 1 ".
                              "   and c2.obj_id = ? " .
                              "   and c1.obj_id != ? ",
                              $$target{obj_id},
                              $$target{obj_id}
                       )}) {
              my $s = @{@connected{$$sock{sck_socket}}}{sock};
-             printf($s "%s%s",nospoof(@args{self},$$sock{obj_id}),$msg);
+             printf($s "%s%s",nospoof(@arg{prog},$$sock{obj_id}),$msg);
+             log_output($self,$target,$msg);
          }
-         handle_listener(@args{self},@args{prog},$target,$fmt,@$array);
+         handle_listener($arg{self},$arg{prog},$target,$fmt,@$array);
       }
    }
  
-   unshift(@{@args{source}},@args{self}) if(defined @args{source});
+   unshift(@{$arg{source}},$arg{self}) if(defined $arg{source});
 
    for my $type ("source", "target") {
-      next if !defined @args{$type};
+      next if !defined $arg{$type};
 
-      if(ref(@args{$type}) ne "ARRAY") {
-         return err(@args{self},@args{prog},"Argument $type is not an array");
+      if(ref($arg{$type}) ne "ARRAY") {
+         return err($arg{self},$arg{prog},"Argument $type is not an array");
       }
 
-      my ($target,$fmt) = (shift(@{@args{$type}}), shift(@{@args{$type}}));
-      my $msg = filter_chars(sprintf($fmt,@{@args{$type}}));
+      my ($target,$fmt) = (shift(@{$arg{$type}}), shift(@{$arg{$type}}));
+      my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
 
-#      if(!defined @args{hint} ||
-#         (@args{hint} eq "ECHO_ROOM" && loc($target) != loc(owner($target)))) {
-         echo_output_to_puppet_owner($target,@args{prog},$msg,@args{debug});
+#      if(!defined @arg{hint} ||
+#         (@arg{hint} eq "ECHO_ROOM" && loc($target) != loc(owner($target)))) {
+         echo_output_to_puppet_owner($target,$arg{prog},$msg,$arg{debug});
 #      }
 
-      if(defined @{@args{self}}{loggedin} && !@{@args{self}}{loggedin}) {
-         my $self = @args{self};
-         my $s = @{@connected{$$self{sock}}}{sock};
+      if(defined @{$arg{self}}{loggedin} && !@{$arg{self}}{loggedin}) {
+         my $self = $arg{self};
+         my $s = @{$connected{$$self{sock}}}{sock};
          printf($s "%s",$msg);
       } else {
-#         log_output(@args{self},$target,$msg);
+         log_output($self,$target,$msg);
 
          if(hasflag($target,"PLAYER")) {         # echo to all player's sockets
             for my $sock (@{sql($db,
                           "select * from socket " .
                           " where obj_id = ? " .
-                          " and sck_tag is null",
+                          " and sck_type = 1",
                           $$target{obj_id}
                          )}) {
                my $s = @{@connected{$$sock{sck_socket}}}{sock};
-               printf($s "%s%s",nospoof(@args{self},$$sock{obj_id}),$msg);
+               printf($s "%s%s",nospoof($prog,$$sock{obj_id}),$msg);
             }
          }
       }
@@ -549,44 +590,24 @@ sub echo_output_to_puppet_owner
                             "       object obj2 " .
                             " where sck.obj_id = obj1.obj_id ".
                             "   and obj1.obj_id =  obj2.obj_owner ".
+                            "   and sck_type = 1 ".
                             "   and obj2.obj_id = ? ",
                             $$self{obj_id}
                      )}) {
          my $sock = @{@connected{$$player{sck_socket}}}{sock};
-         printf($sock "%s%s> %s",
-                nospoof($self,$player),
-                $$player{owner_name},
-                $msg
-               );
+
+         if($msg !~ /\n$/) {
+            printf($sock "%s%s> [%s]\n",nospoof($prog,$player),
+                   $$player{owner_name}, $msg);
+#            printf($sock "%s\n",code("long"));
+         } else {
+            printf($sock "%s%s> {%s}",nospoof($prog,$player),
+                   $$player{owner_name}, $msg);
+         }
+          
       }
    }
 }
-
-sub log_output
-{
-   my ($self,$target,$msg) = (shift,obj(shift),shift);
-#   printf("SELF:   '%s'\n",$self);
-#   printf("TARGET: '%s'\n",$target);
-#   printf("msg:    '%s'\n",$msg);
-#   printf("%s\n",code("long"));
-
-   sql($db,                                   #store output in output table
-       "insert into output" .
-       "(" .
-       "   out_text, " .
-       "   out_source, ".
-       "   out_destination ".
-       ") values ( ".
-       "   ?, " .
-       "   ?, " .
-       "   ? " .
-       ")",
-       $msg,
-       $$self{obj_id},
-       $$target{obj_id}
-      );
-}
-
 
 #
 # echo_no_log
@@ -604,8 +625,8 @@ sub echo_nolog
 
 #   if(hasflag($target,"PLAYER")) {
       for my $key (keys %connected) {
-         if($$target{obj_id} eq @{@connected{$key}}{obj_id}) {
-            my $sock = @{@connected{$key}}{sock};
+         if($$target{obj_id} eq @{$connected{$key}}{obj_id}) {
+            my $sock = @{$connected{$key}}{sock};
             printf($sock "%s",$out);
          }
       }
@@ -825,14 +846,14 @@ sub locate_player
 
    if($type eq "online") {                                  # online player
       for my $i (keys %connected) {
-         if(uc(@{@connected{$i}}{obj_name}) eq uc($name)) {
-            return @connected{$i};
-         } elsif(@{@connected{$i}}{obj_name}=~/^\s*$name/i) {
+         if(uc(@{$connected{$i}}{obj_name}) eq uc($name)) {
+            return $connected{$i};
+         } elsif(${$connected{$i}}{obj_name}=~/^\s*$name/i) {
             return undef if($#part == 0);
-            push(@part,@connected{$i});
+            push(@part,$connected{$i});
          }
       }
-      return @part[0];
+      return $part[0];
    } else {
       my $target = one($db,
                        "select * " .
@@ -871,10 +892,10 @@ sub locate_object
       (@what[0]) = ($$target{obj_id});
    } elsif($type eq "LOCAL") {
       $where = 'con.con_source_id in ( ? , ? )';
-      (@what[0],@what[1]) = (loc($target),$$target{obj_id});
+      ($what[0],$what[1]) = (loc($target),$$target{obj_id});
    } else {
       $where = 'con.con_source_id in ( ? , ? )';
-      (@what[0],@what[1]) = (loc($target),$$target{obj_id});
+      ($what[0],$what[1]) = (loc($target),$$target{obj_id});
    }
     
    
@@ -950,7 +971,7 @@ sub locate_exit
    if($#partial != 0 || $type eq "EXACT") {            # if too many matches, 
       return undef;                                     # or need exact match
    } else {                                          
-      return @partial[0];                            # single partial is good
+      return $partial[0];                            # single partial is good
    }
 }
 
@@ -968,7 +989,6 @@ sub set_flag
     my $who = $$user{obj_name};;
     my ($remove,$count);
 
-    printf("%s\n",code("long"));
     if(!$override && !controls($user,$obj)) {
        return err($self,$prog,"#-1 PERMission denied.");
     }
@@ -1020,7 +1040,7 @@ sub set_flag
                   "   and fde_flag_id = ?",
                   $$obj{obj_id},
                   $$hash{fde_flag_id});
-          commit;
+          my_commit;
           if($flag =~ /^\s*(PUPPET|MONITOR)\s*$/i) {
              necho(self => $self,
                    prog => $prog,
@@ -1047,7 +1067,7 @@ sub set_flag
               $$obj{obj_id},
               $who,
               $$hash{fde_flag_id});
-          commit;
+          my_commit;
           return "#-1 Flag note removed [Internal Error]" if($$db{rows} != 1);
           return "Set.";
        }
@@ -1132,7 +1152,7 @@ sub set_atr_flag
               " where ofg_id= ? ",
               $flag
              );
-          commit;
+          my_commit;
           return "Flag Removed.";
        } elsif($remove) {
           return "Flag not set.";
@@ -1148,7 +1168,7 @@ sub set_atr_flag
               $who,
               $$hash{fde_flag_id},
               $atr_id);
-          commit;
+          my_commit;
           return "#-1 Flag note removed [Internal Error]" if($$db{rows} != 1);
           return "Set.";
        }
@@ -1199,7 +1219,7 @@ sub perm
 #
 sub hasflag
 {
-   my ($target,$flag) = (obj(@_[0]),@_[1]);
+   my ($target,$flag) = (obj($_[0]),$_[1]);
 
    if($flag eq "WIZARD") {
       return one_val($db,"select if(count(*) > 0,1,0) value " . 
@@ -1248,7 +1268,7 @@ sub atr_hasflag
 sub create_object
 {
    my ($self,$prog,$name,$pass,$type) = @_;
-   my ($hash,$where);
+   my ($where);
    my $who = $$user{obj_name};
    my $owner = $$user{obj_id};
 
@@ -1280,12 +1300,12 @@ sub create_object
        $name,$pass,$owner,$who,$where);
 
    if($$db{rows} != 1) {
-      rollback($db);
+      my_rollback($db);
       return undef;
    }
 
    my $hash = one($db,"select last_insert_id() obj_id") ||
-      return rollback($db);
+      return my_rollback($db);
 
    my $out = set_flag($self,$prog,$$hash{obj_id},$type,1);
    if($out =~ /^#-1 /) {
@@ -1386,7 +1406,7 @@ sub inuse_player_name
 sub set
 {
    my ($self,$prog,$obj,$attribute,$value,$quiet)=
-      (@_[0],@_[1],obj(@_[2]),@_[3],@_[4],$_[5]);
+      ($_[0],$_[1],obj($_[2]),$_[3],$_[4],$_[5]);
 
    if($attribute !~ /^\s*([#a-z0-9\_\-]+)\s*$/i) {
       err($self,$prog,"Attribute name is bad, use the following characters: " .
@@ -1437,7 +1457,7 @@ sub set
 
 sub get
 {
-   my ($obj,$attribute) = (obj(@_[0]),$_[1]);
+   my ($obj,$attribute) = (obj($_[0]),$_[1]);
    my $hash;
 
    $obj = { obj_id => $obj } if ref($obj) ne "HASH";
@@ -1476,7 +1496,7 @@ sub loc_obj
 
 sub loc
 {
-   my $loc = loc_obj(@_[0],@_[1]);
+   my $loc = loc_obj($_[0],$_[1]);
    return ($loc eq undef) ? undef : $$loc{obj_id};
 }
 
@@ -1538,20 +1558,20 @@ sub date_split
     for my $i (sort {$b <=> $a} keys %chart) {
        if($i == 0) {                             # handle seconds/leftovers
           @result{s} = ($time > 0) ? $time : 0;
-          if(!defined @result{max_val}) {
-             @result{max_val} = @result{s};
-             @result{max_abr} = @chart{$i};
+          if(!defined $result{max_val}) {
+             @result{max_val} = $result{s};
+             @result{max_abr} = $chart{$i};
           }
        } elsif($time > $i) {                   # remaining seconds is larger
           $num = int($time / $i);                       # add it to the list
           $time -= $num * $i;
-          @result{@chart{$i}} = $num;
-          if(!defined @result{max_val}) {
+          @result{$chart{$i}} = $num;
+          if(!defined $result{max_val}) {
              @result{max_val} = $num;
-             @result{max_abr} = @chart{$i};
+             @result{max_abr} = $chart{$i};
           }
        } else {
-          @result{@chart{$i}} = 0;                          # fill in blanks
+          @result{$chart{$i}} = 0;                          # fill in blanks
        }
    }
    return \%result;
@@ -1601,7 +1621,7 @@ sub move
    if(hasflag($current,"ROOM")) {
       set($self,$prog,$current,"LAST_INHABITED",scalar localtime(),1);
    }
-   commit($db);
+   my_commit($db);
    return 1;
 }
 
@@ -1621,10 +1641,10 @@ sub obj_import
    my @result;
 
    for my $i (0 .. $#_) {
-      if(ref(@_[$i]) eq "HASH") {
-         push(@result,@_[$i]);
+      if(ref($_[$i]) eq "HASH") {
+         push(@result,$_[$i]);
       } else {
-         push(@result,{ obj_id => @_[$i] });
+         push(@result,{ obj_id => $_[$i] });
       }
    }
    return (@result);
@@ -1656,56 +1676,56 @@ sub link_exit
    );
 
    if($$db{rows} == 1) {
-      commit;
+      my_commit;
       return 1;
    } else {
-      rollback;
+      my_rollback;
       return 0;
    }
 }
 
-sub getfile
-{
-   my ($fn,$code) = @_;
-   my($actual,$file, $out);
-
-   if($fn =~ /\||;/) {         # ignore bad file names and attempt to be safe
-      return undef;
-   } elsif($fn =~ /^[^\\|\/]+\.(pl|dat)$/i) {
-      $actual = $fn;
-   } elsif($fn =~ /^[^\\|\/]+$/i) {
-      $actual = "txt\/$fn";
-   } else {
-      return undef;
-   }
-
-   my $newmod = (stat($actual))[9];                  # find modification time
-
-   if(defined @info{"file_$fn"}) {                      # look at cached data
-      my $hash = @info{"file_$fn"};
-
-      # use cached version if its still good
-      return $$hash{data} if($$hash{mod} == $newmod);
-   }
-
-   open($file,$actual) || return undef;
-
-   @{$$code{$fn}}{lines} = 0 if(ref($code) eq "HASH");
-   while(<$file>) {                                           # read all data
-      @{$$code{$fn}}{lines}++ if(ref($code) eq "HASH");
-      $out .= $_;
-   }
-   close($file);
-   $out =~ s/\r//g;
-   $out =~ s/\n/\r\n/g;
-
-   @info{"file_$fn"} = {                                 # store cached data
-      mod => $newmod,
-      data => $out
-   };
-
-   return $out;                                                # return data
-}
+#sub getfile
+#{
+#   my ($fn,$code) = @_;
+#   my($actual,$file, $out);
+#
+#   if($fn =~ /\||;/) {         # ignore bad file names and attempt to be safe
+#      return undef;
+#   } elsif($fn =~ /^[^\\|\/]+\.(pl|dat)$/i) {
+#      $actual = $fn;
+#   } elsif($fn =~ /^[^\\|\/]+$/i) {
+#      $actual = "txt\/$fn";
+#   } else {
+#      return undef;
+#   }
+#
+#   my $newmod = (stat($actual))[9];                  # find modification time
+#
+#   if(defined @info{"file_$fn"}) {                      # look at cached data
+#      my $hash = @info{"file_$fn"};
+#
+#      # use cached version if its still good
+#      return $$hash{data} if($$hash{mod} == $newmod);
+#   }
+#
+#   open($file,$actual) || return undef;
+#
+#   @{$$code{$fn}}{lines} = 0 if(ref($code) eq "HASH");
+#   while(<$file>) {                                           # read all data
+#      @{$$code{$fn}}{lines}++ if(ref($code) eq "HASH");
+#      $out .= $_;
+#   }
+#   close($file);
+#   $out =~ s/\r//g;
+#   $out =~ s/\n/\r\n/g;
+#
+#   @info{"file_$fn"} = {                                 # store cached data
+#      mod => $newmod,
+#      data => $out
+#   };
+#
+#   return $out;                                                # return data
+#}
 
 sub lastsite
 {
@@ -1827,7 +1847,7 @@ sub get_segment
       $start--;
       if(defined $$toppings{$$array[$start]}) {
          push(@depth,$$toppings{$$array[$start]});
-      } elsif($$array[$start] eq @depth[$#depth]) {
+      } elsif($$array[$start] eq $depth[$#depth]) {
          pop(@depth);
       } elsif($$array[$start] eq $delim) {
          return $start,join('',@$array[$start .. $end]);

@@ -19,6 +19,12 @@ sql($db,"delete from socket");
 sql($db,"update socket_history " .
         "   set skh_end_time = skh_start_time " .
         " where skh_end_time is null");
-commit($db);
+my_commit($db);
 
-server_start();
+printf("---[start]---\n");
+for (@Addon::EXPORT) {
+  print "$_\n";
+}
+printf("---[end]---\n");
+
+# server_start();

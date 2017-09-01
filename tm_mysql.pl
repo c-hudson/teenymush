@@ -33,7 +33,7 @@ get_db_credentials;
 #
 sub sql
 {
-   my $con = (ref(@_[0]) eq "HASH") ? shift : $db;
+   my $con = (ref($_[0]) eq "HASH") ? shift : $db;
    my ($sql,@args) = @_;
    my (@result,$sth);
    @info{sqldone} = 0;
@@ -48,7 +48,7 @@ sub sql
    $sql =~ s/\s{2,999}/ /g;
    @info{sql_last} = $sql;
    @info{sql_last_args} = join(',',@args);
-   @info{sql_last_code} = code();
+#   @info{sql_last_code} = code();
 
    # connected/reconnect to DB if needed
    if(!defined $$con{db} || !$$con{db}->ping) {
@@ -67,7 +67,7 @@ sub sql
       die("Could not prepair sql: $sql");
 
    for my $i (0 .. $#args) {
-      $sth->bind_param($i+1,@args[$i]);
+      $sth->bind_param($i+1,$args[$i]);
    }
 
    if(!$sth->execute( )) {
@@ -106,7 +106,7 @@ sub sql
 #
 sub sql2
 {
-   my $con = (ref(@_[0]) eq "HASH") ? shift : $db;
+   my $con = (ref($_[0]) eq "HASH") ? shift : $db;
    my ($sql,@args) = @_;
    my (@result,$sth);
    @info{sqldone} = 0;
@@ -150,7 +150,7 @@ sub sql2
       die("Could not prepair sql: $sql");
 
    for my $i (0 .. $#args) {
-      $sth->bind_param($i+1,@args[$i]);
+      $sth->bind_param($i+1,$args[$i]);
    }
 
    $sth->execute( ) || die("Could not execute sql");
@@ -187,7 +187,7 @@ sub sql2
 #
 sub one_val
 {
-   my $con = (ref(@_[0]) eq "HASH") ? shift : $db;
+   my $con = (ref($_[0]) eq "HASH") ? shift : $db;
    my ($sql,@args) = @_;
 
    my $array = sql($con,$sql,@args);
@@ -199,7 +199,7 @@ sub one_val
 #
 sub one
 {
-   my $con = (ref(@_[0]) eq "HASH") ? shift : $db;
+   my $con = (ref($_[0]) eq "HASH") ? shift : $db;
    my ($sql,@args) = @_;
 
 #   printf("SQL: '%s'\n",$sql);
@@ -217,15 +217,15 @@ sub one
    }
 }
 
-sub commit
+sub my_commit
 {
-   my $con = (ref(@_[0]) eq "HASH") ? shift : $db;
+   my $con = (ref($_[0]) eq "HASH") ? shift : $db;
    $$con{db}->commit;
 }
 
-sub rollback
+sub my_rollback
 {
-   my $con = (ref(@_[0]) eq "HASH") ? shift : $db;
+   my $con = (ref($_[0]) eq "HASH") ? shift : $db;
    my ($fmt,@args) = @_;
 
 #   printf("ROLLBACK CALLED %s\n",code("long"));
@@ -235,7 +235,7 @@ sub rollback
 
 sub fetch
 {
-   my $obj = obj(@_[0]);
+   my $obj = obj($_[0]);
    my $debug = shift;
 
    my $hash=one($db,"select * from object where obj_id = ?",$$obj{obj_id}) ||

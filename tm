@@ -67,11 +67,12 @@ sub load_code_in_file
    } else {
       my $data = qq[#line 1 "$file"\n] . getfile($file,\%code);                      # read code in
 
-      @{@code{$file}}{size} = length($data);
+      @{$code{$file}}{size} = length($data);
       if($verbose) {                                  # show whats happening
-         printf("Loading: %s [%s bytes]\n",$file,@{@code{$file}}{size});
+         printf("Loading: %s [%s bytes]\n",$file,@{$code{$file}}{size});
       }
 
+      $@ = '';
       eval($data);                                                # run code
       if($@) {                                         # report any failures
          printf("\nload_code fatal: '%s'\n",$@);
@@ -99,11 +100,13 @@ sub load_all_code
       if($file =~ /^tm_.*.pl$/i && $file !~ /(backup|test)/ && 
          $file !~ /^tm_(main).pl$/i) {
          my $current = (stat($file))[9];         # should be file be reloaded?
-         if(!defined @code{$file} || @{@code{$file}}{mod} != $current) {
-            @code{$file} = {} if not defined @code{$file};
+         if(!defined $code{$file} || 
+            !defined  @{$code{$file}}{mod} ||
+            @{$code{$file}}{mod} != $current) {
+            @code{$file} = {} if not defined $code{$file};
             if(load_code_in_file($file,1)) {
                push(@file,$file);                  # show which files reloaded
-               @{@code{$file}}{mod} = $current;
+               @{$code{$file}}{mod} = $current;
             } else {
                push(@file,"$file [err]");                  # show which failed
             }
@@ -121,5 +124,6 @@ load_code_in_file("tm_mysql.pl");                       # only call of main
 load_all_code(1);                                # initial load of code
 printf("Loading: tm_main.pl\n");
 load_code_in_file("tm_main.pl");                       # only call of main
+main::server_start();
 
 printf("### DONE ###\n");            # should never get here unless @shutdown

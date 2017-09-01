@@ -43,10 +43,10 @@ delete @honey{keys %honey};
                          fun  => sub { return &cmd_pose(@_); },
                          nsp  => 1                                       };
 @command{";"}        = { help => "Posing without a space after your name",
-                         fun  => sub { return &cmd_pose(@_[0],@_[1],@_[2],1); },
+                         fun  => sub { return &cmd_pose($_[0],$_[1],$_[2],1); },
                          nsp  => 1                                       };
 @command{"emote"}    = { help => "Posing without a space after your name",
-                         fun  => sub { return &cmd_pose(@_[0],@_[1],1); },
+                         fun  => sub { return &cmd_pose($_[0],$_[1],$_[2],1); },
                          nsp  => 1                                       };
 @command{who}        = { help => "Display online users",
                          fun  => sub { return &cmd_who(@_); }            };
@@ -79,6 +79,8 @@ delete @honey{keys %honey};
 @command{"go"}       = { help => "Go through an exit",
                          fun  => sub { return cmd_go(@_); }              };
 @command{"examine"}  = { help => "Examine an object in more detail",
+                         fun  => sub { return cmd_ex(@_); }              };
+@command{"ex"}  =      { help => "Examine an object in more detail",
                          fun  => sub { return cmd_ex(@_); }              };
 @command{"\@last"}   = { help => "Information about your last connects",
                          fun  => sub { return cmd_last(@_); }            };
@@ -145,12 +147,12 @@ delete @honey{keys %honey};
 @command{"\@switch"}  ={ help => "Compares strings then runs coresponding " .
                                  "commands",
                          fun  => sub { cmd_switch(@_); }};
-@command{"\@select "} ={ help => "Compares strings then runs coresponding " .
+@command{"\@select"}  ={ help => "Compares strings then runs coresponding " .
                                  "commands",
                          fun  => sub { cmd_switch(@_); }};
 @command{"\@ps"}      ={ help => "Provide details about the engine queue",
                          fun  => sub { cmd_ps(@_); }};
-@command{"\@kill"}  ={ help => "Kill a process",
+@command{"\@kill"}    ={ help => "Kill a process",
                          fun  => sub { cmd_killpid(@_); }};
 @command{"\@var"}     ={ help => "Set a local variable",
                          fun  => sub { cmd_var(@_); }};
@@ -168,6 +170,8 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_boot(@_);}                    };
 @command{"\@readcache"}={ help => "Re-reads the servers config file(s)",
                          fun  => sub { cmd_readcache(@_);}               };
+@command{"\@halt"}   = { help => "Stops all your running programs.",
+                         fun  => sub { cmd_halt(@_);}                    };
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); },
@@ -656,18 +660,58 @@ sub cmd_ps
         );
 }
 
+sub cmd_halt
+{
+   my ($self,$prog) = @_;
+   my $engine = @info{engine};
+
+   for my $key (keys %$engine) {
+      my $data = @{$$engine{$key}}[0];
+      for my $pid (@{$$engine{$key}}) {
+         my $stack = $$pid{stack};
+         if(@{$$data{user}}{obj_id} eq $$self{obj_id}) {
+            delete @$pid{stack};
+            necho(self => $self,
+                 prog => $prog,
+                 source => [ "Pid %s stopped." , $key]
+                );
+         }
+      }
+   }
+}
+
+#
+# tval
+#    return an evaluated string suitable for test to use
+#
+sub tval
+{
+   my ($self,$prog,$txt) = @_;
+   
+   return lc(trim(evaluate($self,$prog,$txt)));
+}
+
 sub test
 {
-   my $txt = shift;
+   my ($self,$prog,$txt) = @_;
 
-   if($txt =~ / <= /)     { return (lc(trim($`)) <= lc(trim($'))) ? 1 : 0;  }
-   elsif($txt =~ / == /)  { return (lc(trim($`)) == lc(trim($'))) ? 1 : 0;  }
-   elsif($txt =~ / >= /)  { return (lc(trim($`)) >= lc(trim($'))) ? 1 : 0;  }
-   elsif($txt =~ / > /)   { return (lc(trim($`)) >  lc(trim($'))) ? 1 : 0;  }
-   elsif($txt =~ / < /)   { return (lc(trim($`)) <  lc(trim($'))) ? 1 : 0;  }
-   elsif($txt =~ / eq /)  { return (lc(trim($`)) eq lc(trim($'))) ? 1 : 0;  }
-   elsif($txt =~ / ne /)  { return (lc(trim($`)) ne lc(trim($'))) ? 1 : 0; }
-   else                   { return 0;                               }
+   if($txt =~ / <= /)     { 
+      return (tval($self,$prog,$') <= tval($self,$prog,$`)) ? 1 : 0;
+   } elsif($txt =~ / == /)  {
+      return (tval($self,$prog,$') == tval($self,$prog,$`)) ? 1 : 0;
+   } elsif($txt =~ / >= /)  {
+      return (tval($self,$prog,$') >= tval($self,$prog,$`)) ? 1 : 0;
+   } elsif($txt =~ / > /)   {
+      return (tval($self,$prog,$') > tval($self,$prog,$`)) ? 1 : 0;
+   } elsif($txt =~ / < /)   {
+      return (tval($self,$prog,$') < tval($self,$prog,$`)) ? 1 : 0;
+   } elsif($txt =~ / eq /)  {
+      return (tval($self,$prog,$') eq tval($self,$prog,$`)) ? 1 : 0;
+   } elsif($txt =~ / ne /)  {
+      return (tval($self,$prog,$') ne tval($self,$prog,$`)) ? 1 : 0;
+   } else {
+      return 0;
+   }
 }
 
 sub cmd_split
@@ -681,11 +725,6 @@ sub cmd_split
          return err($self,$prog,"I can't find that");
        my $txt = get($target,$');
        $txt =~ s/\r\s*|\n\s*//g;
-#       necho(self => $self,
-#             prog => $prog,
-#             source => [ "! %s", $txt ]
-#            );
-       
 
       unshift(@stack,$txt);
 
@@ -699,7 +738,6 @@ sub cmd_split
 
           if($item =~ /;/) {
              for my $i (balanced_split($item,';',3,1)) {
-                printf("    Adding: $i\n");
                 unshift(@stack,$i);
              }
           }
@@ -730,25 +768,30 @@ sub cmd_while
         if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/s) {
            ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
            $$cmd{while_cmd} = [ balanced_split($2,";",3) ];
-           my $a = $$cmd{while_cmd};
-           for my $i (0 .. $#$a) {
-              printf("# %s\n",$$a[$i]);
-           }
         } else {
            return err($self,$prog,"usage: while (<expression>) { commands }");
         }
     }
     $$cmd{while_count}++;
-#    printf("WHILE: '%s' -> '%s' -> '%s'\n",$$cmd{while_test},evaluate($self,$prog,$$cmd{while_test}),test(evaluate($self,$prog,$$cmd{while_test})));
+
+#    printf("WHILE: '%s' -> '%s' -> '%s'\n",
+#           $$cmd{while_test},
+#           evaluate($self,$prog,$$cmd{while_test}),
+#           test($$cmd{while_test})
+#          );
 
     if($$cmd{while_count} >= 1000) {
        printf("#*****# while exceeded maxium loop of 1000, stopped\n");
        return err($self,$prog,"while exceeded maxium loop of 1000, stopped");
-    } elsif(test(evaluate($self,$prog,$$cmd{while_test}))) {
+    } elsif(test($self,$prog,$$cmd{while_test})) {
        my $commands = $$cmd{while_cmd};
        for my $i (0 .. $#$commands) {
-          $$self{child} = $prog;
-          mushrun($self,$self,$$commands[$i],0);
+          mushrun(self  => $self,
+                  prog  => $prog,
+                  runas => $self,
+                  source => 0,
+                  cmd    => $$commands[$i]
+                 );
        }
        signal_still_running($prog);
     }
@@ -776,43 +819,41 @@ sub max_args
 #
 sub cmd_dolist
 {
-    my ($self,$prog,$txt) = @_;
-    my $current= $$prog{cmd_last};
-    my %last;
+   my ($self,$prog,$txt) = @_;
+   my $cmd = $$prog{cmd_last};
+   my %last;
 
-    my $cmd = $$prog{cmd_last};
-    if(!defined $$cmd{dolist_list}) {                 # initialize "loop"
-        my ($first,$second) = max_args(2,"=",
-                                 balanced_split($txt,"=",3));
-        $$cmd{dolist_cmd} = [ balanced_split($second,";",3) ];
-        $$cmd{dolist_list} = [ split(' ',evaluate($self,$prog,$first)) ];
-        $$cmd{dolist_count} = 0;
-        my $array = $$cmd{dolist_list};
-    } 
-    $$cmd{dolist_count}++;
+   if(!defined $$cmd{dolist_list}) {                       # initalize list
+       my ($first,$second) = max_args(2,"=",balanced_split($txt,"=",3));
+
+       $$cmd{dolist_cmd}   = [ balanced_split($second,";",3) ];
+       $$cmd{dolist_list}  = [ split(' ',evaluate($self,$prog,$first)) ];
+       $$cmd{dolist_count} = 0;
+   }
+   $$cmd{dolist_count}++;
 
 
-    if($$cmd{dolist_count} > 500) {                       # no big @dolists
-       return err($self,$prog,"dolist execeeded maxium count of 500, stopping");
-    }
+   if($$cmd{dolist_count} > 500) {                  # force users to be nice
+      return err($self,$prog,"dolist execeeded maxium count of 500, stopping");
+   } elsif($#{$$cmd{dolist_list}} < 0) {
+      return;                                                 # already done
+   }
 
-    my $list = $$cmd{dolist_list};
-    return 0 if($#$list < 0);                           # oops already done
+   my $list = $$cmd{dolist_cmd};                              # make shortcuts
+   my $item = shift(@{$$cmd{dolist_list}});
 
-    my $item = shift(@$list);                        # pull next ## off list
+   for my $i (0 .. $#$list) {                      # push commands into the q
+      my $new = $$list[$i];
+      $new =~ s/\#\#/$item/g;
+      mushrun(self  => $self,
+              prog  => $prog,
+              runas => $self,
+              source => 0,
+              cmd    => $new
+             );
+   }
 
-    my $commands = $$cmd{dolist_cmd};
-    for my $i (0 .. $#$commands) {
-        my $new = $$commands[$i];
-        $new =~ s/\#\#/$item/g;
-        spin_run(\%last,$prog,{ cmd => $new });
-    }
-
-    if($#$list < 0) {                                                # done
-       return 0;
-    } else {                                          # signal still running
-       return signal_still_running($prog);
-    }
+   return ($#{$$cmd{dolist_list}} < 0) ? 0 : signal_still_running($prog);
 }
 
 sub good_password
@@ -989,15 +1030,25 @@ sub cmd_switch
           $txt =~ s/^\s+|\s+$//g;
 
           if($first =~ /^\s*$txt\s*$/i) {
-             $$prog{child} = $prog;
-             return mushrun($self,$self,$cmd,0);
+             return mushrun(self   => $self,
+                            prog   => $prog,
+                            runas  => $self,
+                            source => 0,
+                            cmd    => $cmd
+                           );
           }
        } else {
           @list[0] = $1 if(@list[0] =~ /^\s*{(.*)}\s*$/);
           $$self{child} = $prog;
-          return mushrun($self,$self,@list[0],0);
+          return mushrun(self   => $self,
+                         prog   => $prog,
+                         runas  => $self,
+                         source => 0,
+                         cmd    => @list[0]
+                        );
        }
     }
+#    printf("SWITCH: end\n");
 }
       
 
@@ -1082,8 +1133,8 @@ sub cmd_telnet
                      );
       () = IO::Select->new($sock)->can_write(.2)     # see if socket is pending
           or $pending = 2;
-#      defined($sock->blocking(1)) ||
-#         return err($self,$prog,"Could not open a nonblocking connection");
+      defined($sock->blocking(1)) ||
+         return err($self,$prog,"Could not open a nonblocking connection");
 
       @connected{$sock} = {
          obj_id    => $$self{obj_id},
@@ -1097,7 +1148,6 @@ sub cmd_telnet
          enactor   => $enactor,
          pending   => $pending,
       };
-
       if($puppet) {
          @{@connected{$sock}}{raw} = 1;
       } elsif($input) {
@@ -1128,7 +1178,7 @@ sub cmd_telnet
                $2,
                $3
          );
-        commit;
+        my_commit;
       @info{io} = {} if(!defined @info{io});
       @{@info{io}}{uc($1)} = {};                     # clear previous buffer
       @{@{@info{io}}{uc($1)}}{buffer} = [];                      # if exists
@@ -1144,7 +1194,6 @@ sub cmd_telnet
             prog   => $prog,
             source => [ "usage: \@telnet <id>=<hostname>:<port> {$txt}" ],
            );
-      printf("%s\n",code("long"));
    }
 }
 
@@ -1278,24 +1327,20 @@ sub cmd_force
     my ($self,$prog,$txt) = @_;
 
     if($txt =~ /^\s*([^ ]+)\s*=\s*/) {
-      my $target = locate_object($self,$1,"LOCAL") ||
-         return err($self,$prog,"I can't find that");
+       my $target = locate_object($self,$1,"LOCAL") ||
+          return err($self,$prog,"I can't find that");
 
-      if(!controls($self,$target)) {
-         return err($self,$prog,"Permission Denied.");
-      }
+       if(!controls($self,$target)) {
+          return err($self,$prog,"Permission Denied.");
+       }
 
-      my $result = force($prog,$target,$');
-
-      if($result == -2) {
-         return err($self,$prog,"I don't see that.");
-      } elsif($result == -3) {
-         return err($self,$prog,"Invalid command. Practice your Jedi mind " .
-                    "tricks more."
-                   );
-      } elsif($result == -4) {
-         return ($self,"Internal error. Unable to parse request");
-      }
+       mushrun(self   => $self,
+               prog   => $prog,
+               runas  => $target,
+               source => 0,
+               cmd    => $',
+               hint   => "INTERNAL"
+              );
    } else {
      err($self,$prog,"syntax: \@force <object> = <command>");
    }
@@ -1378,14 +1423,14 @@ sub cmd_destroy
    sql($db,"delete from object where obj_id = ?",$$target{obj_id});
 
    if($$db{rows} != 1) {
-      rollback;
+      my_rollback;
       necho(self   => $self,
             prog   => $prog,
             room    => [ $target, "%s was destroyed.",name($target) ],
             source  => [ "Internal error, object not destroyed." ],
            );
    } else {
-      commit;
+      my_commit;
       necho(self   => $self,
             prog   => $prog,
             source => [ "%s was destroyed.",obj_name($target) ],
@@ -1415,7 +1460,7 @@ sub cmd_toad
    sql($db,"delete from object where obj_id = ?",$$target{obj_id});
 
    if($$db{rows} != 1) {
-      rollback;
+      my_rollback;
       necho(self   => $self,
             prog   => $prog,
             source => [ "Internal error, %s was not \@toaded.",
@@ -1437,7 +1482,7 @@ sub cmd_toad
            );
    }
 
-   commit;
+   my_commit;
 }
 
 
@@ -1464,12 +1509,12 @@ sub cmd_pemit
          return err($self,$prog,"I don't see that here");
       } 
 
-      my $txt = evaluate($self,$prog,$');
+      my $txt = evaluate($self,$prog,$txt);
 
       if($txt !~ /^\s*$/) {
          necho(self   => $self,
                prog   => $prog,
-               target => [ $$prog{created_by}, "%s", $txt ],
+               target => [ $target, "%s", $txt ],
               );
       }
    } else {
@@ -1507,7 +1552,12 @@ sub cmd_drop
          room2  => [ "%s has arrived.",name($target) ]
         );
 
-   force($prog,$target,"look");
+   mushrun(self   => $self,
+           prog   => $prog,
+           runas  => $target,
+           source => 0,
+           cmd    => "look"
+          );
 }
 
 sub cmd_take
@@ -1533,7 +1583,12 @@ sub cmd_take
          room   => [ $target, "%s has arrived.",name($target) ]
         );
 
-   force($prog,$target,"look");
+   mushrun(self   => $self,
+           prog   => $prog,
+           runas  => $target,
+           source => 0,
+           cmd    => "look"
+          );
 }
 
 sub cmd_name
@@ -1568,7 +1623,7 @@ sub cmd_name
               );
 
          $$target{obj_name} = $name;
-         commit;
+         my_commit;
       } else {
          err($self,$prog,"Internal error, name not updated.");
       }
@@ -1601,7 +1656,12 @@ sub cmd_enter
          room2  => [ $target, "%s has arrived.", name($self) ]
         );
 
-   force($prog,$self,"look");
+   mushrun(self   => $self,
+           prog   => $prog,
+           runas  => $target,
+           source => 0,
+           cmd    => "look"
+          );
 }
 
 sub cmd_time
@@ -1899,7 +1959,12 @@ sub cmd_teleport
          room   => [ $target, "%s has arrived.",name($target) ]
         );
 
-   force($prog,$target,"look");
+   mushrun(self   => $self,
+           prog   => $prog,
+           runas  => $target,
+           source => 0,
+           cmd    => "look"
+          );
 }
 
 #
@@ -1992,7 +2057,7 @@ sub cmd_commit
             prog   => $prog,
             source => [ "You force a commit to the database" ],
            );
-      commit($db);
+      my_commit($db);
    } else {
       err($self,$prog,"Permission Denied");
    }
@@ -2108,7 +2173,7 @@ sub cmd_create
          source => [ "Object created as: %s",obj_name($dbref) ],
         );
 
-   commit;
+   my_commit;
 }
 
 sub cmd_link
@@ -2227,7 +2292,7 @@ sub cmd_dig
             source => [ "   Out exit created as:  %s(#%sE)",$out,$out_dbref ],
            );
    }
-   commit;
+   my_commit;
 }
 
 sub cmd_open
@@ -2272,7 +2337,7 @@ sub cmd_open
          source => [ "Exit created as %s(#%sE)",$exit,$dbref ],
         );
 
-   commit;
+   my_commit;
 }
 
 #
@@ -2339,20 +2404,20 @@ sub cmd_connect
                 $$user{hostname}
                );
 
-            commit($db);
+            my_commit($db);
             necho(self   => $user,
-                  prog   => {},
+                  prog   => prog($user,$user),
                   source => [ "%s", getfile("motd.txt") ]
                  );
-            cmd_look($user,{});                               # show room
+            cmd_look($user,prog($user,$user));                    # show room
 
             printf("    %s@%s\n",$$hash{obj_name},$$user{hostname});
             necho(self   => $user,
-                  prog   => {},
+                  prog   => prog($user,$user),
                   room   => [ $user , "%s has connected.",name($user) ],
                  );
 
-            echo_flag($user,{},"CONNECTED,PLAYER,MONITOR",
+            echo_flag($user,prog($user,$user),"CONNECTED,PLAYER,MONITOR",
                       "[Monitor] %s has connected.",name($user))
          } else {
             sql(e($db,1),
@@ -2368,7 +2433,7 @@ sub cmd_connect
                 $$hash{obj_id},
                 $$user{hostname}
                );
-            commit($db);
+            my_commit($db);
 
             printf($sock "Either that player does not exist, or has a " .
                "different password.\r\n");
@@ -2408,7 +2473,7 @@ sub cmd_doing
           $$self{obj_id}
          );
    }
-   commit;
+   my_commit;
    necho(self   => $self,
          prog   => $prog,
          source => [ "Set." ]
@@ -2434,9 +2499,14 @@ sub cmd_set
    my ($self,$prog,$txt) = @_;
    my ($target,$attr,$value,$flag);
 
-   if($txt =~ /^\s*([^ =]+?)\s*\/\s*([^ =]+?)\s*= *(.*) *$/s) { # attribute
-      ($target,$attr,$value) = (locate_object($self,evaluate($self,$prog,$1)),
-          evaluate($self,$prog,$2),$3);
+   if($txt =~ /^\s*([^ =]+?)\s*\/\s*([^ =]+?)\s*=(.*)$/s) { # attribute
+      if(@{$$prog{cmd}}{source} == 1) {                          # user input
+         ($target,$attr) = ($1,$2);
+      } else {                                               # non-user input
+         ($target,$attr) = (evaluate($self,$prog,$1),evaluate($self,$prog,$2));
+      }
+      ($target,$value) = (locate_object($self,$target),$3);
+
       return err($self,$prog,"Unknown object '%s'",$1) if !$target;
       controls($self,$target) || return err($self,$prog,"Permission denied");
 
@@ -2447,12 +2517,12 @@ sub cmd_set
               );
       } else {
 
-         if(source() == 0) {              # don't evaluate player input, yet
+         if(@{$$prog{cmd}}{source} == 0) {                      # user input
             $value = evaluate($self,$prog,$value);
          }
          set($self,$prog,$target,evaluate($self,$prog,$attr),$value);
       }
-      commit($db);
+      my_commit($db);
 
    } elsif($txt =~ /^\s*([^ =\\]+?)\s*= *(.*?) *$/s) { # flag?
       ($target,$flag) = (locate_object($self,$1),$2);
@@ -2564,7 +2634,7 @@ sub cmd_ex
    $out .= "\nCreated: $$target{obj_created_date}";
    if(hasflag($target,"PLAYER")) {
       if($perm) {
-         $out .= "Firstsite: $$target{obj_created_by}\n" .
+         $out .= "\nFirstsite: $$target{obj_created_by}\n" .
                  "Lastsite: " . lastsite($$target{obj_id});
       }
       my $last = one_val($db,
@@ -2611,11 +2681,12 @@ sub cmd_ex
       $out .= "\nContents:\n" . join("\n",@content);
    }
 
+   my $con = one("select * " . 
+                 "  from content " .
+                 " where obj_id = ?",
+                 $$target{obj_id});
+
    if(hasflag($target,"EXIT")) {
-      my $con = one("select * " . 
-                    "  from content " .
-                    " where obj_id = ?",
-                    $$target{obj_id});
       if($con eq undef || $$con{con_source_id} eq undef) {
          $out .= "\nSource: ** No where **";
       } else {
@@ -2647,12 +2718,12 @@ sub cmd_ex
       push(@exit,obj_name($hash));
    }
    if($#exit >= 0) {
-      $out .= "\nExits:\n%s",join("\n",@exit);
+      $out .= "\nExits:\n" . join("\n",@exit);
    }
 
    if($perm && (hasflag($target,"PLAYER") || hasflag($target,"OBJECT"))) {
       $out .= "\nHome: " . obj_name(fetch($$target{obj_home}),$perm) .
-              "\nLocation: " . obj_name(fetch($$target{obj_home}),$perm);
+              "\nLocation: " . obj_name($$con{con_source_id},$perm);
    }
    necho(self   => $self,
          prog   => $prog,
@@ -2679,7 +2750,7 @@ sub cmd_inventory
       for my $i (0 .. $#$inv) {
          necho(self   => $self,
                prog   => $prog,
-               source => [ "%s", @{$$inv[$i]}{obj_name} ],
+               source => [ "%s", obj_name($$inv[$i]) ],
               );
       }
    }
@@ -2750,7 +2821,7 @@ sub cmd_look
           "     and flg.obj_id = con.obj_id " .
           "     and con.con_source_id = ? ".
           "     and con.obj_id != ? " .
-          "group by con.obj_id " .
+          "group by con.obj_id, con_created_date " .
           "order by con_created_date",
           $$target{obj_id},
           $$self{obj_id}
@@ -2781,7 +2852,12 @@ sub cmd_look
         );
 
    if(($desc = get($target,"ADESCRIBE")) && $desc ne undef) {
-      mushrun($self,$target,$desc,0);           # handle adesc
+      return mushrun(self   => $self,           # handle adesc
+                     prog   => $prog,
+                     runas  => $target,
+                     source => 0,
+                     cmd    => $desc
+                     );
    }
 }
 
@@ -2958,8 +3034,8 @@ sub who
       
    # show headers for normal / wiz who 
    if($hasperm) {
-      $out .= sprintf("%-15s%10s%5s %-*s %-4s %s\r\n","Player Name","On For","Idle",
-                      $max,"Loc","Port","Hostname");
+      $out .= sprintf("%-15s%10s%5s %-*s %-4s %s\r\n","Player Name","On For",
+                      "Idle",$max,"Loc","Port","Hostname");
    } else {
       $out .= sprintf("%-15s%10s%5s  %s\r\n","Player Name","On For","Idle",
                       "\@doing");
@@ -2981,6 +3057,7 @@ sub who
       }
 
       # determine connect time details
+      
       my $online = date_split(time() - fuzzy($$hash{start_time}));
       if($$online{max_abr} =~ /^(M|w|d)$/) {
          $extra = sprintf("%4s",$$online{max_val} . $$online{max_abr});

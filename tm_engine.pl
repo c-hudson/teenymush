@@ -15,23 +15,22 @@ use Time::HiRes "ualarm";
 
 sub mush_command
 {
-   my ($self,$data,$cmd) = @_;
+   my ($self,$prog,$runas,$cmd) = @_;
    my ($match,$questions,@where)= (0);
-#   printf("MUSH_COMMAND: '%s'\n",print_var($data));
 
-   (@where[0],@where[1]) = (loc($user),$$user{obj_id});
-   if(defined @info{master_room}) {
+   ($where[0],$where[1]) = (loc($user),$$user{obj_id});
+   if(defined $info{master_room}) {
       $questions = "?,?,?";
-      push(@where,@info{master_room});
+      push(@where,$info{master_room});
    } else {
       $questions = "?,?";
    }
-#   printf("mush_command: '%s' '%s' '%s'\n%s\n",$self,$data,$cmd,code("long"));
 
    # look for any attributes in the same room as the player
    for my $hash (@{sql("select obj.*, " .
                        "       substr(atr_value,2,instr(atr_value,':')-2) cmd,".
                        "       substr(atr_value,instr(atr_value,':')+1) txt,".
+                       "       atr_name, ".
                        "       0 source " .
                        "  from object obj, attribute atr, content con " .
                        " where obj.obj_id = atr.obj_id " .
@@ -49,9 +48,18 @@ sub mush_command
       $$hash{cmd} =~ s/\+/\\+/g;
       $$hash{txt} =~ s/\r\s*|\n\s*//g;
       if($cmd =~ /^$$hash{cmd}$/) {
-         mushrun($self,$hash,$$hash{txt},0,$1,$2,$3,$4,$5,$6,$7,$8,$9);
+         mushrun(self   => $self,
+                 runas  => $hash,
+                 source => 0,
+                 cmd    => $$hash{txt},
+                 wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ],
+                );
       } else {
-         mushrun($self,$hash,$$hash{txt},0);
+         mushrun(self   => $self,
+                 runas  => $hash,
+                 source => 0,
+                 cmd    => $$hash{txt}
+                );
       }
       $match=1;                                   # signal mush command found
    }
@@ -63,6 +71,8 @@ sub priority
 {
    my $obj = shift;
 
+   return 100;
+
    $obj = owner($obj) if(!hasflag($obj,"PLAYER"));
 
    return (perm($obj,"HIGH_PRORITY") ? 50 : 1);
@@ -72,16 +82,30 @@ sub inattr
 {
    my ($self,$source) = @_;
 
-   if($source != 1 ||
-      ref($self) ne "HASH" ||
+   if(ref($self) ne "HASH" ||
       !defined $$self{sock} ||
       !defined @connected{$$self{sock}} ||
       ref(@connected{$$self{sock}}) ne "HASH" ||
       !defined @{@connected{$$self{sock}}}{inattr}) {
       return undef;
    } else {
-      @{@connected{$$self{sock}}}{inattr};
+      return @{@connected{$$self{sock}}}{inattr};
    }
+}
+
+sub prog
+{
+   my ($self,$runas) = @_;
+
+   return {
+      stack => [ ],
+      enactor => $self,
+      created_by => $self,
+      user => 
+      var => {},
+      priority => priority($self),
+      calls => 0
+   };
 }
 
 #
@@ -92,70 +116,60 @@ sub inattr
 # $source (1 = direct user input, 0 = indirect user input)
 sub mushrun
 {
-   my ($self,$obj,$cmd,$source,@wildcard) = @_;
-   my $multi = inattr($self,$source);
-   my ($prog,$txt);
+   my %arg = @_;
+   my $multi = inattr($arg{self},$arg{source});
 
    if(!$multi) {
-       if($cmd =~ /^\s*$/) {
-          return;
-       } elsif($cmd =~ /^\s*{(.*)}\s*$/s) {
-          $cmd = $1;
-       }
+       return if($arg{cmd} =~ /^\s*$/);                        # empty command
+       @arg{cmd} = $1 if($arg{cmd} =~ /^\s*{(.*)}\s*$/s);       # strip braces
    }
-     
 
-   # look for special multi-line set command and set inattr flag
-   if($source == 1 && $cmd =~ /^\s*&&([^& =]+)\s+([^ =]+)\s*= *(.*?) *$/) {
-      @{@connected{$$self{sock}}}{inattr} = {
-         attr    => $1,
-         object  => $2,
-         content => [ $3 ]
-      };
-      return;
-   } elsif($source == 1 && $multi ) {
-      my $stack = $$multi{content};
-      if($cmd =~ /^\s*$/) {                                   # attr is done
-         $txt = "$$multi{attr} $$multi{object}=" . join("\r\n",@$stack);
-         delete @{@connected{$$self{sock}}}{inattr};
-         cmd_set2($self,{},$txt);
-         return; 
-      } else {                                          # another line of atr
-         push(@$stack,$cmd);
+   if(!defined $arg{prog}) {                                     # new program
+      @arg{prog} = prog($arg{self},$arg{runas});
+      @info{engine} = {} if not defined $info{engine}; # add to all programs
+      @{$info{engine}}{++$info{pid}} = [ $arg{prog} ];
+   }
+
+   @{@arg{prog}}{hint} = $arg{hint};
+
+   # handle multi-line && command
+   if($arg{source} == 1 && $multi eq undef) {
+      if($arg{cmd} =~ /^\s*&&([^& =]+)\s+([^ =]+)\s*= *(.*?) *$/) {
+         @{@connected{@{$arg{self}}{sock}}}{inattr} = {
+            attr    => $1,
+            object  => $2,
+            content => [ $3 ],
+            prog    => $arg{prog},
+         };
          return;
       }
-   } elsif(defined $$self{child}) {                   # add as child process
-      $prog = $$self{child};
-   } else {
-      $prog = {                                      # add as parent process
-         stack => [ ],
-         enactor => $self,                                         # remove?
-         user => $self,                                            # remove?
-         created_by => $self,
-         obj => $obj,
-         var => {},
-         priority => priority($self),
-         calls => 0
-      };
-
-      @info{engine} = {} if not defined @info{engine}; # add to all programs
-      @{@info{engine}}{++@info{pid}} = [ $prog ];
+   } elsif($arg{source} == 1 && $multi ne undef) {
+         my $stack = $$multi{content};
+      if($arg{cmd} =~ /^\s*$/) {                                # attr is done
+         @arg{cmd} = "&$$multi{attr} $$multi{object}=" . join("\r\n",@$stack);
+         delete @{$connected{@{$arg{self}}{sock}}}{inattr};
+      } else {                                          # another line of atr
+         push(@$stack,$arg{cmd});
+         return;
+      }
    };
 
     # copy over command(s)
-    my $stack=$$prog{stack};
-    if($source) {
-       unshift(@$stack,{ cmd => $cmd, source => 1 });
+    my $stack=@{$arg{prog}}{stack};
+    if($arg{source}) {
+       unshift(@$stack,{ runas => $arg{runas}, cmd => $arg{cmd}, source => 1 });
     } else {
-       for my $i ( balanced_split($cmd,';',3,1) ) {
-          push(@$stack,{ cmd => $i, source => 0 });
+       for my $i ( balanced_split($arg{cmd},';',3,1) ) {
+          printf("QUED: '%s'\n",$i);
+          push(@$stack,{ runas => $arg{runas}, cmd => $i, source => 0 });
        }
     }
 
-    if(!defined $$self{child}) {
-       set_digit_variables($self,$prog,@wildcard);       # copy over %0 .. %9
+    if(defined $arg{wild}) {
+       set_digit_variables($arg{self},$arg{prog},@{$arg{wild}}); # copy %0..%9
     }
-    delete @$self{child};
+    
+    delete @{$arg{self}}{child};
 }
 
 sub set_digit_variables
@@ -176,9 +190,9 @@ sub set_digit_variables
 
       for my $i (0 .. 9 ) {
          if($self ne undef) {
-            @{$$prog{var}}{$i} = evaluate($self,$prog,@var[$i]);
+            @{$$prog{var}}{$i} = evaluate($self,$prog,$var[$i]);
          } else {
-            @{$$prog{var}}{$i} = @var[$i];
+            @{$$prog{var}}{$i} = $var[$i];
          }
       }
    }
@@ -229,7 +243,6 @@ sub spin
             } else {
                for(my $i=0;$#$command >= 0 && $i <= $$program{priority};$i++) {
                   my $cmd = shift(@$command);
-#                  printf("CMD: '%s'\n",join(',',@$cmd)) if(ref($cmd) eq "ARRAY");
                   $$user{cmd_data} = $cmd;
                   delete @$cmd{still_running};
                   spin_run(\%last,$program,$cmd,$command);
@@ -268,81 +281,108 @@ sub spin
          printf("   #%s: %s\n",@{@last{user}}{obj_id},@{@last{cmd}}{cmd});
       }
    } elsif($@) {                               # oops., you sunk my battle ship
+         printf("USER: '%s'\n",$user);
+         printf("USER: '%s'\n",@last{cmd});
          printf("# %s CRASHED the server with: %s\n%s",name($user),
                 @{@last{cmd}}{cmd},$@);
          printf("LastSQL: '%s'\n",@info{sql_last});
          printf("         '%s'\n",@info{sql_last_args});
-         rollback($db);
+         my_rollback($db);
 
          my $msg = sprintf("%s CRASHed the server with: %s",name($user),
              @{@last{cmd}}{cmd});
          necho(self => $user,
-               prog => {},
+               prog => prog($user,$user),
                source => [ "%s", $msg ]
               );
          if($msg ne $$user{crash}) {
             necho(self => $user,
-                  prog => {},
+                  prog => prog($user,$user),
                   room => [ "%s", $msg ]
                  );
          }
       }
 }
 
-#
-# spin_run
-#    A mush command has been found
-#
+sub run_internal
+{
+   my ($hash,$cmd,$command,$prog,$arg) = @_;
+   my %switch;
+
+   while($arg =~ /^\s*\/([^ =]+)( |$)/) {                  # find switches
+      @switch{lc($1)} = 1;
+      $arg = $';
+   }
+
+   &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,$arg,\%switch);
+}
+
 sub spin_run
 {
-   my ($last,$prog,$cmd,$command) = @_;
+   my ($last,$prog,$command,$foo) = @_;
+   my $self = $$command{runas};
+   my ($cmd,$hash,$arg,%switch);
+   ($$last{user},$$last{enactor},$$last{cmd}) = ($self,$self,$command);
+   $$prog{cmd_last} = $command;
 
-   my ($tmp_user,$tmp_enactor,$switch) = ($user,$enactor,{});
-   ($user,$enactor) = ($$prog{user},$$prog{enactor});
-   ($$last{user},$$last{enactor},$$last{cmd}) = ($user,$enactor,$cmd);
-   $$prog{cmd_last} = $cmd;
+# find command set to use
+   if($$prog{hint} eq "INTERNAL") {           # called by internal command
+      $hash = \%command;
+      delete @$prog{hint};
+   } elsif(!loggedin($self) && hasflag($self,"PLAYER")) { 
+      $hash = \%offline;                                     # offline users
+   } elsif(defined $$self{site_restriction} && $$self{site_restriction} == 69) {
+      $hash = \%honey;                                   # honeypotted users
+   } else {
+      $hash = \%command;                                    # connected users
+   }
 
-   $$cmd{cmd} =~ s/^\s*{//;
+   if($$command{cmd} =~ /^\s*([^ ]+)(\s*)/) {         # split cmd from args
+      ($cmd,$arg) = (lc($1),$'); 
+   } else {
+      return;                                                 # only spaces
+   }
+   if(defined $$hash{$cmd}) {                                  # internal cmd
+      run_internal($hash,$cmd,$command,$prog,$arg);
+  } elsif(defined $$hash{substr($cmd,0,1)} &&
+     (defined $$hash{substr($cmd,0,1)}{nsp} ||
+      substr($cmd,1,1) eq " " ||
+      length($cmd) == 1
+     )) {
+      $$prog{cmd} = $command;
+      &{@{$$hash{substr($cmd,0,1)}}{fun}}
+         ($$command{runas},$prog,substr(trim($$command{cmd}),1),\%switch);
+# internal cmd
+   } elsif(locate_exit($$command{cmd})) {
+      &{@{$$hash{"go"}}{fun}}($$command{runas},$prog,$$command{cmd});   # exit
+   } elsif(mush_command($self,$prog,$$command{runas},$$command{cmd})) {
+      # mush_command runs command
+   } else {
+      my $match;
 
-#   if(!defined $$user{internal}) {
-      $$user{internal} = {                                   # internal data
-         cmd => $cmd,                                       # to pass around
-         command => $command,
-         user => $user,
-         enactor => $enactor,
-         prog => $prog
-      };
-#   }
-
-   if($$cmd{cmd} =~ /^\s*([^ ]+)(\s*)/) {
-      my ($cmd_name,$arg)=lookup_command($$prog{obj},\%command,$1,"$2$'",1);
-
-      if(hasflag($user,"VERBOSE")) {
-#         if($arg eq undef) {
-#            necho(self => $user,
-#                  prog => $prog,
-#                  target => [ owner($user), "> %s",$cmd_name ]
-#                 );
-#         } else {
-#            necho(self => $user,
-#                  prog => $prog,
-#                  target => [ owner($user), "> %s",$cmd_name,$arg ]
-#                 );
-#         }
+      for my $key (keys %$hash) {              #  find partial unique match
+         if(substr($key,0,length($cmd)) eq $cmd) {
+            if($match eq undef) {
+               $match = $key;
+            } else {
+               $match = undef;
+               last;
+            }
+         }
       }
 
-      while($arg =~ /^\s*\/([^ =]+)( |$)/) {
-         $$switch{lc($1)} = 1;
-         $arg = $';
-      }
-
-      if($cmd_name ne "@@") {
-         $$user{cmd_data} = $cmd;
-         &{@{@command{$cmd_name}}{fun}}($$prog{obj},$prog,$arg,$switch);
+      if($match ne undef) {                                     # found match
+         run_internal($hash,$match,$command,$prog,$arg);
+      } else {                                                     # no match
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "Huh? (Type \"help\" for help.)" ]
+              );
       }
    }
-   ($user,$enactor) = ($tmp_user,$tmp_enactor);
 }
+
+
 
 sub spin_done
 {

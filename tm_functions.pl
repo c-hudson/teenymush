@@ -777,7 +777,7 @@ sub fun_u
 
    if($obj eq undef) {
       return "#-1 Unknown object";
-   } elsif(!controls($$prog{user},$obj)) {
+   } elsif(!controls($self,$obj)) {
       return "#-1 PerMISSion Denied";
    }
 
@@ -1029,6 +1029,10 @@ sub fun_input
           return "#-1 Connection closed";                    # socket closed
        }
     } else {
+       if($#{$$input{buffer}} > 0) {           # give hint more input pending
+          my $cmd = $$prog{cmd_last};
+          $$prog{pending} = 1;
+       }
        return shift(@{$$input{buffer}});                # return buffered data
     }
 }

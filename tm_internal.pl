@@ -412,6 +412,7 @@ sub nospoof
 #      printf("%s\n",code("long"));
       return "[" . obj_name($$prog{created_by}) . "] ";
    }
+   return undef;
 }
 
 sub ts
@@ -768,7 +769,7 @@ sub flag_list
                            "   and flg.atr_id is null " .
                            "   and fde_type = 1 " .
                            " union all " .
-                           "select 'CONNECTED' fde_name, " .
+                           "select distinct 'CONNECTED' fde_name, " .
                            "       'c' fde_letter, " .
                            "       999 fde_order " .
                            "  from socket sck " .

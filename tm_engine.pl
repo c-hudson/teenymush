@@ -160,7 +160,6 @@ sub mushrun
        unshift(@$stack,{ runas => $arg{runas}, cmd => $arg{cmd}, source => 1 });
     } else {
        for my $i ( balanced_split($arg{cmd},';',3,1) ) {
-          printf("QUED: '%s'\n",$i);
           push(@$stack,{ runas => $arg{runas}, cmd => $i, source => 0 });
        }
     }
@@ -227,42 +226,46 @@ sub spin
 #      ualarm(800_000);                                # die at 8 milliseconds
 #      ualarm(1_200_000);                                # die at 8 milliseconds
 
+#      printf("PIDS: '%s'\n",join(',',keys %{@info{engine}}));
       for my $pid (sort { $a cmp $b } keys %{@info{engine}}) {
          my $thread = @{@info{engine}}{$pid};
+         my $program = @$thread[0];
+         my $command = $$program{stack};
+         @info{program} = @$thread[0];
 
-         if($#$thread == -1) {                         # this program is done
-            delete @{@info{engine}}{$pid};
-         } else {
-            my $program = @$thread[0];
-            my $command = $$program{stack};
-            @info{program} = @$thread[0];
+         my $sc = $$program{calls};
+         for(my $i=0;$#$command >= 0 && $$program{calls} - $sc <= 100;$i++) {
+            my $cmd = shift(@$command);
+            $$user{cmd_data} = $cmd;
+            delete @$cmd{still_running};
+     
+            delete @$cmd{pending};
+            spin_run(\%last,$program,$cmd,$command);
 
-            if($#$command == -1) {                      # this thread is done
-               my $prog = shift(@$thread);
-#               printf("# Total calls: %s - %s\n",$$prog{calls},$$user{source});
+            #
+            # command is still running and has nothing pending to do
+            # at this time, so kip to the next program instead of
+            # wasting cycles. 
+            #
+  
+            if(defined $$cmd{still_running} && $$cmd{still_running} && 
+               !$$cmd{pending}) {
+               next;
             } else {
-               for(my $i=0;$#$command >= 0 && $i <= $$program{priority};$i++) {
-                  my $cmd = shift(@$command);
-                  $$user{cmd_data} = $cmd;
-                  delete @$cmd{still_running};
-                  spin_run(\%last,$program,$cmd,$command);
-                  $count++;
-
-                  #
-                  # command is still running, probably a sleep? Skip to the
-                  # next program as it won't finish any quicker by running
-                  # it again.
-                  #
-                  next if($cmd eq @$command[0]);
-                  $$program{calls}++;
-                                                      # stop at 4 milliseconds
-                  if(Time::HiRes::gettimeofday() - $start > .5) {
-#                     printf("Time slice ran long, exiting correctly\n");
-#                     ualarm(0);
-                     return;
-                  }
-               }
+               $$program{calls}++;
             }
+            $count++;
+                                                # stop at 4 milliseconds
+            if(Time::HiRes::gettimeofday() - $start > .5) {
+                printf("Time slice ran long, exiting correctly\n");
+                ualarm(0);
+               return;
+            }
+         }
+         if($#$command == -1) { # program is done 
+            my $prog = shift(@$thread);
+            delete @{@info{engine}}{$pid};
+#            printf("# $pid Total calls: %s\n",$$prog{calls});
          }
       }
    };
@@ -399,15 +402,11 @@ sub spin_done
 #  
 sub signal_still_running
 {
-    my $prog = shift;
+    my ($prog,$pending) = @_;
 
-    my $cmd;
-
-    if($#_ == 0) {
-       $cmd = shift;
-    } else {
-       $cmd = $$prog{cmd_last};
-    }
+    my $cmd = $$prog{cmd_last};
+    $$cmd{pending} = $pending;
+    $$cmd{still_running} = 1;
 
     push(@{$$prog{stack}},$cmd);
 }

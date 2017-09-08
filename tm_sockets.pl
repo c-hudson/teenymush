@@ -266,7 +266,7 @@ sub server_handle_sockets
             server_disconnect($s);
          } else {                                          # socket has input
             $buf =~ s/\r//g;                                 # remove returns
-            $buf =~ tr/\x80-\xFF//d;
+#            $buf =~ tr/\x80-\xFF//d;
             $buf =~ s/\e\[[\d;]*[a-zA-Z]//g;
             @{@connected{$s}}{buf} .= $buf;                     # store input
           

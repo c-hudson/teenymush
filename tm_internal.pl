@@ -406,11 +406,11 @@ sub handle_listener
 
 sub nospoof
 {
-   my ($prog,$dest) = (obj($_[0]),obj($_[1]));
+   my ($self,$prog,$dest) = (obj($_[0]),obj($_[1]),obj($_[2]));
 
    if(hasflag($dest,"NOSPOOF")) {
 #      printf("%s\n",code("long"));
-      return "[" . obj_name($$prog{created_by}) . "] ";
+      return "[" . obj_name($self,$$prog{created_by}) . "] ";
    }
    return undef;
 }
@@ -468,6 +468,7 @@ sub log_output
 {
    my ($src,$dst,$txt) = @_;
 
+   $txt =~ s/([\r\n]+)$//g;
    sql($db,                                     #store output in output table
        "insert into output" .
        "(" .
@@ -479,7 +480,7 @@ sub log_output
        "   ?, " .
        "   ? " .
        ")",
-       substr($txt,1,63999),
+       substr($txt,0,63999),
        $$src{obj_id},
        $$dst{obj_id}
       );
@@ -531,7 +532,8 @@ sub necho
                              $$target{obj_id}
                       )}) {
              my $s = @{@connected{$$sock{sck_socket}}}{sock};
-             printf($s "%s%s",nospoof(@arg{prog},$$sock{obj_id}),$msg);
+             printf($s "%s%s",nospoof(@arg{self},@arg{prog},$$sock{obj_id}),
+                $msg);
              log_output($self,$target,$msg);
          }
          handle_listener($arg{self},$arg{prog},$target,$fmt,@$array);
@@ -570,7 +572,8 @@ sub necho
                           $$target{obj_id}
                          )}) {
                my $s = @{@connected{$$sock{sck_socket}}}{sock};
-               printf($s "%s%s",nospoof($prog,$$sock{obj_id}),$msg);
+               printf($s "%s%s",nospoof(@arg{self},@arg{prog},$$sock{obj_id}),
+                   $msg);
             }
          }
       }
@@ -598,11 +601,11 @@ sub echo_output_to_puppet_owner
          my $sock = @{@connected{$$player{sck_socket}}}{sock};
 
          if($msg !~ /\n$/) {
-            printf($sock "%s%s> [%s]\n",nospoof($prog,$player),
+            printf($sock "%s%s> %s\n",nospoof($self,$prog,$player),
                    $$player{owner_name}, $msg);
 #            printf($sock "%s\n",code("long"));
          } else {
-            printf($sock "%s%s> {%s}",nospoof($prog,$player),
+            printf($sock "%s%s> %s",nospoof($self,$prog,$player),
                    $$player{owner_name}, $msg);
          }
           
@@ -1526,10 +1529,10 @@ sub obj_ref
 
 sub obj_name
 {
-   my $obj = obj_ref(shift);
+   my ($self,$obj) = (obj(shift),obj(shift));
    
    $obj = fetch($obj) if(!defined $$obj{obj_name});
-   if(controls($user,$obj)) {
+   if(controls($self,$obj)) {
       return $$obj{obj_name} . "(#" . $$obj{obj_id} . flag_list($obj) . ")";
    } else {
       return $$obj{obj_name};

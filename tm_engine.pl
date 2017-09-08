@@ -255,8 +255,8 @@ sub spin
                $$program{calls}++;
             }
             $count++;
-                                                # stop at 4 milliseconds
-            if(Time::HiRes::gettimeofday() - $start > .5) {
+                                                # stop at 7 milliseconds
+            if(Time::HiRes::gettimeofday() - $start > .7) {
                 printf("Time slice ran long, exiting correctly\n");
                 ualarm(0);
                return;
@@ -307,6 +307,10 @@ sub spin
       }
 }
 
+#
+# run_internal
+#    Handle all switches and call the internal mush command
+#
 sub run_internal
 {
    my ($hash,$cmd,$command,$prog,$arg) = @_;

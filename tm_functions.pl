@@ -810,8 +810,13 @@ sub fun_get
       return "#-1 Unknown object";
    } elsif(!controls($self,$target)) {
       return "#-1 Permission Denied $$self{obj_id} -> $$target{obj_id}";
+   } 
+
+   if(lc($atr) eq "lastsite") {
+      return lastsite($target);
+   } else {
+      return get($target,$atr);
    }
-   return get($target,$atr);
 }
 
 
@@ -1033,7 +1038,13 @@ sub fun_input
           my $cmd = $$prog{cmd_last};
           $$prog{pending} = 1;
        }
-       return shift(@{$$input{buffer}});                # return buffered data
+       my $data = shift(@{$$input{buffer}});             # return buffered data
+       $data =~ s/\\/\\\\/g;
+       $data =~ s/\//\\\//g;
+       $data =~ s/’/\\\'/g;
+       $data =~ s/―/\\\-/g;
+       $data =~ s/`/\\`/g;
+       return $data;
     }
 }
 

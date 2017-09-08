@@ -527,7 +527,7 @@ sub cmd_var
        @{$$prog{var}}{$1} = evaluate($self,$prog,$2); 
 #       necho(self   => $self,
 #             prog   => $prog,
-#             source => [ "Set." ],
+#             source => [ "Set. $1 = @{$$prog{var}}{$1}" ],
 #            );
     } else {
        necho(self   => $self,
@@ -634,7 +634,9 @@ sub cmd_ps
          if($#$stack >= 0) {
             necho(self   => $self,
                   prog   => $prog,
-                  source => [ "  PID: %s for %s",$key,obj_name($$data{user}) ]
+                  source => [ "  PID: %s for %s",$key,
+                              obj_name($self,$$data{user}) 
+                            ]
                  );
 #            for my $i (0 .. (($#$stack <= 10) ? $#$stack : 10)) {
             for my $i (0 .. $#$stack) {
@@ -1026,16 +1028,22 @@ sub cmd_switch
        if($#list >= 1) {
           my ($txt,$cmd) = (evaluate($self,$prog,shift(@list)),
                             evaluate($self,$prog,shift(@list)));
-          $txt =~ s/\*/\(.*\)/g;
+#          $txt =~ s/\*/\(.*\)/g;
           $txt =~ s/^\s+|\s+$//g;
+          $first =~ s/\//#/g;
 
-          if($first =~ /^\s*$txt\s*$/i) {
+ 
+          if(match_glob(lc($txt),lc($first))) {
              return mushrun(self   => $self,
                             prog   => $prog,
                             runas  => $self,
                             source => 0,
                             cmd    => $cmd
                            );
+          } else {
+#             printf("!match: '%s' != '%s'\n",$txt,$first);
+#             printf("    '%s'\n",match_glob(lc($txt),lc($first)));
+#             printf("    '%s'\n",glob_to_regex_string($txt));
           }
        } else {
           @list[0] = $1 if(@list[0] =~ /^\s*{(.*)}\s*$/);
@@ -1048,7 +1056,6 @@ sub cmd_switch
                         );
        }
     }
-#    printf("SWITCH: end\n");
 }
       
 
@@ -1223,7 +1230,12 @@ sub cmd_send
                );
        } else {
           my $sock=@{@connected{$$hash{sck_socket}}}{sock};
-          printf($sock "%s\r\n",evaluate($self,$prog,$'));
+          my $txt = evaluate($self,$prog,$');
+#       necho(self   => $self,
+#             prog   => $prog,
+#             source => [ "\@send: '%s'", $txt ]
+#            );
+          printf($sock "%s\n",evaluate($self,$prog,$'));
        }
     } else {
        necho(self   => $self,
@@ -1433,7 +1445,7 @@ sub cmd_destroy
       my_commit;
       necho(self   => $self,
             prog   => $prog,
-            source => [ "%s was destroyed.",obj_name($target) ],
+            source => [ "%s was destroyed.",obj_name($self,$target) ],
             room   => [ $target, "%s was destroyed.",name($target) ],
             room2  => [ $target, "%s has left.",name($target) ]
            );
@@ -1464,13 +1476,13 @@ sub cmd_toad
       necho(self   => $self,
             prog   => $prog,
             source => [ "Internal error, %s was not \@toaded.",
-                        obj_name($target)
+                        obj_name($self,$target)
                       ]
            );
    } elsif(loc($target) ne loc($self)) {
       necho(self   => $self,
             prog   => $prog,
-            source => [ "%s was \@toaded.",obj_name($target) ],
+            source => [ "%s was \@toaded.",obj_name($self,$target) ],
             room   => [ $target, "%s was \@toaded.",name($target) ],
             room2  => [ $target, "%s has left.",name($target) ]
            );
@@ -2067,10 +2079,10 @@ sub cmd_quit
 {
    my ($self,$prog) = @_;
 
-   if(hasflag($self,"PLAYER")) {
-      my $sock = $$user{sock};
+   if(defined $$self{sock}) {
+      my $sock = $$self{sock};
       printf($sock "%s",getfile("logoff.txt"));
-      server_disconnect($$user{sock});
+      server_disconnect($sock);
    } else {
       err($self,$prog,"Permission denied [Non-players may not quit]");
    }
@@ -2170,7 +2182,7 @@ sub cmd_create
 
    necho(self   => $self,
          prog   => $prog,
-         source => [ "Object created as: %s",obj_name($dbref) ],
+         source => [ "Object created as: %s",obj_name($self,$dbref) ],
         );
 
    my_commit;
@@ -2197,9 +2209,9 @@ sub cmd_link
       return err($self,$prog,"I don't see that here");
 
    if(!valid_dbref($exit)) {
-      return err($self,$prog,"%s not a valid object.",obj_name($exit,1));
+      return err($self,$prog,"%s not a valid object.",$exit);
    } elsif(!valid_dbref($dest)) {
-      return err($self,$prog,"%s not a valid object.",obj_name($exit,1));
+      return err($self,$prog,"%s not a valid object.",$dest);
    } elsif(!(controls($self,$loc) || hasflag($loc,"LINK_OK"))) {
       return err($self,$prog,"You do not own this room and it is not LINK_OK");
    }
@@ -2620,9 +2632,9 @@ sub cmd_ex
    }
 
 
-   $out .= obj_name($target,$perm);
+   $out .= obj_name($self,$target,$perm);
    my $owner = fetch(($$target{obj_owner} == -1) ? 0 : $$target{obj_owner});
-   $out .= "\nOwner: " . obj_name($owner,$perm) . 
+   $out .= "\nOwner: " . obj_name($self,$owner,$perm) . 
            "  Flags: " . flag_list($target,1);
 
    if(($desc = get($$target{obj_id},"DESCRIPTION")) && $desc ne undef) {
@@ -2673,7 +2685,7 @@ sub cmd_ex
                            $$target{obj_id}
                           )}) {
       if($$self{obj_id} != $$hash{obj_id}) {
-         push(@content,obj_name($hash,$perm));
+         push(@content,obj_name($self,$hash,$perm));
       }
    }
 
@@ -2691,14 +2703,14 @@ sub cmd_ex
          $out .= "\nSource: ** No where **";
       } else {
          my $src = fetch($$con{con_source_id});
-         $out .= "\nSource: " . obj_name($src,$perm);
+         $out .= "\nSource: " . obj_name($self,$src,$perm);
       }
 
       if($con eq undef || $$con{con_dest_id} eq undef) {
          $out .= "\nDesination: ** No where **";
       } else {
          my $dst = fetch($$con{con_dest_id});
-         $out .= "\nDestination: " . obj_name($dst,$perm);
+         $out .= "\nDestination: " . obj_name($self,$dst,$perm);
       }
    }
 
@@ -2715,15 +2727,15 @@ sub cmd_ex
                            "ORDER BY con_created_date",
                            $$target{obj_id}
                       )}) {
-      push(@exit,obj_name($hash));
+      push(@exit,obj_name($self,$hash));
    }
    if($#exit >= 0) {
       $out .= "\nExits:\n" . join("\n",@exit);
    }
 
    if($perm && (hasflag($target,"PLAYER") || hasflag($target,"OBJECT"))) {
-      $out .= "\nHome: " . obj_name(fetch($$target{obj_home}),$perm) .
-              "\nLocation: " . obj_name($$con{con_source_id},$perm);
+      $out .= "\nHome: " . obj_name($self,fetch($$target{obj_home}),$perm) .
+              "\nLocation: " . obj_name($self,$$con{con_source_id},$perm);
    }
    necho(self   => $self,
          prog   => $prog,
@@ -2750,7 +2762,7 @@ sub cmd_inventory
       for my $i (0 .. $#$inv) {
          necho(self   => $self,
                prog   => $prog,
-               source => [ "%s", obj_name($$inv[$i]) ],
+               source => [ "%s", obj_name($self,$$inv[$i]) ],
               );
       }
    }
@@ -2776,7 +2788,7 @@ sub cmd_look
       return err($self,$prog,"I don't see that here.");
    }
 
-   $out = obj_name($target);
+   $out = obj_name($self,$target);
    if(($desc = get($$target{obj_id},"DESCRIPTION")) && $desc ne undef) {
       $out .= "\n" . evaluate($self,$prog,$desc);
    } else {

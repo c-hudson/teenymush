@@ -321,9 +321,19 @@ sub handle_object_listener
       if($$hash{cmd} ne $msg) {
          $$hash{cmd} =~ s/\*/\(.*\)/g;
          if($msg =~ /^$$hash{cmd}$/) {
-            mushrun($hash,$hash,$$hash{txt},0,$1,$2,$3,$4,$5,$6,$7,$8,$9);
+            mushrun(self   => $hash,
+                    runas  => $hash,
+                    cmd    => $$hash{txt},
+                    wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
+                    source => 0,
+                   );
          } else {
-            mushrun($hash,$hash,$$hash{txt},0);
+            mushrun(self   => $hash,
+                    runas  => $hash,
+                    cmd    => $$hash{txt},
+                    wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
+                    source => 0,
+                   );
          }
       }
    }
@@ -381,7 +391,7 @@ sub handle_listener
             mushrun(self   => $self,
                     runas => $hash,
                     cmd    => $$hash{txt},
-                    wild   => [0,$1,$2,$3,$4,$5,$6,$7,$8,$9],
+                    wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
                     source => 0,
                    );
          }
@@ -521,13 +531,13 @@ sub necho
          my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
          for my $sock (@{sql("select c1.obj_id, sck_socket " .
                              "  from content c1, ".
-                             "       content c2, " .
+                             "       content c2, ".
                              "       socket s " .
-                             " where c1.con_source_id = c2.con_source_id ".
-                             "   and c1.obj_id = s.obj_id ".
-                             "   and sck_type = 1 ".
+                             " where c1.con_source_id = c2.con_source_id " .
                              "   and c2.obj_id = ? " .
-                             "   and c1.obj_id != ? ",
+                             "   and c1.obj_id = s.obj_id ".
+                             "   and c1.obj_id != ? " .
+                             "   and sck_type = 1 ",
                              $$target{obj_id},
                              $$target{obj_id}
                       )}) {
@@ -660,12 +670,12 @@ sub name
 {
    my $target = obj(shift);
 
-   if(!defined $$target{obj_name}) {                    # no name, query db
+#   if(!defined $$target{obj_name}) {                    # no name, query db
       $$target{obj_name} = one_val("select obj_name value " .
                                    "  from object "  .
                                    " where obj_id = ?",
                                    $$target{obj_id}); 
-   }
+#   }
 
    if($$target{obj_name} eq undef) {           # no name, how'd that happen?
       $$target{obj_name} = "[<UNKNOWN>]";
@@ -1531,7 +1541,8 @@ sub obj_name
 {
    my ($self,$obj) = (obj(shift),obj(shift));
    
-   $obj = fetch($obj) if(!defined $$obj{obj_name});
+#   $obj = fetch($obj) if(!defined $$obj{obj_name});
+   $obj = fetch($obj);
    if(controls($self,$obj)) {
       return $$obj{obj_name} . "(#" . $$obj{obj_id} . flag_list($obj) . ")";
    } else {
@@ -1588,7 +1599,7 @@ sub date_split
 sub move
 {
    my ($self,$prog,$target,$dest,$type) = (obj($_[0]),obj($_[1]),obj($_[2]),$_[3]);
-   my $who = $$user{obj_name};
+   my $who = $$self{obj_name};
 
    $who = 'CREATE_COMMAND' if($who eq undef);
 
@@ -1830,8 +1841,8 @@ sub quota_left
                     "  from object " .
                     " where obj_owner = ?" .
                     "    or obj_id = ?",
-                    $owner,
-                    $owner
+                    $$owner{obj_id},
+                    $$owner{obj_id}
                 );
    }
 }

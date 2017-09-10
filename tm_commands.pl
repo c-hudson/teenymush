@@ -98,6 +98,8 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_inventory(@_); }};
 @command{enter}      = { help => "Enter an object",
                          fun  => sub { cmd_enter(@_); }};
+@command{leave}      = { help => "Leave an object",
+                         fun  => sub { cmd_leave(@_); }};
 @command{"\@name"}   = { help => "Change the name of an object",
                          fun  => sub { cmd_name(@_); }};
 @command{"\@describe"}={ help => "Change the description of an object",
@@ -1572,12 +1574,64 @@ sub cmd_drop
           );
 }
 
+sub cmd_leave
+{
+   my ($self,$prog,$txt) = @_;
+
+   my $container = fetch(loc($self));
+
+   if($container eq undef || hasflag($container,"ROOM")) {
+      return err($self,$prog,"You can't leave.");
+   }
+
+   my $dest = fetch(loc($container));
+
+   if($dest eq undef) {
+      return err($self,$prog,"You can't leave.");
+   }
+
+   necho(self   => $self,
+         prog   => $prog,
+         room   => [ $self, "%s dropped %s", name($container),name($self) ],
+         room2  => [ $self, "%s has left.",name($self) ]
+        );
+
+#   my ($self,$prog,$target,$dest,$type) = (obj($_[0]),obj($_[1]),obj($_[2]),$_[3]);
+
+   printf("Move: '$dest'\n");
+   move($self,$prog,$self,$dest) ||
+      return err($self,$prog,"Internal error, unable to leave that object");
+
+   # provide some visual feed back to the player
+   necho(self   => $self,
+         prog   => $prog,
+         room   => [ $self, "%s dropped %s.", name($container),name($self) ],
+         room2  => [ $self, "%s has arrived.",name($self) ]
+        );
+
+   mushrun(self   => $self,
+           prog   => $prog,
+           runas  => $self,
+           source => 0,
+           cmd    => "look"
+          );
+}
+
 sub cmd_take
 {
    my ($self,$prog,$txt) = @_;
 
    my $target = locate_object($self,$txt,"LOCAL") ||
       return err($self,$prog,"I don't see that here.");
+
+   if(hasflag($target,"EXIT")) {
+      return err($self,$prog,"You may not take exits.");
+   } elsif($$target{obj_id} eq  $$self{obj_id}) {
+      return err($self,$prog,"You cannot get yourself!");
+   }
+
+   controls($self,$target) ||
+      return err($self,$prog,"Permission Denied.");
 
    necho(self   => $self,
          prog   => $prog,
@@ -1612,6 +1666,14 @@ sub cmd_name
          return err($self,$prog,"I don't see that here.");
       my $name = trim($2);
 
+      controls($self,$target) ||
+         return err($self,$prog,"Permission Denied.");
+
+      if($name =~ /^([^a-zA-Z\_\-0-9\.]+)$/) {
+         return err($self,$prog,"Invalid names, names may only " .
+                    "contain A-Z, 0-9, _, ., and -");
+      }
+
       if(hasflag($target,"PLAYER") && inuse_player_name($2)) {
          return err($self,$prog,"That name is already in use");
       } elsif($name =~ /^\s*(\#|\*)/) {
@@ -1630,7 +1692,7 @@ sub cmd_name
 
          necho(self   => $self,
                prog   => $prog,
-               source => "Set.",
+               source => [ "Set." ],
                room   => [ $target, "%s is now known by %s\n",$1,$2 ]
               );
 
@@ -1651,10 +1713,13 @@ sub cmd_enter
    my $target = locate_object($self,$txt,"LOCAL") ||
       return err($self,$prog,"I don't see that here.");
 
+   controls($self,$target) ||
+      return err($self,$prog,"Permission Denied.");
+
    necho(self   => $self,
          prog   => $prog,
-         room   => [ $target, "%s enters %s.",name($self),name($target)],
-         room2  => [ $target, "%s has left.", name($self) ]
+         room   => [ $self, "%s enters %s.",name($self),name($target)],
+         room2  => [ $self, "%s has left.", name($self) ]
         );
 
    move($self,$prog,$self,$target) ||
@@ -1664,13 +1729,13 @@ sub cmd_enter
    necho(self   => $self,
          prog   => $prog,
          source => [ "You have entered %s.",name($target) ],
-         room   => [ $target, "%s entered %s.",name($self),name($target)],
-         room2  => [ $target, "%s has arrived.", name($self) ]
+         room   => [ $self, "%s entered %s.",name($self),name($target)],
+         room2  => [ $self, "%s has arrived.", name($self) ]
         );
 
    mushrun(self   => $self,
            prog   => $prog,
-           runas  => $target,
+           runas  => $self,
            source => 0,
            cmd    => "look"
           );
@@ -1711,7 +1776,8 @@ sub whisper
    my ($self,$prog,$target,$msg) = @_;
 
    my $obj = locate_object($self,$target,"LOCAL") ||
-         return err($self,$prog,"I don't see that here.");
+
+   return err($self,$prog,"I don't see that here.") if $obj eq undef;
 
    if($msg =~ /^\s*:/) {
       necho(self   => $self,
@@ -1730,8 +1796,9 @@ sub whisper
    }
 
    if(hasflag($self,"PLAYER")) { 
-      set($self,$prog,$self,"LAST_WHISPER",$$target{obj_id});
+      set($self,$prog,$self,"LAST_WHISPER","#$$obj{obj_id}",1);
    }
+   return 1;
 }
 
 #
@@ -1742,22 +1809,28 @@ sub cmd_whisper
 {
    my ($self,$prog,$txt) = @_;
 
-   whisper($self,$prog,$1,$') if($txt =~ /^\s*([^ ]+)\s*=/); # standard whisper
+   if($txt =~ /^\s*([^ ]+)\s*=/) {                           # standard whisper
+      whisper($self,$prog,$1,$');
+   } else {
+      my $target = get($self,"LAST_WHISPER");               # no target whisper
+      return whisper($self,$prog,$target,$txt) if($target ne undef);
 
-   my $target = get($self,"LAST_WHISPER");                 # no target whisper
-   return whisper($self,$prog,$target,$txt) if($target ne undef);
-
-   err($self,
-       $prog,
-       "usage: whisper <user> = <message>\n" .
-       "       whisper <message>"
-      );
+      err($self,
+          $prog,
+          "usage: whisper <user> = <message>\n" .
+          "       whisper <message>"
+         );
+   }
 }
 
 sub page
 {
    my ($self,$prog,$target,$msg) = @_;
 
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "target: $target" ], 
+           );
    my $target = locate_player($target,"online") ||
        return err($self,$prog,"That player is not connected.");
 
@@ -1780,7 +1853,7 @@ sub page
    }
    
    if(hasflag($self,"PLAYER")) {
-      set($self,$prog,$self,"LAST_PAGE",$$target{obj_id});
+      set($self,$prog,$self,"LAST_PAGE","#$$target{obj_id}",1);
    }
 }
 
@@ -2231,7 +2304,7 @@ sub cmd_link
 sub cmd_dig
 {
    my ($self,$prog,$txt) = @_;
-   my ($room_name,$room,$in,$out);
+   my ($loc,$room_name,$room,$in,$out);
   
    if($txt =~ /^\s*([^\=]+)\s*=\s*([^,]+)\s*,\s*(.+?)\s*$/ ||
       $txt =~ /^\s*([^=]+)\s*=\s*([^,]+)\s*$/ ||
@@ -2257,14 +2330,22 @@ sub cmd_dig
       return err($self,$prog,"You are out of QUOTA to create objects");
    }
 
-   !locate_exit($in,"EXACT") ||
+
+   if($in ne undef && !locate_exit($in,"EXACT")) {
       return err($self,$prog,"Exit '%s' already exists in this location",$in);
+   }
 
-   my $loc = loc($self) ||
-      return err($self,$prog,"Unable to determine your location");
 
-   if(!(controls($self,$loc) || hasflag($loc,"LINK_OK"))) {
-      return err($self,$prog,"You do not own this room and it is not LINK_OK");
+   if($out ne undef) {
+      $loc = loc($self) ||
+         return err($self,$prog,"Unable to determine your location");
+
+      if(!(controls($self,$loc) || hasflag($loc,"LINK_OK"))) {
+         return err($self,
+                    $prog,
+                    "You do not own this room or it is not LINK_OK"
+                   );
+      }
    }
 
    my $room = create_object($self,$prog,$room_name,undef,"ROOM")||
@@ -2274,9 +2355,6 @@ sub cmd_dig
          prog   => $prog,
          source => [ "Room created as:         %s(#%sR)",$room_name,$room ],
         );
-
-   my $loc = loc($self) ||
-      return err($self,$prog,"Unable to determine your location");
 
    if($in ne undef) {
       my $in_dbref = create_exit($self,$prog,$in,$loc,$room);
@@ -2540,6 +2618,13 @@ sub cmd_set
       ($target,$flag) = (locate_object($self,$1),$2);
       return err($self,$prog,"Unknown object '%s'",$1) if !$target;
       controls($self,$target) || return err($self,$prog,"Permission denied");
+
+      if($flag =~ /^\s*dark\s*$/i &&          # no dark flag for non-wizards
+         hasflag($target,"PLAYER") && 
+         !hasflag($self,"WIZARD")) {
+         return err($self,$prog,"Permission denied");
+      }
+         
 
       necho(self   => $self,
             prog   => $prog,

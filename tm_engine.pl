@@ -158,11 +158,9 @@ sub mushrun
     my $stack=@{$arg{prog}}{stack};
     if($arg{source}) {
        unshift(@$stack,{ runas => $arg{runas}, cmd => $arg{cmd}, source => 1 });
-          printf("MUSH_1: '%s'\n",$arg{cmd});
     } else {
        for my $i ( balanced_split($arg{cmd},';',3,1) ) {
           if($i ne undef) {
-             printf("MUSH_2: '%s' [$arg{child}]\n",$i);
              if(defined $arg{child} && $arg{child}) {
                 unshift(@$stack,{runas => $arg{runas},cmd => $i,source => 0});
              } else {

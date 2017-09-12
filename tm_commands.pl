@@ -565,7 +565,7 @@ sub cmd_boot
                   target => $hash,
                   prog   => $prog,
                   target => [ $hash, "%s has \@booted you.", $$self{obj_name} ],
-                  source => [ "You \@booted %s off!", $$hash{obj_name} ],
+                  source => [ "You \@booted %s off!", obj_name($hash) ],
                   room   => [ $hash, "%s has been \@booted.",$$hash{obj_name} ],
                  );
          
@@ -2238,10 +2238,8 @@ sub create_exit
    my $exit = create_object($self,$prog,$name,undef,"EXIT") ||
       return 0;
 
-   move($self,$prog,$exit,$in,1) || return 0;
-
    if($out ne undef) {
-      link_exit($exit,$out,1) || return 0;
+      link_exit($self,$exit,$in,$out,1) || return 0;
    }
 
    return $exit;
@@ -2301,12 +2299,12 @@ sub cmd_link
  
    $dest = fetch($dest);
 
-   link_exit($exit,$dest) ||
+   link_exit($self,$exit,undef,$dest) ||
       return err($self,$prog,"Internal error while trying to link exit");
 
    necho(self   => $self,
          prog   => $prog,
-         source => [ "Exit linked to %s#%d",name($dest),$$dest{obj_id} ],
+         source => [ "Exit linked to %s",obj_name($self,$dest,1) ],
         );
 }
 

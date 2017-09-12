@@ -1667,26 +1667,43 @@ sub obj_import
 
 sub link_exit
 {
-   my ($exit,$to) = obj_import(@_);
-    
-   one($db,                                     # set new location
-       "INSERT INTO content (obj_id, ".
-       "                     con_dest_id, ".
-       "                     con_created_by, ".
-       "                     con_created_date, ".
-       "                     con_type) ".
-       "     VALUES (?, ".
-       "             ?, ".
-       "             ?, ".
-       "             now(), ".
-       "             ?) " .
-       "ON DUPLICATE KEY UPDATE " .
-       "   con_dest_id=values(con_dest_id) " .
-       $$exit{obj_id},
-       $$to{obj_id},
-       $$user{obj_name},
-       4
-   );
+   my ($self,$exit,$src,$dst) = obj_import(@_);
+
+   my $count=one_val("select count(*) value " .
+                     "  from content " .
+                     "where obj_id = ?",
+                     $$exit{obj_id});
+
+   if($count > 0) {
+      one($db,
+          "update content " .
+          "   set con_dest_id = ?," .
+          "       con_updated_by = ? , ".
+          "       con_updated_date = now() ".
+          " where obj_id = ?",
+          $$dst{obj_id},
+          obj_name($self,$self,1),
+          $$exit{obj_id});
+   } else {
+      one($db,                                     # set new location
+          "INSERT INTO content (obj_id, ".
+          "                     con_source_id, ".
+          "                     con_dest_id, ".
+          "                     con_created_by, ".
+          "                     con_created_date, ".
+          "                     con_type) ".
+          "     VALUES (?, ".
+          "             ?, ".
+          "             ?, ".
+          "             now(), ".
+          "             ?) " .
+          $$exit{obj_id},
+          $$src{obj_id},
+          $$dst{obj_id},
+          obj_name($self,$self,1),
+          4
+      );
+   }
 
    if($$db{rows} == 1) {
       my_commit;

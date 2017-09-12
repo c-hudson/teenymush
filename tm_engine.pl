@@ -158,9 +158,17 @@ sub mushrun
     my $stack=@{$arg{prog}}{stack};
     if($arg{source}) {
        unshift(@$stack,{ runas => $arg{runas}, cmd => $arg{cmd}, source => 1 });
+          printf("MUSH_1: '%s'\n",$arg{cmd});
     } else {
        for my $i ( balanced_split($arg{cmd},';',3,1) ) {
-          push(@$stack,{ runas => $arg{runas}, cmd => $i, source => 0 });
+          if($i ne undef) {
+             printf("MUSH_2: '%s' [$arg{child}]\n",$i);
+             if(defined $arg{child} && $arg{child}) {
+                unshift(@$stack,{runas => $arg{runas},cmd => $i,source => 0});
+             } else {
+                push(@$stack,{ runas => $arg{runas}, cmd => $i, source => 0 });
+             }
+          }
        }
     }
 
@@ -242,18 +250,25 @@ sub spin
             delete @$cmd{pending};
             spin_run(\%last,$program,$cmd,$command);
 
+   
+
             #
             # command is still running and has nothing pending to do
             # at this time, so kip to the next program instead of
             # wasting cycles. 
             #
-  
-            if(defined $$cmd{still_running} && $$cmd{still_running} && 
-               !$$cmd{pending}) {
+            if(defined $$cmd{still_running} && $$cmd{still_running}) {
                next;
             } else {
                $$program{calls}++;
             }
+  
+#            if(defined $$cmd{still_running} && $$cmd{still_running} && 
+#               !$$cmd{pending}) {
+#               next;
+#            } else {
+#               $$program{calls}++;
+#            }
             $count++;
                                                 # stop at 7 milliseconds
             if(Time::HiRes::gettimeofday() - $start > .7) {
@@ -412,5 +427,5 @@ sub signal_still_running
     $$cmd{pending} = $pending;
     $$cmd{still_running} = 1;
 
-    push(@{$$prog{stack}},$cmd);
+    unshift(@{$$prog{stack}},$cmd);
 }

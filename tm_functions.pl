@@ -1044,6 +1044,8 @@ sub fun_input
        $data =~ s/’/\\\'/g;
        $data =~ s/―/\\\-/g;
        $data =~ s/`/\\`/g;
+       $data =~ s/‘/\\`/g;
+       $data =~ s/‚/\\,/g;
        return $data;
     }
 }

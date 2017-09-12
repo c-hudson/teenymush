@@ -190,6 +190,8 @@ delete @honey{keys %honey};
                          alias=> 1                                       };
 @command{"\@tel"}    = { fun  => sub { return &cmd_teleport(@_); },
                          alias=> 1                                       };
+@command{"l"}        = { fun  => sub { return &cmd_look(@_); },          
+                         alias => 1                                      };
 @command{"\@\@"}     = { fun  => sub { return;}                          };
 @command{"\@split"}  = { fun  => sub { cmd_split(@_); }                  };
 
@@ -788,16 +790,19 @@ sub cmd_while
        printf("#*****# while exceeded maxium loop of 1000, stopped\n");
        return err($self,$prog,"while exceeded maxium loop of 1000, stopped");
     } elsif(test($self,$prog,$$cmd{while_test})) {
+
+       signal_still_running($prog);
+
        my $commands = $$cmd{while_cmd};
        for my $i (0 .. $#$commands) {
-          mushrun(self  => $self,
-                  prog  => $prog,
-                  runas => $self,
+          mushrun(self   => $self,
+                  prog   => $prog,
+                  runas  => $self,
                   source => 0,
-                  cmd    => $$commands[$i]
+                  cmd    => $$commands[$i],
+                  child  => 1
                  );
        }
-       signal_still_running($prog);
     }
 }
 
@@ -846,18 +851,22 @@ sub cmd_dolist
    my $list = $$cmd{dolist_cmd};                              # make shortcuts
    my $item = shift(@{$$cmd{dolist_list}});
 
-   for my $i (0 .. $#$list) {                      # push commands into the q
+
+   if( $#{$$cmd{dolist_list}} >= 0) {
+       signal_still_running($prog);
+   }
+    
+   for my $i (0 .. $#$list) {              # push commands into the q
       my $new = $$list[$i];
       $new =~ s/\#\#/$item/g;
-      mushrun(self  => $self,
-              prog  => $prog,
-              runas => $self,
+      mushrun(self   => $self,
+              prog   => $prog,
+              runas  => $self,
               source => 0,
-              cmd    => $new
+              cmd    => $new,
+              child  => 1,
              );
    }
-
-   return ($#{$$cmd{dolist_list}} < 0) ? 0 : signal_still_running($prog);
 }
 
 sub good_password
@@ -1040,7 +1049,8 @@ sub cmd_switch
                             prog   => $prog,
                             runas  => $self,
                             source => 0,
-                            cmd    => $cmd
+                            cmd    => $cmd,
+                            child  => 1
                            );
           } else {
 #             printf("!match: '%s' != '%s'\n",$txt,$first);
@@ -1049,12 +1059,12 @@ sub cmd_switch
           }
        } else {
           @list[0] = $1 if(@list[0] =~ /^\s*{(.*)}\s*$/);
-          $$self{child} = $prog;
           return mushrun(self   => $self,
                          prog   => $prog,
                          runas  => $self,
                          source => 0,
-                         cmd    => @list[0]
+                         cmd    => @list[0],
+                         child  => 1
                         );
        }
     }
@@ -3047,8 +3057,10 @@ sub nvl
 
 sub short_hn
 {
-   if(@_[0] =~ /^\s*([0-9\.]+)\s*$/) {
-      return $1;
+   if(@_[0] =~ /^\s*(\d+)\.(\d+)\.(\d+)\.(\d+)\s*$/) {
+      return "$1.$2.*.*";
+   } elsif(@_[0] =~ /^\s*([0-9\.]+)\s*$/) {
+
    } elsif(@_[0] =~ /[A-Za-z]/ && @_[0] =~ /\.([^\.]+)\.([^\.]+)$/) {
       return "*.$1.$2";
    } else {

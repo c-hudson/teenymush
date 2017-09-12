@@ -1681,9 +1681,7 @@ sub link_exit
        "             now(), ".
        "             ?) " .
        "ON DUPLICATE KEY UPDATE " .
-       "   con_dest_id=values(con_dest_id), " .
-       "   con_updated_by=values(con_created_by), " .
-       "   con_updated_date=now()",
+       "   con_dest_id=values(con_dest_id) " .
        $$exit{obj_id},
        $$to{obj_id},
        $$user{obj_name},

@@ -565,7 +565,7 @@ sub cmd_boot
                   target => $hash,
                   prog   => $prog,
                   target => [ $hash, "%s has \@booted you.", $$self{obj_name} ],
-                  source => [ "You \@booted %s off!", obj_name($hash) ],
+                  source => [ "You \@booted %s off!", obj_name($self,$hash) ],
                   room   => [ $hash, "%s has been \@booted.",$$hash{obj_name} ],
                  );
          
@@ -1771,7 +1771,7 @@ sub cmd_to
 
        necho(self   => $self,
              prog   => $prog,
-             source => [ "%s [to %s]: %s\n",name($self),name($tg) ],
+             source => [ "%s [to %s]: %s\n",name($self),name($tg),$' ],
              room   => [ $self, "%s [to %s]: %s\n",name($self),name($tg),$' ],
             );
     } else {
@@ -3220,7 +3220,7 @@ sub cmd_sweep
                ) {
       necho(self   => $self,
             prog   => $prog,
-            source => [ "   #%s is listening.", object_name($$obj{obj_id}) ],
+            source => [ "   %s is listening.", obj_name($self,$$obj{obj_id}) ],
            );
     }
    necho(self   => $self,

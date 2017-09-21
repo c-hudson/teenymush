@@ -260,13 +260,21 @@ sub cmd_reset
 
 sub cmd_lock
 {
-   my ($self,$prog) = @_;
+   my ($self,$prog,$txt) = @_;
 
-   echo($self,"---[start]----");
-   for my $i (locked(@_[0])) {
-      echo($self,"# '%s'",$i);
+   my $lock = lock_compile($self,$self,$txt);
+
+   if(!$$lock{error}) {
+      necho(self    => $self,
+            prog    => $prog,
+            source => [ "LOCK: '%s'", $$lock{lock} ]
+           );
+   } else {
+      necho(self    => $self,
+            prog    => $prog,
+            source => [ "Invalid lock, $$lock{errormsg}" ]
+           );
    }
-   echo($self ,"---[ end ]----");
 }
 
 #
@@ -642,7 +650,6 @@ sub cmd_ps
                               obj_name($self,$$data{user}) 
                             ]
                  );
-#            for my $i (0 .. (($#$stack <= 10) ? $#$stack : 10)) {
             for my $i (0 .. $#$stack) {
                my $cmd = @{$$stack[$i]}{cmd};
                if(length($cmd) > 67) {
@@ -3018,22 +3025,20 @@ sub cmd_reload_code
 {
    my ($self,$prog,$txt) = @_;
 
-   if(hasflag($self,"WIZARD")) {
-      my $result = load_all_code($self);
+   return err($self,$prog,"Permission denied.") if(!hasflag($self,"WIZARD"));
 
-      if($result eq undef) {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "No code to load, no changes made." ]
-              );
-      } else {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "%s loads %s.\n",name($self),$result ]
-              );
-      }
+   my $result = load_all_code($self);
+
+   if($result eq undef) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "No code to load, no changes made." ]
+           );
    } else {
-      err($self,$prog,"Permission denied.");
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s loads %s.\n",name($self),$result ]
+           );
    }
 }
 
@@ -3223,6 +3228,7 @@ sub cmd_sweep
             source => [ "   %s is listening.", obj_name($self,$$obj{obj_id}) ],
            );
     }
+
    necho(self   => $self,
          prog   => $prog,
          source => [ "Sweep complete." ]

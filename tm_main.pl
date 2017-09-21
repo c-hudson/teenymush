@@ -21,10 +21,8 @@ sql($db,"update socket_history " .
         " where skh_end_time is null");
 my_commit($db);
 
-printf("---[start]---\n");
 for (@Addon::EXPORT) {
   print "$_\n";
 }
-printf("---[end]---\n");
 
 # server_start();

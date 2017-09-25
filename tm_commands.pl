@@ -258,22 +258,36 @@ sub cmd_reset
   }
 }
 
+#      my $eval = lock_eval($self,$self,$txt);
 sub cmd_lock
 {
    my ($self,$prog,$txt) = @_;
 
-   my $lock = lock_compile($self,$self,$txt);
+   if($txt =~ /^\s*([^ ]+)\s*=\s*/) {
 
-   if(!$$lock{error}) {
-      necho(self    => $self,
-            prog    => $prog,
-            source => [ "LOCK: '%s'", $$lock{lock} ]
-           );
+      my $target = locate_object($self,$1,"LOCAL");             # find target
+
+      if($target eq undef) {                            # found invalid object
+         return err($self,$prog,"I don't see that here.");
+      } elsif(!controls($self,$target)) {                 # can modify object?
+         return err($self,$prog,"Permission denied.");
+      } else {                                              # set the lock
+         my $lock = lock_compile($self,$self,$');
+
+         if($$lock{error}) {                               # did lock compile?
+            necho(self    => $self,
+                  prog    => $prog,
+                  source => [ "I don't understand that key, $$lock{errormsg}" ]
+                 );
+         } else {
+            set($self,$prog,$target,"LOCK_DEFAULT",$$lock{lock});
+         }
+      }
    } else {
-      necho(self    => $self,
-            prog    => $prog,
-            source => [ "Invalid lock, $$lock{errormsg}" ]
-           );
+       necho(self   => $self,
+             prog   => $prog,
+             source => [ "usage: \@lock <object> = <key>" ],
+            );
    }
 }
 
@@ -1579,8 +1593,8 @@ sub cmd_drop
    # provide some visual feed back to the player
    necho(self   => $self,
          prog   => $prog,
-         room   => [ "%s dropped %s", name($self),name($target) ],
-         room2  => [ "%s has arrived.",name($target) ]
+         room   => [ $self, "%s dropped %s.", name($self),name($target) ],
+         room2  => [ $self, "%s has arrived.",name($target) ]
         );
 
    mushrun(self   => $self,
@@ -1642,14 +1656,24 @@ sub cmd_take
       return err($self,$prog,"I don't see that here.");
 
    if(hasflag($target,"EXIT")) {
-      return err($self,$prog,"You may not take exits.");
+      return err($self,$prog,"You may not pick up exits.");
    } elsif($$target{obj_id} eq  $$self{obj_id}) {
-      return err($self,$prog,"You cannot get yourself!");
+      return err($self,$prog,"You may not pick up yourself!");
    }
 
-   controls($self,$target) ||
-      return err($self,$prog,"Permission Denied.");
 
+   my $atr = get($target,"LOCK_DEFAULT");
+
+   if($atr ne undef) {
+      my $lock = lock_eval($self,$target,$atr);
+
+      if($$lock{error}) {
+         return err($self,$prog,"Permission denied, the lock has broken.");
+      } elsif(!$$lock{result}) {
+         return err($self,$prog,"You can't pick that up.");
+      }
+   }
+      
    necho(self   => $self,
          prog   => $prog,
          source => [ "You have picked up %s.", name($target) ],
@@ -2676,7 +2700,10 @@ sub list_attr
        "                and fde_type = 2 " .
        "           ) flg on (atr.atr_id = flg.atr_id) " .
        "    where atr.obj_id = ? " .
-       "      and atr_name != 'DESCRIPTION' " .
+       "      and atr_name not in ('DESCRIPTION', " .
+       "                           'LOCK_DEFAULT', " . 
+       "                           'LAST_WHISPER', " .
+       "                           'LAST_PAGE') " .
        "      $query " .
        " group by atr.atr_id, atr_name " .
        "order by atr.atr_name",
@@ -2731,17 +2758,25 @@ sub cmd_ex
       return err($self,$prog,"Permission denied.");
    }
 
-
    $out .= obj_name($self,$target,$perm);
+   my $flags = flag_list($target,1);
+
+   if($flags =~ /(PLAYER|OBJECT|ROOM|EXIT)/) {
+      my $rest = trim($` . $');
+      $rest =~ s/\s{2,99}/ /g;
+      $out .= "\nType: $1  Flags: " . $rest;
+   } else {
+      $out .= "\nType: *UNKNOWN*  Flags: " . $flags;
+   }
+
+   $out .= "\n" . 
+           nvl(get($$target{obj_id},"DESCRIPTION"),
+               "You see nothing special."
+              );
+
    my $owner = fetch(($$target{obj_owner} == -1) ? 0 : $$target{obj_owner});
    $out .= "\nOwner: " . obj_name($self,$owner,$perm) . 
-           "  Flags: " . flag_list($target,1);
-
-   if(($desc = get($$target{obj_id},"DESCRIPTION")) && $desc ne undef) {
-      $out .= "\n$desc";
-   } else {
-      $out .= "\nYou see nothing special.";
-   }
+           "  Key: " . nvl(lock_uncompile($self,get($target,"LOCK_DEFAULT")),"*UNLOCKED*");
 
    $out .= "\nCreated: $$target{obj_created_date}";
    if(hasflag($target,"PLAYER")) {

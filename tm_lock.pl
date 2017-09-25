@@ -10,7 +10,6 @@ sub lock_error
 {
    my ($hash,$err) = @_;
 
-   printf("LOCK_ERROR: called '%s'\n",$err);
    $$hash{errormsg} = $err;
    $$hash{error} = 1;
    $$hash{result} = 0;
@@ -35,7 +34,7 @@ sub do_lock_compare
    if($$lock{result} eq undef) {                              # first comp
       $$lock{result} = $value;
    } elsif($$lock{op} eq undef) {                 # second comp w/o op,err
-      $$lock{error} = 1;
+      lock_error($lock,"Expecting next item instead of operand");
    } elsif($$lock{op} eq "&") {               # have 2 operands with & op
       delete @$lock{op};
       if($value && $$lock{result}) {
@@ -73,15 +72,20 @@ sub lock_item_eval
       }
    } elsif($item =~ /^\s*\((.*)\)\s*/) {             # handle ()'s
       $result = lock_eval($self,$obj,$1);
-      do_lock_compare($lock,$result);
+
+      if($$result{error}) {
+         lock_error($lock,$$result{errormsg});
+      } else {
+         do_lock_compare($lock,$$result{result});
+      }
    } elsif($item =~ /^\s*(!{0,1})\s*([^ ]+)\s*$/) {             # handle item
       $not = ($1 eq "!") ? 1 : 0;
       $target = locate_object($obj,$2,"LOCAL");
 
       if($target eq undef) {                             # verify item exists
          return lock_error($lock,"Target($2) does not exist.");
-      } elsif(($not && $target ne $$self{obj_id}) ||  # handle item comparison
-         (!$not && $target eq $$self{obj_id})) { 
+      } elsif(($not && $$target{obj_id} ne $$self{obj_id}) ||   # compare item
+         (!$not && $$target{obj_id} eq $$self{obj_id})) { 
          $result = 1;                                               # success
       } else {
          $result = 0;                                               # failure
@@ -92,7 +96,7 @@ sub lock_item_eval
       return lock_error($lock,"Invalid item '$item'");       # invalid item/op
    }
 
-   return $$lock{result};
+   return $lock;
 }
 
 #
@@ -126,7 +130,7 @@ sub lock_eval
           $start = $i + 1;
        }
     }
-    return $$lock{result};
+    return $lock;
 }
 
 #
@@ -136,7 +140,7 @@ sub lock_eval
 #
 sub lock_item_compile
 {
-   my ($self,$obj,$lock,$item) = @_;
+   my ($self,$obj,$lock,$item,$flag) = @_;
    my ($not, $target,$result);
 
    return if(defined $$lock{error} && $$lock{error});      # prev parse error
@@ -170,6 +174,8 @@ sub lock_item_compile
       
       if($target eq undef) {                             # verify item exists
          return lock_error($lock,"Target($obj) does not exist");
+      } elsif($flag) {
+         push(@$array,"$not" . obj_name($self,$target));
       } else {
          push(@$array,"$not#$$target{obj_id}");
       }
@@ -186,7 +192,7 @@ sub lock_item_compile
 #
 sub lock_compile
 {
-    my ($self,$obj,$txt) = @_;
+    my ($self,$obj,$txt,$flag) = @_;
     my ($start,$depth) = (0,0);
     my $lock = {
        lock => []
@@ -200,7 +206,12 @@ sub lock_compile
           $depth--;
 
           if($depth == 0) {
-             lock_item_compile($self,$obj,$lock,join('',@list[$start .. $i]));
+             lock_item_compile($self,
+                               $obj,
+                               $lock,
+                               join('',@list[$start .. $i]),
+                               $flag
+                              );
              $start = $i + 1;
           }
        } elsif($depth == 0 && 
@@ -209,7 +220,11 @@ sub lock_compile
                  @list[$i] =~ /^\s*[^\(\)\s]/
                )
               ) {
-          lock_item_compile($self,$obj,$lock,join('',@list[$start .. $i]));
+          lock_item_compile($self,
+                            $obj,
+                            $lock,
+                            join('',@list[$start .. $i]),
+                            $flag);
           $start = $i + 1;
        }
     }
@@ -219,5 +234,23 @@ sub lock_compile
     } else {
        $$lock{lock} = join('',@{@$lock{lock}});
        return $lock;
+    }
+}
+
+#
+# lock_uncompile
+#    Alias for lock_compile but return object names instead of object
+#    dbrefs.
+#
+sub lock_uncompile
+{
+    my ($self,$txt) = @_;
+
+    my $result = lock_compile($self,$self,$txt,1);
+
+    if($$result{error}) {
+       return "*UNLOCKED*";
+    } else {
+      return $$result{lock};
     }
 }

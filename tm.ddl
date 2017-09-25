@@ -36,7 +36,7 @@ CREATE TABLE `attribute` (
   KEY `attribute_idx1` (`obj_id`),
   KEY `attribute_idx2` (`atr_name`),
   CONSTRAINT `attribute_ibfk_1` FOREIGN KEY (`obj_id`) REFERENCES `object` (`obj_id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=2447 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=2470 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -208,7 +208,7 @@ CREATE TABLE `output` (
   `out_source` int(11) DEFAULT NULL,
   `out_destination` int(11) DEFAULT NULL,
   PRIMARY KEY (`out_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=38099 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=41226 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -249,7 +249,7 @@ CREATE TABLE `socket` (
   `sck_tag` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`sck_id`),
   KEY `socket_idx1` (`obj_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=322 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=335 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -268,7 +268,7 @@ CREATE TABLE `socket_history` (
   `skh_end_time` datetime DEFAULT NULL,
   `skh_success` int(11) NOT NULL,
   PRIMARY KEY (`skh_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=1055 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=1071 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -296,4 +296,4 @@ CREATE TABLE `valid_option` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2017-09-21  1:00:01
+-- Dump completed on 2017-09-23 21:25:53

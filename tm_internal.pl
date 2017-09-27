@@ -479,6 +479,11 @@ sub log_output
    my ($src,$dst,$txt) = @_;
 
    $txt =~ s/([\r\n]+)$//g;
+
+   my $tmp = $$db{rows}; # its easy to try to necho() data before testing
+                         # against $$db{rows}, which  will clear $$db{rows}.
+                         # so we'll revert it after the below sql() call.
+
    sql($db,                                     #store output in output table
        "insert into output" .
        "(" .
@@ -494,6 +499,7 @@ sub log_output
        $$src{obj_id},
        $$dst{obj_id}
       );
+   $$db{rows} = $tmp;
 }
 
 
@@ -1695,14 +1701,16 @@ sub link_exit
           "     VALUES (?, ".
           "             ?, ".
           "             ?, ".
+          "             ?, ".
           "             now(), ".
-          "             ?) " .
+          "             ?) ",
           $$exit{obj_id},
           $$src{obj_id},
           $$dst{obj_id},
           obj_name($self,$self,1),
           4
       );
+      printf("ROWS: db{rows} = $$db{rows}\n");
    }
 
    if($$db{rows} == 1) {

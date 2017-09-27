@@ -162,8 +162,8 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_dolist(@_); }};
 @command{"\@while"}   ={ help => "Loop while an expression is true",
                          fun  => sub { cmd_while(@_); }};
-@command{"\@crash"}   ={ help => "Crash the MUSH",
-                         fun  => sub { my $foo; @{$$foo{crash}}; }};
+@command{"\@crash"}   ={ help => "Crashes the server.",
+                         fun  => sub { cmd_crash(@_); }};
 @command{"\@\@"}     = { help => "A comment, will be ignored ",
                          fun  => sub { return;}                          };
 @command{"\@lock"}   = { help => "Test Command",
@@ -242,6 +242,20 @@ sub cmd_version
                    ]
         );
 }
+
+sub cmd_crash
+{
+   my ($self,$prog) = @_;
+
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ "You \@crash the server, yee haw.\n%s",code("long") ],
+         room   => [ $self, "%s \@crashes the server." ],
+        );
+   my $foo;
+   @{$$foo{crash}};
+}
+
 
 sub cmd_reset
 {
@@ -2266,13 +2280,19 @@ sub create_exit
 {
    my ($self,$prog,$name,$in,$out,$verbose) = @_;
 
+   necho(self=>$self,prog=>$prog,source=>["CE: got this far 1"]);
    my $exit = create_object($self,$prog,$name,undef,"EXIT") ||
       return 0;
 
+   necho(self=>$self,prog=>$prog,source=>["CE: got this far 2: $in,$out"]);
+
    if($out ne undef) {
-      link_exit($self,$exit,$in,$out,1) || return 0;
+      if(!link_exit($self,$exit,$in,$out,1)) {
+        necho(self=>$self,prog=>$prog,source=>["CE: got this far 3: error"]);
+      }
    }
 
+   necho(self=>$self,prog=>$prog,source=>["CE: got this far 3"]);
    return $exit;
 }
 
@@ -2327,6 +2347,7 @@ sub cmd_link
    } elsif(!(controls($self,$loc) || hasflag($loc,"LINK_OK"))) {
       return err($self,$prog,"You do not own this room and it is not LINK_OK");
    }
+
  
    $dest = fetch($dest);
 
@@ -2437,6 +2458,10 @@ sub cmd_open
                              "        \@open <ExitName>");
    }
 
+   necho(self => $self,
+         prog => $prog,
+         source => ["Got this far 1" ]
+        );
    if(quota_left($self) < 1) {
       return err($self,$prog,"You are out of QUOTA to create objects");
    }
@@ -2446,6 +2471,11 @@ sub cmd_open
 
    my $loc = loc($self) ||
       return err($self,$prog,"Unable to determine your location");
+
+   necho(self => $self,
+         prog => $prog,
+         source => ["Got this far 2" ]
+        );
 
    if(!(controls($self,$loc) || hasflag($loc,"ABODE"))) {
       return err($self,$prog,"You do not own this room and it is not ABODE");
@@ -2457,6 +2487,11 @@ sub cmd_open
    if(!(controls($self,$loc) || hasflag($loc,"LINK_OK"))) {
       return err($self,$prog,"You do not own this room and it is not LINK_OK");
    }
+   necho(self => $self,
+         prog => $prog,
+         source => ["Got this far: 3 : $exit,$loc,$$dest{obj_id}" ]
+        );
+
 
    my $dbref = create_exit($self,$prog,$exit,$loc,$dest) ||
       return err($self,$prog,"Internal error, unable to create the exit");
@@ -2992,7 +3027,7 @@ sub cmd_look
           }
       }
    }
-   $out .= "\nExits:\n" . join("   ",@exit) if($#exit >= 0);   # add any exits
+   $out .= "\nExits:\n" . join("  ",@exit) if($#exit >= 0);   # add any exits
    necho(self   => $self,
          prog   => $prog,
          source => ["%s",$out ]

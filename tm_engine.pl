@@ -229,6 +229,19 @@ sub spin
    @info{engine} = {} if(!defined @info{engine});
 
    eval {
+       local $SIG{__DIE__} = sub {
+          printf("----- [ Crash Report@ %s ]-----\n",scalar localtime());
+          printf("User:     %s\nCmd:      %s\n",name($user),
+              @{@last{cmd}}{cmd});
+          if(defined @info{sql_last}) {
+             printf("LastSQL: '%s'\n",@info{sql_last});
+             printf("         '%s'\n",@info{sql_last_args});
+             delete @info{sql_last};
+             delete @info{sql_last_args};
+          }
+          printf("%s",code("long"));
+       };
+
 #      ualarm(800_000);                                # die at 8 milliseconds
 #      ualarm(1_200_000);                                # die at 8 milliseconds
 
@@ -297,12 +310,10 @@ sub spin
          printf("   #%s: %s\n",@{@last{user}}{obj_id},@{@last{cmd}}{cmd});
       }
    } elsif($@) {                               # oops., you sunk my battle ship
-         printf("USER: '%s'\n",$user);
-         printf("USER: '%s'\n",@last{cmd});
-         printf("# %s CRASHED the server with: %s\n%s",name($user),
-                @{@last{cmd}}{cmd},$@);
-         printf("LastSQL: '%s'\n",@info{sql_last});
-         printf("         '%s'\n",@info{sql_last_args});
+#         printf("# %s CRASHED the server with: %s\n%s",name($user),
+#                @{@last{cmd}}{cmd},$@);
+#         printf("LastSQL: '%s'\n",@info{sql_last});
+#         printf("         '%s'\n",@info{sql_last_args});
          my_rollback($db);
 
          my $msg = sprintf("%s CRASHed the server with: %s",name($user),
@@ -311,12 +322,12 @@ sub spin
                prog => prog($user,$user),
                source => [ "%s", $msg ]
               );
-         if($msg ne $$user{crash}) {
-            necho(self => $user,
-                  prog => prog($user,$user),
-                  room => [ "%s", $msg ]
-                 );
-         }
+#         if($msg ne $$user{crash}) {
+#            necho(self => $user,
+#                  prog => prog($user,$user),
+#                  room => [ "%s", $msg ]
+#                 );
+#         }
       }
 }
 

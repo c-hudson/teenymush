@@ -188,7 +188,8 @@ sub lock_item_compile
 
 #
 # lock_compile
-#    This is the inital call to evaluating a lock.
+#    Convert a string into a lock of dbrefs to protect against player 
+#    renames.
 #
 sub lock_compile
 {

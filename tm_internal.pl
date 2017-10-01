@@ -109,7 +109,7 @@ sub evaluate_substitutions
          $out .= "\t";
       } elsif($seq eq "%#") {                                # current dbref
          $out .= "#" . @{$$prog{created_by}}{obj_id};
-      } elsif($seq eq "%n") {                                # current dbref
+      } elsif(lc($seq) eq "%n") {                          # current dbref
          $out .= @{$$prog{created_by}}{obj_name};
       } elsif($seq =~ /^%([0-9])$/ || $seq =~ /^%\{([^}]+)\}$/) {  # temp vars
          if($1 eq "hostname") {

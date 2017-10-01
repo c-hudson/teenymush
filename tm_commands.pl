@@ -250,7 +250,7 @@ sub cmd_crash
    necho(self   => $self,
          prog   => $prog,
          source => [ "You \@crash the server, yee haw.\n%s",code("long") ],
-         room   => [ $self, "%s \@crashes the server." ],
+         room   => [ $self, "%s \@crashes the server.", name($self) ],
         );
    my $foo;
    @{$$foo{crash}};
@@ -701,25 +701,34 @@ sub cmd_ps
         );
 }
 
+#
+# cmd_halt
+#    Delete all processes owned by the object running the @halt command.
+#
 sub cmd_halt
 {
    my ($self,$prog) = @_;
    my $engine = @info{engine};
+   my %owner;                                            # cache owner calls
+   my $obj = @{owner($self)}{obj_id};
 
-   for my $key (keys %$engine) {
-      my $data = @{$$engine{$key}}[0];
-      for my $pid (@{$$engine{$key}}) {
-         my $stack = $$pid{stack};
-         if(@{$$data{user}}{obj_id} eq $$self{obj_id}) {
-            delete @$pid{stack};
-            necho(self => $self,
-                 prog => $prog,
-                 source => [ "Pid %s stopped." , $key]
-                );
-         }
+   for my $pid (keys %$engine) {                          # look at each pid
+      #  peek to see who created the process [ick]
+      my $creator = @{@{@{@$engine{$pid}}[0]}{created_by}}{obj_id};
+
+      # cache owner of object
+      @owner{$obj} = @{owner($creator)}{obj_id} if(!defined @owner{$creator});
+
+      if(@owner{$obj} == $obj) {                  # are the owners the same?
+         delete @$engine{$pid};
+         necho(self => $self,
+               prog => $prog,
+               source => [ "Pid %s stopped." , $pid ]
+              );
       }
    }
 }
+         
 
 #
 # tval
@@ -737,19 +746,19 @@ sub test
    my ($self,$prog,$txt) = @_;
 
    if($txt =~ / <= /)     { 
-      return (tval($self,$prog,$') <= tval($self,$prog,$`)) ? 1 : 0;
+      return (tval($self,$prog,$`) <= tval($self,$prog,$')) ? 1 : 0;
    } elsif($txt =~ / == /)  {
-      return (tval($self,$prog,$') == tval($self,$prog,$`)) ? 1 : 0;
+      return (tval($self,$prog,$`) == tval($self,$prog,$')) ? 1 : 0;
    } elsif($txt =~ / >= /)  {
-      return (tval($self,$prog,$') >= tval($self,$prog,$`)) ? 1 : 0;
+      return (tval($self,$prog,$`) >= tval($self,$prog,$')) ? 1 : 0;
    } elsif($txt =~ / > /)   {
-      return (tval($self,$prog,$') > tval($self,$prog,$`)) ? 1 : 0;
+      return (tval($self,$prog,$`) > tval($self,$prog,$')) ? 1 : 0;
    } elsif($txt =~ / < /)   {
-      return (tval($self,$prog,$') < tval($self,$prog,$`)) ? 1 : 0;
+      return (tval($self,$prog,$`) < tval($self,$prog,$')) ? 1 : 0;
    } elsif($txt =~ / eq /)  {
-      return (tval($self,$prog,$') eq tval($self,$prog,$`)) ? 1 : 0;
+      return (tval($self,$prog,$`) eq tval($self,$prog,$')) ? 1 : 0;
    } elsif($txt =~ / ne /)  {
-      return (tval($self,$prog,$') ne tval($self,$prog,$`)) ? 1 : 0;
+      return (tval($self,$prog,$`) ne tval($self,$prog,$')) ? 1 : 0;
    } else {
       return 0;
    }
@@ -797,6 +806,63 @@ sub cmd_split
 # cmd_while
 #    Loop while the expression is true
 #
+sub cmd_while2
+{
+    my ($self,$prog,$txt) = @_;
+    my (%last,$first);
+
+    my $cmd = $$prog{cmd_last};
+
+    if(!defined $$cmd{while_test}) {                 # initialize "loop"
+        $first = 1;
+        if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/s) {
+           ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
+           $$cmd{while_cmd} = [ balanced_split($2,";",3) ];
+        } else {
+           return err($self,$prog,"usage: while (<expression>) { commands }");
+        }
+    }
+
+#    printf("WHILE: '%s' -> '%s' -> '%s'\n",
+#           $$cmd{while_test},
+#           evaluate($self,$prog,$$cmd{while_test}),
+#           test($$cmd{while_test})
+#          );
+
+    if($$cmd{while_count} >= 1000) {
+       printf("#*****# while exceeded maxium loop of 1000, stopped\n");
+       return err($self,$prog,"while exceeded maxium loop of 1000, stopped");
+    } else {
+       my $commands = $$cmd{while_cmd};
+
+       if($$cmd{while_count} % $#$commands == 0) {       # start of iteration?
+          printf("WHILE: running test\n");
+          # run test to see if we continue or stop
+          if(!test($self,$prog,$$cmd{while_test})) {
+             printf("WHILE: Test failed: '%s'\n",test($self,$prog,$$cmd{while_test}));
+             return "DONE";
+          }
+       } else {
+          printf("WHILE: !running test\n");
+       }
+
+       my $commands = $$cmd{while_cmd};
+
+       mushrun(self   => $self,
+               prog   => $prog,
+               runas  => $self,
+               source => 0,
+               cmd    => $$commands[$$cmd{while_count} % $#$commands],
+               child  => 1
+              );
+
+       $$cmd{while_count}++;
+
+       return "RUNNING"                                # signal still running
+    }
+    return "DONE";                                              # signal done
+}
+
 sub cmd_while
 {
     my ($self,$prog,$txt) = @_;
@@ -838,8 +904,10 @@ sub cmd_while
                   child  => 1
                  );
        }
+       return "RUNNING";
     }
 }
+
 
 
 sub max_args
@@ -1085,12 +1153,7 @@ sub cmd_switch
                             runas  => $self,
                             source => 0,
                             cmd    => $cmd,
-                            child  => 1
                            );
-          } else {
-#             printf("!match: '%s' != '%s'\n",$txt,$first);
-#             printf("    '%s'\n",match_glob(lc($txt),lc($first)));
-#             printf("    '%s'\n",glob_to_regex_string($txt));
           }
        } else {
           @list[0] = $1 if(@list[0] =~ /^\s*{(.*)}\s*$/);
@@ -1099,7 +1162,6 @@ sub cmd_switch
                          runas  => $self,
                          source => 0,
                          cmd    => @list[0],
-                         child  => 1
                         );
        }
     }

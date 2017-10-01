@@ -162,9 +162,10 @@ sub mushrun
        for my $i ( balanced_split($arg{cmd},';',3,1) ) {
           if($i ne undef) {
              if(defined $arg{child} && $arg{child}) {
+#                push(@$stack,{runas => $arg{runas},cmd => $i,source => 0});
                 unshift(@$stack,{runas => $arg{runas},cmd => $i,source => 0});
              } else {
-                push(@$stack,{ runas => $arg{runas}, cmd => $i, source => 0 });
+                push(@$stack,{runas => $arg{runas}, cmd => $i, source => 0 });
              }
           }
        }
@@ -254,33 +255,38 @@ sub spin
 
          my $sc = $$program{calls};
          for(my $i=0;$#$command >= 0 && $$program{calls} - $sc <= 100;$i++) {
-            my $cmd = shift(@$command);
-            $$user{cmd_data} = $cmd;
-            delete @$cmd{still_running};
-     
-            delete @$cmd{pending};
-            spin_run(\%last,$program,$cmd,$command);
+            my $cmd = @$command[0];
 
-   
 
             #
-            # command is still running and has nothing pending to do
-            # at this time, so kip to the next program instead of
-            # wasting cycles. 
+            # if any command envoke mushrun(), it becomes difficult to ensure
+            # the execution order. The way around this is to hide the current
+            # stack and add back commands added by mushrun to the original
+            # stack. This could be avoided if each command delt with the
+            # stack better. For ease of coding, i choose to fix it here
+            # instead of a billion other places.
             #
-            if(defined $$cmd{still_running} && $$cmd{still_running}) {
-               next;
-            } else {
-               $$program{calls}++;
+            my $tmp = $$program{stack};                 # hide original stack
+            $$program{stack} = [];                          # and add new one
+            my $stack = $$program{stack};
+
+            my $result = spin_run(\%last,$program,$cmd,$command);   # run cmd
+
+            shift(@$command) if($result ne "RUNNING");
+
+            my $stack = $$program{stack};            # copy back new commands
+            while($#$stack >= 0) {
+               unshift(@$command,pop(@$stack));
             }
-  
-#            if(defined $$cmd{still_running} && $$cmd{still_running} && 
-#               !$$cmd{pending}) {
-#               next;
-#            } else {
-#               $$program{calls}++;
-#            }
+            $$program{stack} = $tmp;                  # unhide original stack
+
+            next if $result eq "RUNNING";            # command still running,
+                                                        # don't remove it and 
+                                                        # move to next thread
+
+            $$program{calls}++;
             $count++;
+
                                                 # stop at 7 milliseconds
             if(Time::HiRes::gettimeofday() - $start > .7) {
                 printf("Time slice ran long, exiting correctly\n");
@@ -310,25 +316,16 @@ sub spin
          printf("   #%s: %s\n",@{@last{user}}{obj_id},@{@last{cmd}}{cmd});
       }
    } elsif($@) {                               # oops., you sunk my battle ship
-#         printf("# %s CRASHED the server with: %s\n%s",name($user),
-#                @{@last{cmd}}{cmd},$@);
-#         printf("LastSQL: '%s'\n",@info{sql_last});
-#         printf("         '%s'\n",@info{sql_last_args});
-         my_rollback($db);
+      my_rollback($db);
 
-         my $msg = sprintf("%s CRASHed the server with: %s",name($user),
-             @{@last{cmd}}{cmd});
-         necho(self => $user,
-               prog => prog($user,$user),
-               source => [ "%s", $msg ]
-              );
-#         if($msg ne $$user{crash}) {
-#            necho(self => $user,
-#                  prog => prog($user,$user),
-#                  room => [ "%s", $msg ]
-#                 );
-#         }
-      }
+      my $msg = sprintf("%s CRASHed the server with: %s",name($user),
+          @{@last{cmd}}{cmd});
+      delete @info{engine};
+      necho(self => $user,
+            prog => prog($user,$user),
+            source => [ "%s", $msg ]
+           );
+   }
 }
 
 #
@@ -337,15 +334,22 @@ sub spin
 #
 sub run_internal
 {
-   my ($hash,$cmd,$command,$prog,$arg) = @_;
+   my ($hash,$cmd,$command,$prog,$arg,$type) = @_;
    my %switch;
 
+   $$prog{cmd} = $command;
    while($arg =~ /^\s*\/([^ =]+)( |$)/) {                  # find switches
       @switch{lc($1)} = 1;
       $arg = $';
    }
 
-   &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,$arg,\%switch);
+#   if($type) {
+#      printf("RUN: '%s%s'\n",$cmd,$arg);
+#   } else {
+#      printf("RUN: '%s %s'\n",$cmd,$arg);
+#   }
+
+   return &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,$arg,\%switch);
 }
 
 sub spin_run
@@ -374,20 +378,23 @@ sub spin_run
       return;                                                 # only spaces
    }
    if(defined $$hash{$cmd}) {                                  # internal cmd
-      run_internal($hash,$cmd,$command,$prog,$arg);
+      return run_internal($hash,$cmd,$command,$prog,$arg);
   } elsif(defined $$hash{substr($cmd,0,1)} &&
      (defined $$hash{substr($cmd,0,1)}{nsp} ||
       substr($cmd,1,1) eq " " ||
       length($cmd) == 1
      )) {
-      $$prog{cmd} = $command;
-      &{@{$$hash{substr($cmd,0,1)}}{fun}}
-         ($$command{runas},$prog,substr(trim($$command{cmd}),1),\%switch);
-# internal cmd
-   } elsif(locate_exit($$command{cmd})) {
-      &{@{$$hash{"go"}}{fun}}($$command{runas},$prog,$$command{cmd});   # exit
+      run_internal($hash,substr($cmd,0,1),
+                   $command,
+                   $prog,
+                   substr(trim($$command{cmd}),1),
+                   \%switch,
+                   1
+                  );
+   } elsif(locate_exit($$command{cmd})) {            # handle exit as command
+      return &{@{$$hash{"go"}}{fun}}($$command{runas},$prog,$$command{cmd});
    } elsif(mush_command($self,$prog,$$command{runas},$$command{cmd})) {
-      # mush_command runs command
+      return 1;                                   # mush_command runs command
    } else {
       my $match;
 
@@ -403,7 +410,7 @@ sub spin_run
       }
 
       if($match ne undef) {                                     # found match
-         run_internal($hash,$match,$command,$prog,$arg);
+         return run_internal($hash,$match,$command,$prog,$arg);
       } else {                                                     # no match
          necho(self   => $self,
                prog   => $prog,
@@ -411,6 +418,7 @@ sub spin_run
               );
       }
    }
+   return 1;
 }
 
 

@@ -597,13 +597,21 @@ sub cmd_boot
          if((defined $$switch{port} && $$hash{port} == $txt) ||
             (!defined $$switch{port} && lc($$hash{obj_name}) eq lc($txt))) {
 
-            necho(self   => $self,
-                  target => $hash,
-                  prog   => $prog,
-                  target => [ $hash, "%s has \@booted you.", $$self{obj_name} ],
-                  source => [ "You \@booted %s off!", obj_name($self,$hash) ],
-                  room   => [ $hash, "%s has been \@booted.",$$hash{obj_name} ],
-                 );
+            if(!defined $$hash{obj_id}) {
+               necho(self   => $self,
+                     target => $hash,
+                     prog   => $prog,
+                     source => [ "You \@booted port %s off!", $$hash{port} ],
+                    );
+            } else {
+               necho(self   => $self,
+                     target => $hash,
+                     prog   => $prog,
+                     target => [ $hash, "%s has \@booted you.", name($self)],
+                     source => [ "You \@booted %s off!", obj_name($self,$hash)],
+                     room   => [ $hash, "%s has been \@booted.",name($hash) ],
+                    );
+            }
          
             my $sock=$$hash{sock};
             printf($sock "%s",getfile("logoff.txt"));

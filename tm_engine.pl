@@ -372,7 +372,7 @@ sub spin_run
       $hash = \%command;                                    # connected users
    }
 
-   if($$command{cmd} =~ /^\s*([^ ]+)(\s*)/) {         # split cmd from args
+   if($$command{cmd} =~ /^\s*([^ \/]+)(\s*)/) {         # split cmd from args
       ($cmd,$arg) = (lc($1),$'); 
    } else {
       return;                                                 # only spaces

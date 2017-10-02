@@ -9,7 +9,8 @@ modification of the internal server code.
 Installation
 ~~~~~~~~~~~~
      Run the create.sh to create the mysql peices and the tm_config.dat.
-This will create you a god character with a password of portrzebie, and an
-initial room. The rest is for you to create.
+This will create a god character with a password of portrzebie, and an
+initial room. Then run the "tm" perl script. The rest is for you to
+create.
 
 see http://teenymush.blogspot.in/ for more details.

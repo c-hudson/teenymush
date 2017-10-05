@@ -29,7 +29,7 @@ my %fun =
    time      => sub { return &fun_time(@_);                             },
    flags     => sub { return &fun_flags(@_);                            },
    quota     => sub { return &fun_quota_left(@_);                       },
-#  sql       => sub { return &fun_sql(@_);                              },
+   sql       => sub { return &fun_sql(@_);                              },
    input     => sub { return &fun_input(@_);                            },
    has_input => sub { return &fun_has_input(@_);                        },
    strlen    => sub { return &fun_strlen(@_);                           },
@@ -960,11 +960,20 @@ sub fun_sql
 {
    my ($self,$prog) = (shift,shift);
 
-   my (@txt) = @_;
 
-   my $sql = join(' ',@txt);
-   $sql =~ s/\_/%/g;
-   return table($sql);
+   if(hasflag($self,"WIZARD")) {
+      my (@txt) = @_;
+
+      my $sql = join(',',@txt);
+#      $sql =~ s/\_/%/g;
+      necho(self => $self,
+            prog => $prog,
+            source => [ "Sql: '%s'\n",$sql ],
+           );
+      return table($sql);
+   } else {
+      return "#-1 Permission Denied";
+   }
 }
 
 #

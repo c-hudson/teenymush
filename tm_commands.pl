@@ -814,63 +814,6 @@ sub cmd_split
 # cmd_while
 #    Loop while the expression is true
 #
-sub cmd_while2
-{
-    my ($self,$prog,$txt) = @_;
-    my (%last,$first);
-
-    my $cmd = $$prog{cmd_last};
-
-    if(!defined $$cmd{while_test}) {                 # initialize "loop"
-        $first = 1;
-        if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/s) {
-           ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
-           $$cmd{while_cmd} = [ balanced_split($2,";",3) ];
-        } else {
-           return err($self,$prog,"usage: while (<expression>) { commands }");
-        }
-    }
-
-#    printf("WHILE: '%s' -> '%s' -> '%s'\n",
-#           $$cmd{while_test},
-#           evaluate($self,$prog,$$cmd{while_test}),
-#           test($$cmd{while_test})
-#          );
-
-    if($$cmd{while_count} >= 1000) {
-       printf("#*****# while exceeded maxium loop of 1000, stopped\n");
-       return err($self,$prog,"while exceeded maxium loop of 1000, stopped");
-    } else {
-       my $commands = $$cmd{while_cmd};
-
-       if($$cmd{while_count} % $#$commands == 0) {       # start of iteration?
-          printf("WHILE: running test\n");
-          # run test to see if we continue or stop
-          if(!test($self,$prog,$$cmd{while_test})) {
-             printf("WHILE: Test failed: '%s'\n",test($self,$prog,$$cmd{while_test}));
-             return "DONE";
-          }
-       } else {
-          printf("WHILE: !running test\n");
-       }
-
-       my $commands = $$cmd{while_cmd};
-
-       mushrun(self   => $self,
-               prog   => $prog,
-               runas  => $self,
-               source => 0,
-               cmd    => $$commands[$$cmd{while_count} % $#$commands],
-               child  => 1
-              );
-
-       $$cmd{while_count}++;
-
-       return "RUNNING"                                # signal still running
-    }
-    return "DONE";                                              # signal done
-}
-
 sub cmd_while
 {
     my ($self,$prog,$txt) = @_;
@@ -1001,7 +944,7 @@ sub cmd_password
 {
    my ($self,$prog,$txt) = @_;
 
-   if(hasflag($self,"PLAYER")) {
+   if(!hasflag($self,"PLAYER")) {
       necho(self   => $self,
             prog   => $prog,
             source => [ "Non-players do not need passwords." ],
@@ -1952,10 +1895,6 @@ sub page
 {
    my ($self,$prog,$target,$msg) = @_;
 
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "target: $target" ], 
-           );
    my $target = locate_player($target,"online") ||
        return err($self,$prog,"That player is not connected.");
 
@@ -3104,12 +3043,15 @@ sub cmd_look
         );
 
    if(($desc = get($target,"ADESCRIBE")) && $desc ne undef) {
+#      my $hint = $$prog{hint};
+#      delete @$prog{hint};
       return mushrun(self   => $self,           # handle adesc
                      prog   => $prog,
                      runas  => $target,
                      source => 0,
                      cmd    => $desc
                      );
+#      @$prog{hint} = $hint;
    }
 }
 

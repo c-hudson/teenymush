@@ -16,6 +16,8 @@ my (%command,                       # commands for after player has connected
     %honey,                                                   # honeypot cmds
     $readable,                                 # sockets to wait for input on
     $listener,                                                 # port details
+    $web,                                                  # web port details
+    %http,                                                 # http socket list
     %code,                                   #  loaded perl files w/mod times
     $db,                                           # main database connection
     $log,                                      # database connection for logs

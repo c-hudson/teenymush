@@ -234,7 +234,11 @@ sub server_handle_sockets
 
       # process any IO
       foreach my $s (@$sockets) {      # loop through active sockets [if any]
-         if($s == $listener) {                               # new connection
+         if($s == $web) {                                # new web connection
+            http_accept($s);
+         } elsif(defined @http{$s}) {
+            http_io($s);
+         } elsif($s == $listener) {                     # new mush connection
             my $new = $listener->accept();                        # accept it
             if($new) {                                        # valid connect
                $readable->add($new);               # add 2 watch list 4 input
@@ -379,12 +383,15 @@ sub server_start
       printf("Invalid Port of '%s' defined in tm_config.dat\n",@info{port}); 
       exit();
    } else {
-      printf("Listening on port @info{port}\n");
+      printf("TeenyMUSH listening on port @info{port}\n");
+      printf("Webservice listening on port 8080\n");
    }
 
    $listener = IO::Socket::INET->new(LocalPort=>@info{port},Listen=>1,Reuse=>1);
+   $web = IO::Socket::INET->new(LocalPort=>8080,Listen=>1,Reuse=>1);
    $readable = IO::Select->new();          # setup socket polling routines
    $readable->add($listener);
+   $readable->add($web);
 
    # main loop;
    while(1) {

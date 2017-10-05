@@ -514,6 +514,7 @@ sub necho
       printf("%s\n",print_var(\%arg));
       printf("%s\n",code("long"));
    }
+
    if(defined @{$arg{self}}{loggedin} && !@{$arg{self}}{loggedin}) {
       # skip checks for non-connected players
    } elsif(!defined $arg{self}) {             # checked passed in arguments
@@ -567,6 +568,14 @@ sub necho
 
       my ($target,$fmt) = (shift(@{$arg{$type}}), shift(@{$arg{$type}}));
       my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
+
+      if($$prog{hint} eq "WEB" && 
+         $$target{obj_id} eq @{$$prog{created_by}}{obj_id}) {
+         $$prog{output} = [] if not defined $$prog{output};
+         my $stack = $$prog{output};
+         push(@$stack,$msg);
+         next;
+      }
 
 #      if(!defined @arg{hint} ||
 #         (@arg{hint} eq "ECHO_ROOM" && loc($target) != loc(owner($target)))) {

@@ -18,7 +18,7 @@ sub mush_command
    my ($self,$prog,$runas,$cmd) = @_;
    my ($match,$questions,@where)= (0);
 
-   ($where[0],$where[1]) = (loc($user),$$user{obj_id});
+   ($where[0],$where[1]) = (loc($self),$$self{obj_id});
    if(defined $info{master_room}) {
       $questions = "?,?,?";
       push(@where,$info{master_room});
@@ -49,6 +49,7 @@ sub mush_command
       $$hash{txt} =~ s/\r\s*|\n\s*//g;
       if($cmd =~ /^$$hash{cmd}$/) {
          mushrun(self   => $self,
+                 prog   => $prog,
                  runas  => $hash,
                  source => 0,
                  cmd    => $$hash{txt},
@@ -56,6 +57,7 @@ sub mush_command
                 );
       } else {
          mushrun(self   => $self,
+                 prog   => $prog,
                  runas  => $hash,
                  source => 0,
                  cmd    => $$hash{txt}
@@ -130,7 +132,9 @@ sub mushrun
       @{$info{engine}}{++$info{pid}} = [ $arg{prog} ];
    }
 
-   @{@arg{prog}}{hint} = $arg{hint};
+   if(!defined @{@arg{prog}}{hint}) {
+      @{@arg{prog}}{hint} = ($arg{hint} eq undef) ? "PLAYER" : $arg{hint};
+   }
 
    # handle multi-line && command
    if($arg{source} == 1 && $multi eq undef) {
@@ -176,6 +180,7 @@ sub mushrun
     }
     
     delete @{$arg{self}}{child};
+    return @arg{prog};
 }
 
 sub set_digit_variables
@@ -296,6 +301,13 @@ sub spin
          }
          if($#$command == -1) { # program is done 
             my $prog = shift(@$thread);
+            if($$prog{hint} eq "WEB") {
+               if(defined $$prog{output}) {
+                  http_reply($$prog{sock},join("",@{@$prog{output}}));
+               } else {
+                  http_reply($$prog{sock},"No data returned");
+               }
+            }
             delete @{@info{engine}}{$pid};
 #            printf("# $pid Total calls: %s\n",$$prog{calls});
          }
@@ -348,6 +360,7 @@ sub run_internal
 #   } else {
 #      printf("RUN: '%s %s'\n",$cmd,$arg);
 #   }
+#   printf("RUN($prog): '%s%s'\n",$cmd,$arg);
 
    return &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,$arg,\%switch);
 }
@@ -361,9 +374,9 @@ sub spin_run
    $$prog{cmd_last} = $command;
 
 # find command set to use
-   if($$prog{hint} eq "INTERNAL") {           # called by internal command
+   if($$prog{hint} eq "INTERNAL" || $$prog{hint} eq "WEB") {
       $hash = \%command;
-      delete @$prog{hint};
+#      delete @$prog{hint};
    } elsif(!loggedin($self) && hasflag($self,"PLAYER")) { 
       $hash = \%offline;                                     # offline users
    } elsif(defined $$self{site_restriction} && $$self{site_restriction} == 69) {

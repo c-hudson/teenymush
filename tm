@@ -17,6 +17,8 @@ my (%command,                       # commands for after player has connected
     $readable,                                 # sockets to wait for input on
     $listener,                                                 # port details
     $web,                                                  # web port details
+    $ws,                                            # websocket server object
+    $websock,                                            # websocket listener
     %http,                                                 # http socket list
     %code,                                   #  loaded perl files w/mod times
     $db,                                           # main database connection
@@ -24,7 +26,8 @@ my (%command,                       # commands for after player has connected
     %info,                                                # misc info storage
     $user,                                             # current user details
     $enactor,                                # object who initated the action
-    $obj
+    $obj,
+    %c
    );
 
 #
@@ -119,7 +122,7 @@ sub load_all_code
    return join(', ',@file);                           # return succ/fail list
 }
 
-@info{version} = "TeenyMUSH 0.5";
+@info{version} = "TeenyMUSH 0.9";
 
 printf("Loading: tm_mysql.pl\n");
 load_code_in_file("tm_mysql.pl");                       # only call of main

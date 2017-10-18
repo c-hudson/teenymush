@@ -569,8 +569,8 @@ sub necho
       my ($target,$fmt) = (shift(@{$arg{$type}}), shift(@{$arg{$type}}));
       my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
 
-      if($$prog{hint} eq "WEB" && 
-         $$target{obj_id} eq @{$$prog{created_by}}{obj_id}) {
+      if(($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") && 
+         ($$target{obj_id} == 118 || $$target{obj_id} == 209)) {
          $$prog{output} = [] if not defined $$prog{output};
          my $stack = $$prog{output};
          push(@$stack,$msg);

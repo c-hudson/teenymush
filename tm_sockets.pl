@@ -223,7 +223,7 @@ sub get_free_port
 #
 sub server_handle_sockets
 {
-   eval {
+#   eval {
       # wait for IO or 1 second
       my ($sockets) = IO::Select->select($readable,undef,undef,.4);
       my $buf;
@@ -238,6 +238,8 @@ sub server_handle_sockets
             http_accept($s);
          } elsif(defined @http{$s}) {
             http_io($s);
+         } elsif($s == $websock || defined $ws->{conns}{$s}) {
+            websock_io($s);
          } elsif($s == $listener) {                     # new mush connection
             my $new = $listener->accept();                        # accept it
             if($new) {                                        # valid connect
@@ -288,7 +290,7 @@ sub server_handle_sockets
 
      spin();
 
-   };
+#   };
    if($@){
       printf("Server Crashed, minimal details [main_loop]\n");
       printf("LastSQL: '%s'\n",@info{sql_last});
@@ -384,14 +386,23 @@ sub server_start
       exit();
    } else {
       printf("TeenyMUSH listening on port @info{port}\n");
-      printf("Webservice listening on port 8080\n");
+      printf("HTTP listening on port @info{httpd}\n");
+      printf("Websocket listening on port @info{websocket}\n");
    }
 
+   websock_init();
+
    $listener = IO::Socket::INET->new(LocalPort=>@info{port},Listen=>1,Reuse=>1);
-   $web = IO::Socket::INET->new(LocalPort=>8080,Listen=>1,Reuse=>1);
-   $readable = IO::Select->new();          # setup socket polling routines
-   $readable->add($listener);
-   $readable->add($web);
+   $web = IO::Socket::INET->new(LocalPort=>@info{httpd},Listen=>1,Reuse=>1);
+
+#   $readable = IO::Select->new();          # setup socket polling routines
+#   $readable->add($listener);
+#   $readable->add($web);
+#   $readable->add($websock);
+
+   $ws->{select_readable}->add($listener);
+   $ws->{select_readable}->add($web);
+   $readable = $ws->{select_readable};
 
    # main loop;
    while(1) {

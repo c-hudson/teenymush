@@ -38,9 +38,9 @@ sub http_accept
 
    @http{$new} = { sock => $new,
                     data => {},
-                    ip   => $new->peerhost,
+                    ip   => server_hostname($new),
                   };
-   printf("   %s\@web Connect\n",$new->peerhost);
+#   printf("   %s\@web Connect\n",@{@http{$new}}{ip});
 }
 
 sub http_disconnect
@@ -86,6 +86,22 @@ sub http_reply
    http_disconnect($s);
 }
 
+sub http_reply_simple
+{
+   my ($s,$fmt,@args) = @_;
+
+   my $msg = sprintf($fmt,@args);
+
+   http_out($s,"HTTP/1.1 200 Default Request");
+   http_out($s,"Date: %s",scalar localtime());
+   http_out($s,"Last-Modified: %s",scalar localtime());
+   http_out($s,"Connection: close");
+   http_out($s,"Content-Type: text/html; charset=ISO-8859-1");
+   http_out($s,"");
+   http_out($s,$fmt,@args);
+   http_disconnect($s);
+}
+
 sub http_out
 {
    my ($s,$fmt,@args) = @_;
@@ -106,6 +122,7 @@ sub http_process_line
    my $data = @{@http{$s}}{data};
 
    if($txt =~ /^GET (.*) HTTP\/([\d\.]+)$/i) {              # record details
+#      printf("      %s\@web %s\n",@{@http{$s}}{ip},$1);
       $$data{get} = $1;
    } elsif($txt =~ /^([\w\-]+): /) {
       $$data{lc($1)} = $';
@@ -118,20 +135,25 @@ sub http_process_line
          my $self = fetch("118");
 
          my $msg =  uri_unescape($$data{get});
-         $msg = $' if($msg =~ /^\s*\/+/);
- 
+#         $msg = $' if($msg =~ /^\s*\/+/);
+         $msg =~ s/\// /g;
+
          # run the $default mush command as the default webpage.
-         $msg = "default" if $msg eq undef;
-   
+         $msg = "default" if($msg =~ /^\s*$/);
+
          printf("   %s\@web [%s]\n",@{@http{$s}}{ip},$msg);
 
-         my $prog = mushrun(self   => $self,
-                            runas  => $self,
-                            source => 0,
-                            cmd    => $msg,
-                            hint   => "WEB"
-                           );
-         $$prog{sock} = $s;
+         if($msg =~ /^\s*socket\s*$/i) {
+            http_reply_simple($s,"%s",getfile("socket.txt"));
+         } else {
+            my $prog = mushrun(self   => $self,
+                               runas  => $self,
+                               source => 0,
+                               cmd    => $msg,
+                               hint   => "WEB"
+                              );
+            $$prog{sock} = $s;
+         }
       }
    } else {
       http_error($s,"Malformed Request");

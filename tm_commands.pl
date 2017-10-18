@@ -194,10 +194,17 @@ delete @honey{keys %honey};
                          alias => 1                                      };
 @command{"\@\@"}     = { fun  => sub { return;}                          };
 @command{"\@split"}  = { fun  => sub { cmd_split(@_); }                  };
+@command{"\@wall"}  = { fun  => sub { cmd_websocket(@_); }          };
 
  
 # ------------------------------------------------------------------------#
 
+sub cmd_websocket
+{
+   my ($self,$prog,$txt) = @_;
+
+   websock_wall($txt); 
+}
 
 sub cmd_score
 {
@@ -2956,20 +2963,20 @@ sub cmd_inventory
 sub cmd_look
 {
    my ($self,$prog,$txt) = @_;
-   my ($flag,$desc,$target,@exit,$out);
+   my ($flag,$desc,$target,@exit,$out,$name);
    my $owner = owner_id($self);
    my $perm = hasflag($self,"WIZARD");
 
    if($txt =~ /^\s*$/) {
       $target = loc_obj($self);
       return err($self,$prog,"I don't see that here.") if $target eq undef;
-   } elsif(!($target = locate_object($self,$txt))) {
+   } elsif(!($target = locate_object($self,evaluate($self,$prog,$txt)))) {
       return err($self,$prog,"I don't see that here.");
    }
 
    $out = obj_name($self,$target);
    if(($desc = get($$target{obj_id},"DESCRIPTION")) && $desc ne undef) {
-      $out .= "\n" . evaluate($self,$prog,$desc);
+      $out .= "\n" . evaluate($target,$prog,$desc);
    } else {
       $out .= "\nYou see nothing special.";
    }
@@ -2994,7 +3001,8 @@ sub cmd_look
           "            else " .
           "               'Y' " .
           "         END online," .
-          "         min(obj.obj_owner) obj_owner ".
+          "         min(obj.obj_owner) obj_owner,".
+          "         min(con.con_dest_id) con_dest_id ".
           "    from content con, " .
           "         (  select fde.fde_order, obj_id, fde_letter, fde_name " .
           "              from flag flg, flag_definition fde " .
@@ -3013,7 +3021,7 @@ sub cmd_look
           "     and con.con_source_id = ? ".
           "     and con.obj_id != ? " .
           "group by con.obj_id, con_created_date " .
-          "order by con_created_date",
+          "order by con_created_date desc",
           $$target{obj_id},
           $$self{obj_id}
          )}) {
@@ -3023,20 +3031,35 @@ sub cmd_look
    
           if($$hash{obj_type} eq "EXIT") {                   # store exits for
              if($$hash{flag} !~ /D/) {                                 # later
-                push(@exit,first($$hash{obj_name}));
+                if($$prog{hint} eq "WEB") {
+                   push(@exit,
+                        "<a href=/look/$$hash{con_dest_id}>" . 
+                        first($$hash{obj_name}) .
+                        "</a>"
+                       );
+                } else {
+                   push(@exit,first($$hash{obj_name}));
+                }
              }
           } elsif($$hash{obj_type} =~ /^(PLAYER|OBJECT)$/ && 
                  $$hash{flags} !~ /D/){
              $out .= "\nContents:" if(++$flag == 1);
+
              if($$hash{obj_owner} == $owner || $perm) {
-                 $out .= "\n$$hash{obj_name}(#$$hash{obj_id}$$hash{flags})";
+                 $name = "$$hash{obj_name}(#$$hash{obj_id}$$hash{flags})";
              } else {
-                 $out .= "\n$$hash{obj_name}";
+                 $name = "$$hash{obj_name}";
+             }
+             if($$prog{hint} eq "WEB") {
+                 $out .= "\n<a href=/look/$$hash{obj_id}/>$name</a>";
+             } else {
+                 $out .= "\n" . $name;
              }
           }
       }
    }
-   $out .= "\nExits:\n" . join("  ",@exit) if($#exit >= 0);   # add any exits
+   $out .= "\nExits:\n" . join("  ",@exit) if($#exit >= 0);  # add any exits
+
    necho(self   => $self,
          prog   => $prog,
          source => ["%s",$out ]
@@ -3166,7 +3189,7 @@ sub cmd_who
 
    necho(self   => $self,
          prog   => $prog,
-         source => [ "%s", who($self) ]
+         source => [ "%s", who($self,$prog) ]
         );
 }
 
@@ -3176,14 +3199,14 @@ sub cmd_DOING
 
    necho(self   => $self,
          prog   => $prog,
-         source => [ "%s", who($self,1) ]
+         source => [ "%s", who($self,$prog,1) ]
         );
 }
 
 sub who
 {
-   my ($self,$flag) = @_;
-   my ($max,@who,$idle,$count,$out,$extra,$hasperm) = (2);
+   my ($self,$prog,$flag) = @_;
+   my ($max,@who,$idle,$count,$out,$extra,$hasperm,$name) = (2);
 
    if(ref($self) eq "HASH") {
       $hasperm = ($flag || !hasflag($self,"WIZARD")) ? 0 : 1;
@@ -3258,17 +3281,25 @@ sub who
       } else {
          $extra = "    ";
       } 
+ 
+      if($$prog{hint} eq "WEB") {
+         $name = name($hash);
+         $name = "<a href=look/$$hash{obj_id}>$name</a>" .
+                 (" " x (15 - length($name)));
+      } else {
+         $name = sprintf("%-15s", name($hash));
+      }
 
       # show connected user details
       if($hasperm) {
-         $out .= sprintf("%-15s%4s %02d:%02d %4s %-*s %-4s %s%s\r\n",
-             $$hash{obj_name},$extra,$$online{h},$$online{m},$$idle{max_val} .
+         $out .= sprintf("%s%4s %02d:%02d %4s %-*s %-4s %s%s\r\n",
+             $name,$extra,$$online{h},$$online{m},$$idle{max_val} .
              $$idle{max_abr},$max,$$hash{con_source_id},$$extra_data{port},
              short_hn($$hash{sck_hostname}),
              ($$extra_data{site_restriction} == 69) ? " [HoneyPoted]" : ""
             );
       } elsif($$extra_data{site_restriction} != 69) {
-         $out .= sprintf("%-15s%4s %02d:%02d %4s  %s\r\n",name($hash),$extra,
+         $out .= sprintf("%s%4s %02d:%02d %4s  %s\r\n",$name,$extra,
              $$online{h},$$online{m},$$idle{max_val} . $$idle{max_abr},
              $$hash{obj_doing});
       }

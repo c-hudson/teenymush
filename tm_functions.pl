@@ -38,6 +38,7 @@ my %fun =
    huh       => sub { return "#-1 Undefined function";                  },
    ljust     => sub { return &fun_ljust(@_);                            },
    rjust     => sub { return &fun_rjust(@_);                            },
+   loc       => sub { return &fun_loc(@_);                              },
    extract   => sub { return &fun_extract(@_);                          },
    lwho      => sub { return &fun_lwho(@_);                             },
    remove    => sub { return &fun_remove(@_);                           },
@@ -86,6 +87,7 @@ my %fun =
    mudname   => sub { return &fun_mudname(@_);                          },
    version   => sub { return &fun_version(@_);                          },
    inuse     => sub { return &inuse_player_name(@_);                    },
+   web       => sub { return &fun_web(@_);                              },
    decode_entities => sub { return &fun_de(@_);                         },
 );
 
@@ -157,6 +159,18 @@ sub fun_version
    } else {
       return "TeenyMUSH";
    }
+}
+
+#
+# fun_web
+#   Returns if the current session is coming from a web
+#   connection or a normal mush connection
+#
+sub fun_web
+{
+   my ($self,$prog) = @_;
+
+   return ($$prog{hint} eq "WEB") ? 1 : 0;
 }
 
 #
@@ -262,6 +276,19 @@ sub fun_eq
    $one =~ s/^\s+|\s+$//g;
    $two =~ s/^\s+|\s+$//g;
    return ($one eq $two) ? 1 : 0;
+}
+
+sub fun_loc
+{
+   my ($self,$prog,$txt) = @_;
+
+   my $target = locate_object($self,$txt);
+
+   if($target eq undef) {
+      return "#-1 NOT FOUND";
+   } else {
+      return "#" . loc($target);
+   }
 }
 
 sub fun_hasflag

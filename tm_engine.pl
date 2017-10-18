@@ -54,13 +54,15 @@ sub mush_command
                  source => 0,
                  cmd    => $$hash{txt},
                  wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ],
+                 from   => "ATTR"
                 );
       } else {
          mushrun(self   => $self,
                  prog   => $prog,
                  runas  => $hash,
                  source => 0,
-                 cmd    => $$hash{txt}
+                 cmd    => $$hash{txt},
+                 from   => "ATTR"
                 );
       }
       $match=1;                                   # signal mush command found
@@ -111,7 +113,7 @@ sub prog
 }
 
 #
-# mushrun
+# commandmushrun
 #    Add the command to the que of what to run. The command will be run
 #    later.
 #
@@ -130,6 +132,10 @@ sub mushrun
       @arg{prog} = prog($arg{self},$arg{runas});
       @info{engine} = {} if not defined $info{engine}; # add to all programs
       @{$info{engine}}{++$info{pid}} = [ $arg{prog} ];
+   }
+
+   if(defined $arg{from}) {
+      @{@arg{prog}}{from} = $arg{from} if(!defined @{@arg{prog}}{from});
    }
 
    if(!defined @{@arg{prog}}{hint}) {
@@ -164,6 +170,7 @@ sub mushrun
        unshift(@$stack,{ runas => $arg{runas}, cmd => $arg{cmd}, source => 1 });
     } else {
        for my $i ( balanced_split($arg{cmd},';',3,1) ) {
+          $i =~ s/^\s+|\s+$//g;
           if($i ne undef) {
              if(defined $arg{child} && $arg{child}) {
 #                push(@$stack,{runas => $arg{runas},cmd => $i,source => 0});
@@ -301,7 +308,10 @@ sub spin
          }
          if($#$command == -1) { # program is done 
             my $prog = shift(@$thread);
-            if($$prog{hint} eq "WEB") {
+            if($$prog{hint} eq "WEBSOCKET") {
+               my $msg = join("",@{@$prog{output}});
+               $prog->{sock}->send_utf8( $msg);
+            } elsif($$prog{hint} eq "WEB") {
                if(defined $$prog{output}) {
                   http_reply($$prog{sock},join("",@{@$prog{output}}));
                } else {
@@ -374,7 +384,13 @@ sub spin_run
    $$prog{cmd_last} = $command;
 
 # find command set to use
-   if($$prog{hint} eq "INTERNAL" || $$prog{hint} eq "WEB") {
+   if($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") {
+      if(defined $$prog{from} && $$prog{from} eq "ATTR") {
+         $hash = \%command;
+      } else {
+         $hash = \%switch;                                      # no commands
+      }
+   } elsif($$prog{hint} eq "INTERNAL" || $$prog{hint} eq "WEB") {
       $hash = \%command;
 #      delete @$prog{hint};
    } elsif(!loggedin($self) && hasflag($self,"PLAYER")) { 

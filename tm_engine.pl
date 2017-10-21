@@ -113,7 +113,7 @@ sub prog
 }
 
 #
-# commandmushrun
+# mushrun
 #    Add the command to the que of what to run. The command will be run
 #    later.
 #
@@ -140,6 +140,14 @@ sub mushrun
 
    if(!defined @{@arg{prog}}{hint}) {
       @{@arg{prog}}{hint} = ($arg{hint} eq undef) ? "PLAYER" : $arg{hint};
+   }
+
+   if(defined @arg{output} && !defined @{@arg{prog}}{output}) {
+      @{@arg{prog}}{output} = @arg{output};
+   }
+
+   if(defined @arg{sock} && !defined @{@arg{prog}}{sock}) {
+      @{@arg{prog}}{sock} = @arg{sock};
    }
 
    # handle multi-line && command

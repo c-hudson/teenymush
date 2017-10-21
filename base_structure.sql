@@ -267,6 +267,8 @@ CREATE TABLE `socket_history` (
   `skh_start_time` datetime NOT NULL,
   `skh_end_time` datetime DEFAULT NULL,
   `skh_success` int(11) NOT NULL,
+  `skh_detail` varchar(255) DEFAULT NULL,
+  `skh_type` int(11) DEFAULT NULL,
   PRIMARY KEY (`skh_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -296,4 +298,4 @@ CREATE TABLE `valid_option` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2017-10-17 10:41:06
+-- Dump completed on 2017-10-21  0:05:13

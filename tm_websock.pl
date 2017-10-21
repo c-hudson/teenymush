@@ -77,7 +77,9 @@ sub processMessage {
                       runas  => $self,
                       source => 0,
                       cmd    => $msg,
-                      hint   => "WEBSOCKET"
+                      hint   => "WEBSOCKET",
+                      sock   => $conn,
+                      output => []
                      );
    $$prog{sock} = $conn;
 }

@@ -569,13 +569,21 @@ sub necho
       my ($target,$fmt) = (shift(@{$arg{$type}}), shift(@{$arg{$type}}));
       my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
 
-      if(($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") && 
-         ($$target{obj_id} == 118 || $$target{obj_id} == 209)) {
-         $$prog{output} = [] if not defined $$prog{output};
-         my $stack = $$prog{output};
-         push(@$stack,$msg);
-         next;
+
+      if(defined $$prog{output} && 
+         @{$$prog{created_by}}{obj_id} == $$target{obj_id}) {
+            my $stack = $$prog{output};
+            push(@$stack,$msg);
+            next;
       }
+
+#      if(($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") && 
+#         ($$target{obj_id} == 118 || $$target{obj_id} == 209)) {
+#         $$prog{output} = [] if not defined $$prog{output};
+#         my $stack = $$prog{output};
+#         push(@$stack,$msg);
+#         next;
+#      }
 
 #      if(!defined @arg{hint} ||
 #         (@arg{hint} eq "ECHO_ROOM" && loc($target) != loc(owner($target)))) {
@@ -1070,7 +1078,7 @@ sub set_flag
                   $$obj{obj_id},
                   $$hash{fde_flag_id});
           my_commit;
-          if($flag =~ /^\s*(PUPPET|MONITOR)\s*$/i) {
+          if($flag =~ /^\s*(PUPPET|LISTENER)\s*$/i) {
              necho(self => $self,
                    prog => $prog,
                    room => [$obj,"%s is no longer listening.",$$obj{obj_name} ]
@@ -1082,7 +1090,7 @@ sub set_flag
        } elsif($count > 0) {
           return "Already Set.";
        } else {
-          if($flag =~ /^\s*(PUPPET|MONITOR)\s*$/i) {
+          if($flag =~ /^\s*(PUPPET|LISTENER)\s*$/i) {
              necho(self => $self,
                    prog => $prog,
                    room => [$obj,"%s is now listening.", $$obj{obj_name} ]

@@ -2575,13 +2575,15 @@ sub cmd_connect
                 "  sck_id, " .
                 "  skh_hostname, " .
                 "  skh_start_time, " .
-                "  skh_success " .
+                "  skh_success, " .
+                "  skh_type ".
                 ") values ( " .
-                "  ?, ?, ?, now(), 1 ".
+                "  ?, ?, ?, now(), 1, ? ".
                 ")",
                 $$user{obj_id},
                 curval(),
-                $$user{hostname}
+                $$user{hostname},
+                1
                );
 
             my_commit($db);
@@ -2606,12 +2608,14 @@ sub cmd_connect
                 "  skh_hostname, " .
                 "  skh_start_time, " .
                 "  skh_end_time, " .
-                "  skh_success " .
+                "  skh_success, " .
+                "  skh_type " .
                 ") values ( " .
                 "  ?, ?, now(), now(), 0 ".
                 ")",
                 $$hash{obj_id},
-                $$user{hostname}
+                $$user{hostname},
+                1
                );
             my_commit($db);
 

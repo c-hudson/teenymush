@@ -987,8 +987,7 @@ sub fun_sql
 {
    my ($self,$prog) = (shift,shift);
 
-
-   if(hasflag($self,"WIZARD")) {
+   if(hasflag($self,"WIZARD") || hasflag($self,"SQL")) {
       my (@txt) = @_;
 
       my $sql = join(',',@txt);
@@ -997,7 +996,9 @@ sub fun_sql
             prog => $prog,
             source => [ "Sql: '%s'\n",$sql ],
            );
-      return table($sql);
+      my $result = table($sql);
+      $result =~ s/\n$//;
+      return $result;
    } else {
       return "#-1 Permission Denied";
    }

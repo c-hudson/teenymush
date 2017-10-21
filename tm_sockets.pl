@@ -223,7 +223,7 @@ sub get_free_port
 #
 sub server_handle_sockets
 {
-#   eval {
+   eval {
       # wait for IO or 1 second
       my ($sockets) = IO::Select->select($readable,undef,undef,.4);
       my $buf;
@@ -290,7 +290,7 @@ sub server_handle_sockets
 
      spin();
 
-#   };
+   };
    if($@){
       printf("Server Crashed, minimal details [main_loop]\n");
       printf("LastSQL: '%s'\n",@info{sql_last});

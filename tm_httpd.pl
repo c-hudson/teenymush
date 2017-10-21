@@ -72,9 +72,11 @@ sub http_reply
    my ($s,$fmt,@args) = @_;
 
    my $msg = sprintf($fmt,@args);
-   my $css = getfile("mudtape.css");
-   $css =~ s/--CONTENTS--/$msg/;
-   $css =~ s/--TITLE--/TeenyMUSH Web Portal/;
+
+   if((stat("txt/http_template.txt"))[9] != @info{template_last}) {
+      @info{template} = getfile("http_template.txt");
+      @info{template_last} = time();
+   }
 
    http_out($s,"HTTP/1.1 200 Default Request");
    http_out($s,"Date: %s",scalar localtime());
@@ -82,7 +84,12 @@ sub http_reply
    http_out($s,"Connection: close");
    http_out($s,"Content-Type: text/html; charset=ISO-8859-1");
    http_out($s,"");
-   http_out($s,"%s","<pre>\n" . $css . "\n<pre>\n");
+   http_out($s,"%s\n",@info{template});
+   http_out($s,"<body>\n");
+   http_out($s,"<div id=\"Content\">\n");
+   http_out($s,"<pre>%s\n</pre>\n",$msg);
+   http_out($s,"</div>\n");
+   http_out($s,"</body>\n");
    http_disconnect($s);
 }
 
@@ -143,6 +150,26 @@ sub http_process_line
 
          printf("   %s\@web [%s]\n",@{@http{$s}}{ip},$msg);
 
+         if($msg !~ /^\s*favicon\.ico\s*$/i) {
+            sql(e($db,1),
+                "insert into socket_history ".
+                "( obj_id, " .
+                "  skh_hostname, " .
+                "  skh_start_time, " .
+                "  skh_end_time, " .
+                "  skh_success, " .
+                "  skh_detail, " .
+                "  skh_type " .
+                ") values ( " .
+                "  ?, ?, now(), now(), 0, ?, ? ".
+                ")",
+                @info{web_user},
+                @{@http{$s}}{ip},
+                substr($msg,0,254),
+                2
+               );
+         }
+
          if($msg =~ /^\s*socket\s*$/i) {
             http_reply_simple($s,"%s",getfile("socket.txt"));
          } else {
@@ -150,9 +177,10 @@ sub http_process_line
                                runas  => $self,
                                source => 0,
                                cmd    => $msg,
-                               hint   => "WEB"
+                               hint   => "WEB",
+                               sock   => $s,
+                               output => []
                               );
-            $$prog{sock} = $s;
          }
       }
    } else {

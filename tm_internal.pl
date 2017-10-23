@@ -571,7 +571,7 @@ sub necho
 
 
       if(defined $$prog{output} && 
-         @{$$prog{created_by}}{obj_id} == $$target{obj_id}) {
+         $$target{obj_id} == 118 || $$target{obj_id} == 209) {
             my $stack = $$prog{output};
             push(@$stack,$msg);
             next;
@@ -1955,3 +1955,13 @@ sub source
       return 0;
    }
 }
+
+$SIG{HUP} = sub {
+  my $files = load_all_code();
+  delete @info{engine};
+
+  while(1) {
+     server_handle_sockets();
+  }
+  printf("HUP signal caught, reloading: %s\n",$files ? $files : "none");
+};

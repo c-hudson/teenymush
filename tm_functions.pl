@@ -88,9 +88,86 @@ my %fun =
    version   => sub { return &fun_version(@_);                          },
    inuse     => sub { return &inuse_player_name(@_);                    },
    web       => sub { return &fun_web(@_);                              },
+   run       => sub { return &fun_run(@_);                              },
    decode_entities => sub { return &fun_de(@_);                         },
 );
 
+sub var_backup
+{
+   my ($dst,$src,%new_data) = @_;
+
+   for my $key (keys %new_data) {                              # backup to dst
+      $$dst{$key} = $$src{$key};
+   }
+
+   for my $key (keys %new_data) {
+      $$src{$key} = @new_data{$key};
+   }
+}
+
+sub var_restore
+{
+   my ($dst,$src) = @_;
+
+   for my $key (keys %$src) {
+      $$dst{$key} = $$src{$key};
+   }
+}
+
+sub fun_run
+{
+   my ($self,$prog,$txt) = @_;
+   my (%none, $hash, %tmp, $match, $cmd,$arg);
+
+   my $command = { runas => $self };
+   if($txt  =~ /^\s*([^ \/]+)(\s*)/) {        # split cmd from args
+      ($cmd,$arg) = (lc($1),$');
+   } else {  
+      return;                                                 # only spaces
+   }
+
+   if($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCK") {
+      if(defined $$prog{from} && $$prog{fun} eq "ATTR") {
+         $hash = \%command;
+      } else {
+         $hash = \%none;
+      }
+   } elsif(!loggedin($self) && hasflag($self,"PLAYER")) {
+      $hash = \%offline;                                     # offline users
+   } elsif(defined $$self{site_restriction} && $$self{site_restriction} == 69) {
+      $hash = \%honey;                                   # honeypotted users
+   } else {
+      $hash = \%command;
+   }
+
+   if(defined $$hash{$cmd}) {
+      var_backup(\%tmp,$prog,output => [], nomushrun => 1);
+      run_internal($hash,$cmd,$command,$prog,$arg);
+      my $output = join(',',@{$$prog{output}});
+      var_restore($prog,\%tmp);
+      return $output;
+   } else {
+      for my $key (keys %$hash) {              #  find partial unique match
+         if(substr($key,0,length($cmd)) eq $cmd) {
+            if($match eq undef) {
+               $match = $key;
+            } else {
+               $match = undef;
+               last;
+            }
+         }
+      }
+      if($match ne undef) {                                     # found match
+         var_backup(\%tmp,$prog,output => [], nomushrun => 1);
+         return run_internal($hash,$match,$command,$prog,$arg);
+         my $output = join(',',$$prog{output});
+         var_restore($prog,\%tmp);
+         return $output;
+      } else {                                                     # no match
+         return "#-1 Unknown command $cmd";
+      }
+   }
+}
 
 sub safe_split
 {

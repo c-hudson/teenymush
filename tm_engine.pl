@@ -134,6 +134,15 @@ sub mushrun
       @{$info{engine}}{++$info{pid}} = [ $arg{prog} ];
    }
 
+
+   # prevent RUN() from adding commands to the queue
+   if(defined @{@arg{prog}}{output} &&
+      defined @{@arg{prog}}{nomushrun} && @{@arg{prog}}{nomushrun}) {
+      my $stack = @{@arg{prog}}{output};
+      push(@$stack,"#-1 Not a valid command inside RUN function");
+      return;
+   }
+
    if(defined $arg{from}) {
       @{@arg{prog}}{from} = $arg{from} if(!defined @{@arg{prog}}{from});
    }
@@ -378,8 +387,9 @@ sub run_internal
 #   } else {
 #      printf("RUN: '%s %s'\n",$cmd,$arg);
 #   }
-#   printf("RUN($prog): '%s%s'\n",$cmd,$arg);
+#   printf("RUN(%s->%s): '%s%s'\n",@{$$prog{created_by}}{obj_id},@{$$command{runas}}{obj_id},$cmd,$arg);
 
+ 
    return &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,$arg,\%switch);
 }
 

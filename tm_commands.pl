@@ -823,12 +823,17 @@ sub cmd_split
 #
 sub cmd_while
 {
-    my ($self,$prog,$txt) = @_;
-    my (%last,$first);
+   my ($self,$prog,$txt) = @_;
+   my (%last,$first);
 
-    my $cmd = $$prog{cmd_last};
+   if(defined $$prog{nomushrun}) {
+      out($prog,"#-1 \@WHILE is not a valid command to use in RUN function");
+      return;
+   }
 
-    if(!defined $$cmd{while_test}) {                 # initialize "loop"
+   my $cmd = $$prog{cmd_last};
+
+   if(!defined $$cmd{while_test}) {                 # initialize "loop"
         $first = 1;
         if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/s) {
            ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
@@ -850,7 +855,7 @@ sub cmd_while
        return err($self,$prog,"while exceeded maxium loop of 1000, stopped");
     } elsif(test($self,$prog,$$cmd{while_test})) {
 
-       signal_still_running($prog);
+#       signal_still_running($prog);
 
        my $commands = $$cmd{while_cmd};
        for my $i (0 .. $#$commands) {
@@ -883,6 +888,16 @@ sub max_args
    return @result;
 }
 
+sub out
+{
+   my ($prog,$fmt,@args) = @_;
+
+   if(defined $$prog{output}) {
+      my $stack = $$prog{output};
+      push(@$stack,sprintf($fmt,@args));
+   }
+}
+
 #
 # cmd_dolist
 #    Loop though a list running specified commands.
@@ -892,6 +907,11 @@ sub cmd_dolist
    my ($self,$prog,$txt) = @_;
    my $cmd = $$prog{cmd_last};
    my %last;
+
+   if(defined $$prog{nomushrun}) {
+      out($prog,"#-1 \@DOLIST is not a valid command to use in RUN function");
+      return;
+   }
 
    if(!defined $$cmd{dolist_list}) {                       # initalize list
        my ($first,$second) = max_args(2,"=",balanced_split($txt,"=",3));
@@ -913,9 +933,9 @@ sub cmd_dolist
    my $item = shift(@{$$cmd{dolist_list}});
 
 
-   if( $#{$$cmd{dolist_list}} >= 0) {
-       signal_still_running($prog);
-   }
+#   if( $#{$$cmd{dolist_list}} >= 0) {
+#       signal_still_running($prog);
+#   }
     
    for my $i (0 .. $#$list) {              # push commands into the q
       my $new = $$list[$i];
@@ -1001,33 +1021,42 @@ sub cmd_password
 
 sub cmd_sleep
 {
-    my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = @_;
 
-    my $cmd = $$prog{cmd_last};
+   if(defined $$prog{nomushrun}) {
+      out($prog,"#-1 \@SLEEP is not a valid command to use in RUN function");
+      return;
+   }
 
-    if(!defined $$cmd{sleep}) {
-       if($txt =~ /^\s*(\d+)\s*$/) {
-          if($1 > 5400 || $1 < 1) {
-             necho(self   => $self,
-                   prog   => $prog,
-                   source => [ "\@sleep range must be between 1 and 5400." ],
-                  );
-             return;
-          } else {
-             $$cmd{sleep} = time() + $1;
-          }
-       } else {
-          necho(self   => $self,
-                prog   => $prog,
-                source => [ "usage: \@sleep <seconds>" ],
-               );
-          return;
-       }
-    }
+   my $cmd = $$prog{cmd_last};
 
-    if($$cmd{sleep} >= time()) {
-       signal_still_running($prog);
-    }
+   if(!defined $$cmd{sleep}) {
+      if($txt =~ /^\s*(\d+)\s*$/) {
+         if($1 > 5400 || $1 < 1) {
+            necho(self   => $self,
+                  prog   => $prog,
+                  source => [ "\@sleep range must be between 1 and 5400." ],
+                );
+            return;
+         } else {
+            $$cmd{sleep} = time() + $1;
+         }
+      } else {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "usage: \@sleep <seconds>" ],
+              );
+         return;
+      }
+   }
+
+   if($$cmd{sleep} >= time()) {
+       return "RUNNING";
+   }
+
+#   if($$cmd{sleep} >= time()) {
+#      signal_still_running($prog);
+#   }
 }
 
 sub cmd_readcache

@@ -693,7 +693,7 @@ sub name
 {
    my $target = obj(shift);
 
-#   if(!defined $$target{obj_name}) {                    # no name, query db
+#   if(!defined $$target{obj_name} && defined $$target{obj_id} && $$target{obj_id} ne undef) {     # no name, query db
       $$target{obj_name} = one_val("select obj_name value " .
                                    "  from object "  .
                                    " where obj_id = ?",
@@ -1955,13 +1955,3 @@ sub source
       return 0;
    }
 }
-
-$SIG{HUP} = sub {
-  my $files = load_all_code();
-  delete @info{engine};
-
-  while(1) {
-     server_handle_sockets();
-  }
-  printf("HUP signal caught, reloading: %s\n",$files ? $files : "none");
-};

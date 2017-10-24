@@ -195,9 +195,20 @@ delete @honey{keys %honey};
 @command{"\@\@"}     = { fun  => sub { return;}                          };
 @command{"\@split"}  = { fun  => sub { cmd_split(@_); }                  };
 @command{"\@wall"}  = { fun  => sub { cmd_websocket(@_); }          };
+@command{"\@test"}  = { fun  => sub { cmd_test(@_); }          };
 
  
 # ------------------------------------------------------------------------#
+
+sub cmd_test
+{
+         printf("ONE: '%s'\n",one_val($db,"select count(*) value ".
+                    "  from object " .
+                    " where obj_id =  1 " .
+                    "   and obj_password = password(?)",
+                     "123456789aAs"
+               ));
+}
 
 sub cmd_websocket
 {
@@ -238,14 +249,17 @@ sub cmd_offline_huh { my $sock = $$user{sock};
 sub cmd_version
 {
    my ($self,$prog) = @_;
+   my $src =  "https://github.com/c-hudson/teenymush";
                    
    my $ver = (@info{version} =~ /^TeenyMUSH ([\d\.]+)$/i) ? $1 : "N/A";
+
+   $src = "<a href=$src>$src</a>" if($$prog{hint} eq "WEB");
 
    necho(self   => $self,
          prog   => $prog,
          source => [ "TeenyMUSH :  Version %s [cmdhudson\@gmail.com]\n".
-                     "   Source :  https://github.com/c-hudson/teenymush",
-                     $ver
+                     "   Source :  %s",
+                     $ver,$src
                    ]
         );
 }
@@ -2549,6 +2563,44 @@ sub cmd_open
    my_commit;
 }
 
+
+#
+# invalid_player
+#    Determine if the request is valid or not, provide feed back and log
+#    if the attempt wasn't valid.
+#
+sub invalid_player
+{
+   my ($sock,$player,$data,$value) = @_;
+
+   if($value eq undef && $data ne undef) {
+      return 0;
+   } elsif($value ne undef && $data eq $value) {
+      return 0;
+   }
+   printf($sock "Either that player does not exist, or has a different " .
+          "password.\r\n");
+  
+   # log invalid connects for possible brute attack detection?
+   sql("insert into socket_history ".
+       "( obj_id, " .
+       "  skh_hostname, " .
+       "  skh_start_time, " .
+       "  skh_end_time, " .
+       "  skh_success, " .
+       "  skh_type, " .
+       "  skh_detail " .
+       ") values ( " .
+       "  ?, ?, now(), now(), 0, 1, ? ".
+       ")",
+          $$player{obj_id},
+          $$user{hostname},
+          $$player{obj_name}
+      );
+   my_commit($db);
+   return 1;
+}
+
 #
 # cmd_connect
 #    Verify password, populate @connect / @connected_user hash. Allow player
@@ -2558,107 +2610,116 @@ sub cmd_connect
 {
    my ($self,$prog,$txt) = @_;
    my $sock = @$user{sock};
-   my $hash;
+   my ($atr,$player);
  
-   if($txt =~ /^\s*([^ ]+) ([^ ]+)\s*$/ ||              #parse player password
+   if($txt =~ /^\s*([^ ]+)\s+([^ ]+)\s*$/ ||            #parse player password
       $txt =~ /^\s*([^ ]+)\s*$/) {
- 
-      if(($hash=one($db,"select * from object where lower(obj_name) = ?",$1))) {
+      my ($username,$pass) = ($1,$2);
 
-         if(hasflag($hash,"GUEST") ||
-            one($db,"select obj_password ".
+      # --- Valid User ------------------------------------------------------#
+      $player = one("select * " .                        # find requested user
                     "  from object " .
-                    " where obj_id = ? " .
-                    "   and obj_password = password(?)",
-                    $$hash{obj_id},
-                    $2
-               )) {
-            $$hash{connect_time} = time();
-            for my $key (keys %$hash) {                # copy object structure
-               $$user{$key} = $$hash{$key};
-            }
-            $$user{loggedin} = 1;
-            if(!defined @connected_user{$$user{obj_id}}) {    # reverse lookup
-               @connected_user{$$user{obj_id}} = {};                   # setup
-            }
-            @{@connected_user{$$user{obj_id}}}{$$user{sock}} = $$user{sock};
+                    " where lower(obj_name) = ?",
+                    $username);
+      return if invalid_player($sock,{obj_id=>-1,obj_name=>$username},$player);
 
-            sql(e($db,1),
-                "insert into socket " .
-                "( " . 
-                "    obj_id, " . 
-                "    sck_start_time, " .
-                "    sck_hostname, " .
-                "    sck_socket, " .
-                "    sck_type " . 
-                ") values ( ?, now(), ?, ?, ? ) ",
-                     $$user{obj_id},
-                     $$user{hostname},
-                     $$user{sock},
-                     1
-               );
-
-            sql(e($db,1),
-                "insert into socket_history ".
-                "( obj_id, " .
-                "  sck_id, " .
-                "  skh_hostname, " .
-                "  skh_start_time, " .
-                "  skh_success, " .
-                "  skh_type ".
-                ") values ( " .
-                "  ?, ?, ?, now(), 1, ? ".
-                ")",
-                $$user{obj_id},
-                curval(),
-                $$user{hostname},
-                1
-               );
-
-            my_commit($db);
-            necho(self   => $user,
-                  prog   => prog($user,$user),
-                  source => [ "%s", getfile("motd.txt") ]
-                 );
-            cmd_look($user,prog($user,$user));                    # show room
-
-            printf("    %s@%s\n",$$hash{obj_name},$$user{hostname});
-            necho(self   => $user,
-                  prog   => prog($user,$user),
-                  room   => [ $user , "%s has connected.",name($user) ],
-                 );
-
-            echo_flag($user,prog($user,$user),"CONNECTED,PLAYER,MONITOR",
-                      "[Monitor] %s has connected.",name($user))
-         } else {
-            sql(e($db,1),
-                "insert into socket_history ".
-                "( obj_id, " .
-                "  skh_hostname, " .
-                "  skh_start_time, " .
-                "  skh_end_time, " .
-                "  skh_success, " .
-                "  skh_type " .
-                ") values ( " .
-                "  ?, ?, now(), now(), 0 ".
-                ")",
-                $$hash{obj_id},
-                $$user{hostname},
-                1
-               );
-            my_commit($db);
-
-            printf($sock "Either that player does not exist, or has a " .
-               "different password.\r\n");
-         }
-      } else {
-         my $sock = @$user{sock};
-         printf($sock "Either that player does not exist, or has a " .
-              "different password.\r\n");
+      # --- Valid Password --------------------------------------------------#
+      if(!hasflag($player,"GUEST")) {
+          my $good = one_val("select count(*) value ".
+                             "  from object " .
+                             " where obj_id = ? " .
+                             "   and obj_password = password(?)",
+                             $$player{obj_id},
+                             $2);
+              
+         return if invalid_player($sock,$player,$good,1);          # bad pass
       }
+
+      # --- Hook connected user up to local structures ----------------------#
+      $$player{connect_time} = time();
+      for my $key (keys %$player) {                 # copy object structure
+         $$user{$key} = $$player{$key};
+      }
+      $$user{loggedin} = 1;
+
+      if(!defined @connected_user{$$user{obj_id}}) {    # reverse lookup
+          @connected_user{$$user{obj_id}} = {};                   # setup
+      }
+      @{@connected_user{$$user{obj_id}}}{$$user{sock}} = $$user{sock};
+
+      # --- log connnect ----------------------------------------------------#
+      sql( "insert into socket " .
+          "( " . 
+          "    obj_id, " . 
+          "    sck_start_time, " .
+          "    sck_hostname, " .
+          "    sck_socket, " .
+          "    sck_type " . 
+          ") values ( ?, now(), ?, ?, ? ) ",
+               $$user{obj_id},
+               $$user{hostname},
+               $$user{sock},
+               1
+         );
+
+      # put the historical request in right away, no need to wait.
+      sql("insert into socket_history ".
+          "( obj_id, " .
+          "  sck_id, " .
+          "  skh_hostname, " .
+          "  skh_start_time, " .
+          "  skh_success, " .
+          "  skh_type ".
+          ") values ( " .
+          "  ?, ?, ?, now(), 1, ? ".
+          ")",
+          $$user{obj_id},
+          curval(),
+          $$user{hostname},
+          1
+         );
+
+      my_commit($db);
+
+      # --- Provide users visual feedback / MOTD --------------------------#
+
+      necho(self   => $user,                 # show message of the day file
+            prog   => prog($user,$user),
+            source => [ "%s", getfile("motd.txt") ]
+           );
+
+      cmd_look($user,prog($user,$user));                    # show room
+
+      printf("    %s@%s\n",$$player{obj_name},$$user{hostname});
+
+
+      # notify users local and users with monitor flag
+      necho(self   => $user,
+            prog   => prog($user,$user),
+            room   => [ $user , "%s has connected.",name($user) ],
+           );
+
+      echo_flag($user,
+                prog($user,$user),
+                "CONNECTED,PLAYER,MONITOR",
+                "[Monitor] %s has connected.",name($user));
+            my_commit($db);
+
+      # --- Handle @ACONNECTs -----------------------------------------------#
+
+      for my $obj (lcon(@info{master_room}),$player) {
+         if(($atr = get($obj,"ACONNECT")) && $atr ne undef) {
+            mushrun(self   => $player,                 # handle adesc
+                    runas  => $player,
+                    source => 0,
+                    cmd    => $atr
+                   );
+         }
+      }
+
    } else {
-      printf($sock "Invalid connect command, " .
-             "try: connect <user> <password>\r\n");
+      # not sure this can actually happen
+      printf($sock "Invalid command, try: connect <user> <password>\r\n");
    }
 }
 

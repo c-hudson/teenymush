@@ -138,6 +138,18 @@ sub server_process_line
      add_telnet_data($data,$input);
    } else {
       eval {                                                  # catch errors
+         local $SIG{__DIE__} = sub {
+            printf("----- [ Crash Report@ %s ]-----\n",scalar localtime());
+            printf("User:     %s\nCmd:      %s\n",name($user),$_[0]);
+            if(defined @info{sql_last}) {
+               printf("LastSQL: '%s'\n",@info{sql_last});
+               printf("         '%s'\n",@info{sql_last_args});
+               delete @info{sql_last};
+               delete @info{sql_last_args};
+            }
+            printf("%s",code("long"));
+         };
+
          if($input =~ /^\s*([^ ]+)/ || $input =~ /^\s*$/) {
             $user = $hash;
             if($$user{site_restriction} == 69) {
@@ -158,10 +170,10 @@ sub server_process_line
       };
 
       if($@) {                                # oops., you sunk my battle ship
-         printf("# %s crashed the server with: %s\n%s",name($hash),$_[1],$@); 
-         printf("LastSQL: '%s'\n",@info{sql_last});
-         printf("         '%s'\n",@info{sql_last_args});
-         printf("         '%s'\n",@info{sql_last_code});
+#         printf("# %s crashed the server with: %s\n%s",name($hash),$_[1],$@); 
+#         printf("LastSQL: '%s'\n",@info{sql_last});
+#         printf("         '%s'\n",@info{sql_last_args});
+#         printf("         '%s'\n",@info{sql_last_code});
          my_rollback($db);
    
          my $msg = sprintf("%s crashed the server with: %s",name($hash),$_[1]);

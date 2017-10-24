@@ -139,7 +139,7 @@ sub http_process_line
       if($msg eq undef) {
          http_error($s,"Malformed Request");
       } else {
-         my $self = fetch("118");
+         my $self = fetch(@info{web_user});
 
          my $msg =  uri_unescape($$data{get});
 #         $msg = $' if($msg =~ /^\s*\/+/);

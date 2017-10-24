@@ -144,6 +144,7 @@ sub fun_run
       var_backup(\%tmp,$prog,output => [], nomushrun => 1);
       run_internal($hash,$cmd,$command,$prog,$arg);
       my $output = join(',',@{$$prog{output}});
+      $output =~ s/\n$//g;
       var_restore($prog,\%tmp);
       return $output;
    } else {
@@ -161,6 +162,7 @@ sub fun_run
          var_backup(\%tmp,$prog,output => [], nomushrun => 1);
          return run_internal($hash,$match,$command,$prog,$arg);
          my $output = join(',',$$prog{output});
+         $output =~ s/\n$//g;
          var_restore($prog,\%tmp);
          return $output;
       } else {                                                     # no match
@@ -172,13 +174,19 @@ sub fun_run
 sub safe_split
 {
     my ($txt,$delim) = @_;
-    $delim =~ s/^\s+|\s+$//g;
+
+    if($delim =~ /^\s*\n\s*/m) {
+       $delim = "\n";
+    } else {
+       $delim =~ s/^\s+|\s+$//g;
  
-    if($delim eq " " || $delim eq undef) {
-       $txt =~ s/\s+/ /g;
-       $txt =~ s/^\s+|\s+$//g;
-       $delim = " ";
+       if($delim eq " " || $delim eq undef) {
+          $txt =~ s/\s+/ /g;
+          $txt =~ s/^\s+|\s+$//g;
+          $delim = " ";
+       }
     }
+
     my ($start,$pos,$size,$dsize,@result) = (0,0,length($txt),length($delim));
 
     for($pos=0;$pos < $size;$pos++) {
@@ -1300,19 +1308,21 @@ sub fun_lattr
    return join(' ',@list);
 }
 
+#
+# fun_iter
+#
 sub fun_iter
 {
-   my ($self,$prog) = (shift,shift);
-
+   my ($self,$prog,$values,$txt,$idelim,$odelim) = @_;
    my @result;
 
-   for my $item (split(/ /,evaluate($self,$prog,@_[0]))) {
-       my $new = @_[1];
+   for my $item (safe_split(evaluate($self,$prog,$values),$idelim)) {
+       my $new = $txt; 
        $new =~ s/##/$item/g;
        push(@result,evaluate($self,$prog,$new));
    }
 
-   return join((@_[2] eq undef) ? " " : @_[2],@result);
+   return join(($odelim eq undef) ? " " : $odelim,@result);
 }
 
 #

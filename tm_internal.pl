@@ -570,20 +570,17 @@ sub necho
       my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
 
 
+      # output needs to be saved for use by http, websocket, or run()
       if(defined $$prog{output} && 
-         $$target{obj_id} == 118 || $$target{obj_id} == 209) {
+         (@{$$prog{created_by}}{obj_id} == $$target{obj_id} ||
+          $$target{obj_id} == @info{web_user} || 
+          $$target{obj_id} == @info{web_object}
+         )
+        ) {
             my $stack = $$prog{output};
             push(@$stack,$msg);
             next;
       }
-
-#      if(($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") && 
-#         ($$target{obj_id} == 118 || $$target{obj_id} == 209)) {
-#         $$prog{output} = [] if not defined $$prog{output};
-#         my $stack = $$prog{output};
-#         push(@$stack,$msg);
-#         next;
-#      }
 
 #      if(!defined @arg{hint} ||
 #         (@arg{hint} eq "ECHO_ROOM" && loc($target) != loc(owner($target)))) {

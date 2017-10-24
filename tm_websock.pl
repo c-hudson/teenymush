@@ -70,7 +70,7 @@ sub processMessage {
    # Used to exit the script after 15min inactivity
    my $timeout = time;
 
-   my $self = fetch("118");
+   my $self = fetch(@info{web_user});
    printf("   %s\@ws [%s]\n", @{$ws->{conns}{$conn->{socket}}}{ip},$msg);
 
    my $prog = mushrun(self   => $self,

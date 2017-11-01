@@ -89,6 +89,7 @@ my %fun =
    inuse     => sub { return &inuse_player_name(@_);                    },
    web       => sub { return &fun_web(@_);                              },
    run       => sub { return &fun_run(@_);                              },
+   graph     => sub { return &fun_graph(@_);                            },
    decode_entities => sub { return &fun_de(@_);                         },
 );
 
@@ -113,6 +114,127 @@ sub var_restore
       $$dst{$key} = $$src{$key};
    }
 }
+
+
+sub fun_graph
+{
+   my ($self,$prog,$txt,$x,$y) = @_;
+
+   if($txt =~ /^\s*connected\s*$/i) {
+      return graph_connected($x,$y);
+   } else {
+      return "Specify Connected";
+   }
+}
+
+sub range
+{
+   my ($begin,$end) = @_;
+   my ($start,$stop,@result);
+
+   $start = fuzzy($begin);
+   $stop = ($end eq undef) ? time() : fuzzy($end);
+   return undef if($start > $stop);
+
+   while($start < $stop) {
+      push(@result,$start);
+      $start += 86400;
+      return $start = $stop if($#result > 50);
+   }
+
+   my ($emday,$emon,$eyear) = (localtime($end))[3,4,5];
+   my ($cmday,$cmon,$cyear) = (localtime($start))[3,4,5];
+
+   if($emday == $cmday && $emon == $cmon && $$eyear == $$cyear) {
+      push(@result,$start);
+   }
+
+   return @result;
+}
+
+sub age
+{
+   my $date = shift;
+
+   return sprintf("%d",(time() - $date) / 86400);
+}
+
+sub graph_connected
+{
+   my ($size_x,$size_y) = @_;
+   my (%all, %usage,$max,$val,$min,@out);
+
+   $size_y = 8 if($size_y eq undef || $size_y < 8);
+ 
+
+   # find and group connects by user by day, this way if a user connects 
+   # 320 times per day, it only counts as one hit.
+   for my $rec (@{sql("select obj_id," .
+                      "       skh_start_time start," .
+                      "       skh_end_time end".
+                      "  from socket_history  " .
+                      " where skh_type = 1 " .
+                      "   and skh_start_time >= " .
+                      "               date(now() - INTERVAL ($size_y+2) day)"
+                     )}) {
+       for my $i (range($$rec{start},$$rec{end})) {
+          @usage{$$rec{obj_id}} = {} if !defined @usage{$$rec{obj_id}};
+          @{@usage{$$rec{obj_id}}}{age($i)}=1;
+       }
+    }
+
+    # now combine all the data grouped by user into one group.
+    # count min and max numbers while we're at it.
+    for my $id (keys %usage) {
+       my $hash = @usage{$id}; # 
+       for my $dt (keys %$hash) {
+          @all{$dt}++;
+          $max = @all{$dt} if($max < @all{$dt});
+          $min = @all{$dt} if ($min eq undef || $min > @all{$dt});
+       }
+    }
+  
+    # build the graph from the data within @all
+    for my $x ( 1 .. $size_x ){
+       if($x == 1) {
+          $val = $max;
+       } elsif($x == $size_x) {
+          $val = $min;
+      } else {
+          $val = sprintf("%d",int($max-($x *($max/$size_x))+1.5));
+       }
+       @out[$x-1] = sprintf("%*d|",length($max),$val);
+       for my $y ( 0  .. ($size_y-1)) {
+          if($val <= @all{$y}) {
+             @out[$x-1] .= "#|";
+          } elsif($x == $size_x && @all{$y} > 0) {
+             @out[$x-1] .= "*|";
+          } else {
+             @out[$x-1] .= " |";
+          }
+       }
+    }
+
+    my $start = $#out+1;
+    @out[$start] = " " x (length($max)+1);
+    @out[$start+1] = " " x (length($max)+1);
+    my $inter = $size_y / 4;
+    for my $y ( 0  .. ($size_y-1)) {
+       my $dy = (localtime(time() - ($y * 86400)))[3];
+       
+       if($y != 0 && substr(sprintf("%2d",$dy),1,1) =~ /^[0|5]$/) {
+          @out[$start] .= substr(sprintf("%02d",$dy),0,1) . "]";
+       } elsif(substr(sprintf("%2d",$dy-1),1,1) =~ /^[0|5]$/ &&
+               $y != $size_y-1) {
+          @out[$start] .= "=[";
+       } else {
+          @out[$start] .= "==";
+       }
+       @out[$start+1] .= substr(sprintf("%2d",$dy),1,1) . "|";
+    }
+    return join("\n",@out);
+}
+
 
 sub fun_run
 {
@@ -192,7 +314,7 @@ sub safe_split
     for($pos=0;$pos < $size;$pos++) {
        if(substr($txt,$pos,$dsize) eq $delim) {
           push(@result,substr($txt,$start,$pos-$start));
-          $result[$#result] =~ s/^\s+|\s+$//g;
+          $result[$#result] =~ s/^\s+|\s+$//g if($delim eq " ");
           $start = $pos + $dsize;
        }
     }
@@ -1357,7 +1479,6 @@ sub fun_lookup
 
    if(!defined @fun{lc($_[0])}) {
       printf("undefined function '%s'\n",@_[0]);
-      printf("TXT: '%s'\n",@_[1]);
       printf("%s",code("long"));
    }
    return (defined @fun{lc($_[0])}) ? lc($_[0]) : "huh";

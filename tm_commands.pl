@@ -1468,11 +1468,47 @@ sub cmd_force
    }
 }
 
+#   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+#   -------------------------------[ MOTD ]-------------------------------
+#   ------------------------------[ MOTD ]------------------------------
+
+sub motd_with_border
+{
+   my ($self,$prog,$txt) = @_;
+
+   if($txt eq undef) {
+      $txt = "   " . fun_center($self,$prog,"There is no MOTD today",70) .
+             "\n   " .
+             fun_center($self,
+                        $prog,
+                        "\@set #0/motd=<message> for your MOTD",
+                        70
+                       );
+   }
+
+   return "   " . ("-" x 31) . "[ MOTD ]" . ("-" x 31) . "\n\n".
+             $txt . "\n\n   " . ("-" x 70) . "\n";
+}
+
+sub motd
+{
+   my ($self,$prog) = @_;
+   
+   my $atr = get(0,"MOTD");
+   return motd_with_border($self,$prog) if($atr eq undef);
+   motd_with_border($self,$prog,evaluate(fetch(0),$prog,$atr));
+}
+
 sub cmd_list
 {
    my ($self,$prog,$txt) = @_;
 
-   if(!hasflag($self,"WIZARD")) {
+   if($txt =~ /^\s*motd\s*$/i) {
+      necho(self => $self,
+            prog => $prog,
+            source => [ "%s", motd($self,$prog) ]
+      );
+   } elsif(!hasflag($self,"WIZARD")) {
       return err($self,$prog,"Permission Denied.");
    } elsif($txt =~ /^\s*site\s*$/i) {
        necho(self => $self,
@@ -2685,7 +2721,7 @@ sub cmd_connect
 
       necho(self   => $user,                 # show message of the day file
             prog   => prog($user,$user),
-            source => [ "%s", getfile("motd.txt") ]
+            source => [ "%s", motd() ]
            );
 
       cmd_look($user,prog($user,$user));                    # show room

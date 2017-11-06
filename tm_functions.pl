@@ -120,8 +120,8 @@ sub fun_graph
 {
    my ($self,$prog,$txt,$x,$y) = @_;
 
-   if($txt =~ /^\s*connected\s*$/i) {
-      return graph_connected($x,$y);
+   if($txt =~ /^\s*(mush|web)\s*$/i) {
+      return graph_connected(lc($1),$x,$y);
    } else {
       return "Specify Connected";
    }
@@ -161,11 +161,18 @@ sub age
 
 sub graph_connected
 {
-   my ($size_x,$size_y) = @_;
+   my ($type,$size_x,$size_y) = @_;
    my (%all, %usage,$max,$val,$min,@out);
 
    $size_y = 8 if($size_y eq undef || $size_y < 8);
- 
+
+   if($type eq "MUSH") {
+      $type = 1; 
+   } elsif($type eq "WEB") {
+      $type = 2;
+   } else {
+      $type = 1;
+   }
 
    # find and group connects by user by day, this way if a user connects 
    # 320 times per day, it only counts as one hit.
@@ -173,9 +180,10 @@ sub graph_connected
                       "       skh_start_time start," .
                       "       skh_end_time end".
                       "  from socket_history  " .
-                      " where skh_type = 1 " .
+                      " where skh_type = ? " .
                       "   and skh_start_time >= " .
-                      "               date(now() - INTERVAL ($size_y+2) day)"
+                      "               date(now() - INTERVAL ($size_y+2) day)",
+                      $type
                      )}) {
        for my $i (range($$rec{start},$$rec{end})) {
           @usage{$$rec{obj_id}} = {} if !defined @usage{$$rec{obj_id}};

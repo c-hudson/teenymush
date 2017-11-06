@@ -869,7 +869,7 @@ sub locate_player
                      "  and fde_name = 'PLAYER' " .
                      "  and flg.atr_id is null " .
                      "  and fde_type = 1 " .
-                     "  and obj.obj_id = ? ") ||
+                     "  and obj.obj_id = ? ",$1) ||
           return undef;
       return $target;
    } elsif($name =~ /^\s*me\s*$/) {              # use current object/player

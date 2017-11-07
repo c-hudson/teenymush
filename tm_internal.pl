@@ -142,12 +142,12 @@ sub evaluate_substitutions
 sub text
 {
    my ($sql,@args) = @_;
-   my $out = "---[ Start ]---\n";                              # add header
+   my $out; # = "---[ Start ]---\n";                              # add header
 
    for my $hash (@{sql($db,$sql,@args)}) {                      # run query
       $out .= $$hash{text} . "\n";                             # add output
    }
-   $out .= "---[  End  ]---";                                  # add footer
+   # $out .= "---[  End  ]---";                                  # add footer
    return $out;
 }
 
@@ -476,7 +476,7 @@ sub filter_chars
 
 sub log_output
 {
-   my ($src,$dst,$txt) = @_;
+   my ($src,$dst,$loc,$txt) = (obj(shift),obj(shift),shift,shift);
 
    $txt =~ s/([\r\n]+)$//g;
 
@@ -489,17 +489,21 @@ sub log_output
        "(" .
        "   out_text, " .
        "   out_source, ".
+       "   out_location, ".
        "   out_destination ".
        ") values ( ".
+       "   ?, " .
        "   ?, " .
        "   ?, " .
        "   ? " .
        ")",
        substr($txt,0,63999),
        $$src{obj_id},
+       $loc,
        $$dst{obj_id}
       );
    $$db{rows} = $tmp;
+   my_commit;
 }
 
 
@@ -509,6 +513,7 @@ sub necho
    my %arg = @_;
    my $prog = $arg{prog};
    my $self = $arg{self};
+   my $loc;
 
    if($arg{self} eq undef) {
       printf("%s\n",print_var(\%arg));
@@ -536,7 +541,7 @@ sub necho
          my $target = obj(shift(@$array));
          my $fmt = shift(@$array);
          my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
-         for my $sock (@{sql("select c1.obj_id, sck_socket " .
+         for my $sock (@{sql("select c1.obj_id, sck_socket, c2.con_source_id " .
                              "  from content c1, ".
                              "       content c2, ".
                              "       socket s " .
@@ -551,8 +556,10 @@ sub necho
              my $s = @{@connected{$$sock{sck_socket}}}{sock};
              printf($s "%s%s",nospoof(@arg{self},@arg{prog},$$sock{obj_id}),
                 $msg);
-             log_output($self,$target,$msg);
+             $loc = $$sock{con_source_id};
          }
+
+         log_output($self,-1,$loc,$msg);
          handle_listener($arg{self},$arg{prog},$target,$fmt,@$array);
       }
    }
@@ -592,7 +599,7 @@ sub necho
          my $s = @{$connected{$$self{sock}}}{sock};
          printf($s "%s",$msg);
       } else {
-         log_output($self,$target,$msg);
+         log_output($self,$target,-1,$msg);
 
          if(hasflag($target,"PLAYER")) {         # echo to all player's sockets
             for my $sock (@{sql($db,
@@ -1513,24 +1520,18 @@ sub loc_obj
 {
    my $obj = obj(shift);
 
-   my $val = one_val($db,
-                     "select con_source_id value " .
-                     "  from content " . 
-                     " where obj_id = 1",
-                     );
-
    return fetch(one_val($db,
                         "select con_source_id value " .
                         "  from content " .
                         " where obj_id = ?",
                         $$obj{obj_id}
-                       )
-               );
+                       ));
 }
 
 sub loc
 {
-   my $loc = loc_obj($_[0],$_[1]);
+   my $loc = loc_obj($_[0]);
+   printf("LOOC: '%s' -> '%s'\n",@{$_[0]}{obj_id},$loc);
    return ($loc eq undef) ? undef : $$loc{obj_id};
 }
 

@@ -207,6 +207,7 @@ CREATE TABLE `output` (
   `out_text` varchar(64000) DEFAULT NULL,
   `out_source` int(11) DEFAULT NULL,
   `out_destination` int(11) DEFAULT NULL,
+  `out_location` int(11) DEFAULT NULL,
   PRIMARY KEY (`out_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -298,4 +299,4 @@ CREATE TABLE `valid_option` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2017-11-06  2:00:01
+-- Dump completed on 2017-11-07  2:00:01

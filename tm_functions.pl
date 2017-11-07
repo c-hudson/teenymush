@@ -501,6 +501,8 @@ sub fun_loc
 
    if($target eq undef) {
       return "#-1 NOT FOUND";
+   } elsif($txt =~ /^\s*here\s*/) {
+      return "#" . $$target{obj_id};
    } else {
       return "#" . loc($target);
    }
@@ -1200,18 +1202,25 @@ sub fun_strlen
 
 sub fun_sql
 {
-   my ($self,$prog) = (shift,shift);
+   my ($self,$prog,$type) = (shift,shift,shift);
+   my $result;
 
    if(hasflag($self,"WIZARD") || hasflag($self,"SQL")) {
       my (@txt) = @_;
 
       my $sql = join(',',@txt);
 #      $sql =~ s/\_/%/g;
+      printf("SQL: '%s'\n",evaluate($self,$prog,$sql));
       necho(self => $self,
             prog => $prog,
-            source => [ "Sql: '%s'\n",$sql ],
+            source => [ "Sql: '%s'\n",$type],
            );
-      my $result = table($sql);
+      if(lc($type) eq "text") {
+         $result = text(evaluate($self,$prog,$sql));
+      } else {
+         $result = table(evaluate($self,$prog,$sql));
+      }
+
       $result =~ s/\n$//;
       return $result;
    } else {
@@ -1236,6 +1245,7 @@ sub fun_substr
    } elsif($end !~ /^\s*\d+\s*/) {
       return "#-1 Substr expects a numeric value for third argument";
    }
+   printf("SUBSTR: '%s'->'%s'->'%s'\n",$txt,$start,$end);
 
    return substr($txt,$start,$end);
 }

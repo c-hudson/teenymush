@@ -10,7 +10,6 @@
 
 
 
-
 use Time::HiRes "ualarm";
 
 sub mush_command
@@ -46,8 +45,10 @@ sub mush_command
       $$hash{cmd} =~ s/\*/\(.*\)/g;
       $$hash{cmd} =~ s/\?/(.{1})/g;
       $$hash{cmd} =~ s/\+/\\+/g;
+      $$hash{cmd} =~ s/\$/\\\$/g;
       $$hash{txt} =~ s/\r\s*|\n\s*//g;
       if($cmd =~ /^$$hash{cmd}$/) {
+         printf("PAT: '$0,$1,$2,$3,$4,$5,$6,$7,$8,$9'\n");
          mushrun(self   => $self,
                  prog   => $prog,
                  runas  => $hash,
@@ -57,6 +58,7 @@ sub mush_command
                  from   => "ATTR"
                 );
       } else {
+         printf("!PAT: '$1,$2,$3,$4,$5,$6,$7,$8,$9'\n");
          mushrun(self   => $self,
                  prog   => $prog,
                  runas  => $hash,
@@ -175,6 +177,9 @@ sub mushrun
       if($arg{cmd} =~ /^\s*$/) {                                # attr is done
          @arg{cmd} = "&$$multi{attr} $$multi{object}=" . join("\r\n",@$stack);
          delete @{$connected{@{$arg{self}}{sock}}}{inattr};
+      } elsif($arg{cmd} eq ".") {                                # blank line
+         push(@$stack,"");
+         return;
       } else {                                          # another line of atr
          push(@$stack,$arg{cmd});
          return;

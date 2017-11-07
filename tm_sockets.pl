@@ -277,7 +277,7 @@ sub server_handle_sockets
                } elsif($$hash{site_restriction} == 69) {
                   printf($new "%s",getfile("honey.txt"));
                } else {
-                  printf($new "%s",getfile("login.txt"));   #  show login
+                  printf($new "%s\r\n",get(0,"login"));        #  show login
                }
             }                                                        
          } elsif(sysread($s,$buf,1024) <= 0) {          # socket disconnected

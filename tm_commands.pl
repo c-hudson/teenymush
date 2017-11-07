@@ -195,20 +195,9 @@ delete @honey{keys %honey};
 @command{"\@\@"}     = { fun  => sub { return;}                          };
 @command{"\@split"}  = { fun  => sub { cmd_split(@_); }                  };
 @command{"\@wall"}  = { fun  => sub { cmd_websocket(@_); }          };
-@command{"\@test"}  = { fun  => sub { cmd_test(@_); }          };
 
  
 # ------------------------------------------------------------------------#
-
-sub cmd_test
-{
-         printf("ONE: '%s'\n",one_val($db,"select count(*) value ".
-                    "  from object " .
-                    " where obj_id =  1 " .
-                    "   and obj_password = password(?)",
-                     "123456789aAs"
-               ));
-}
 
 sub cmd_websocket
 {
@@ -245,7 +234,8 @@ sub cmd_huh
 }
                   
 sub cmd_offline_huh { my $sock = $$user{sock};
-                      printf($sock "%s",getfile("login.txt"));           }
+                      printf($sock "%s",get(0,"login"));
+                    };
 sub cmd_version
 {
    my ($self,$prog) = @_;
@@ -635,7 +625,7 @@ sub cmd_boot
             }
          
             my $sock=$$hash{sock};
-            printf($sock "%s",getfile("logoff.txt"));
+            printf($sock "%s",get(0,"logoff"));
             server_disconnect($sock);
             return;
          }
@@ -1578,22 +1568,24 @@ sub cmd_destroy
       return err($self,$prog,"Permission Denied.");
    }
 
+   my $name = name($target);
+   my $objname = obj_name($self,$target);
+
    sql($db,"delete from object where obj_id = ?",$$target{obj_id});
 
    if($$db{rows} != 1) {
       my_rollback;
       necho(self   => $self,
             prog   => $prog,
-            room    => [ $target, "%s was destroyed.",name($target) ],
             source  => [ "Internal error, object not destroyed." ],
            );
    } else {
       my_commit;
       necho(self   => $self,
             prog   => $prog,
-            source => [ "%s was destroyed.",obj_name($self,$target) ],
-            room   => [ $target, "%s was destroyed.",name($target) ],
-            room2  => [ $target, "%s has left.",name($target) ]
+            source => [ "%s was destroyed.",$objname ],
+            room   => [ $target, "%s was destroyed.",$name  ],
+            room2  => [ $target, "%s has left.",$name ]
            );
    }
 }
@@ -2304,7 +2296,7 @@ sub cmd_quit
 
    if(defined $$self{sock}) {
       my $sock = $$self{sock};
-      printf($sock "%s",getfile("logoff.txt"));
+      printf($sock "%s",get(0,"LOGOFF"));
       server_disconnect($sock);
    } else {
       err($self,$prog,"Permission denied [Non-players may not quit]");

@@ -1531,7 +1531,6 @@ sub loc_obj
 sub loc
 {
    my $loc = loc_obj($_[0]);
-   printf("LOOC: '%s' -> '%s'\n",@{$_[0]}{obj_id},$loc);
    return ($loc eq undef) ? undef : $$loc{obj_id};
 }
 

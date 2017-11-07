@@ -64,6 +64,8 @@ delete @honey{keys %honey};
                          fun  => sub { return &cmd_look(@_); }           };
 @command{quit}       = { help => "Disconnect from the server",
                          fun  => sub { return cmd_quit(@_); }            };
+@command{"\@trigger"} = { help => "Run commands in an attribute",
+                         fun  => sub { return cmd_trigger(@_); }         };
 @command{"\@commit"} = { help => "Force a commit to mysql",
                          fun  => sub { return cmd_commit(@_); }          };
 @command{"\@set"}    = { help => "Set attributes on an object",
@@ -222,6 +224,56 @@ sub cmd_score
            );
    }
 };
+
+sub cmd_trigger
+{
+   my ($self,$prog,$txt) = @_;
+   my (@wild,$last,$target,$attr,$name);
+
+   if($txt =~ /^\s*([^\/]+)\s*\/\s*([^=]+)\s*={0,1}/ ||
+      $txt =~ /^\s*([^\/]+)\s*/) {
+
+      if($2 eq undef) {
+         ($name,$target) = ($1,$self);
+      } else {
+         ($name,$target) = ($2,locate_object($self,$1,"LOCAL"));
+      }
+
+      if($target eq undef) {
+         return err($self,$prog,"No match.");
+      } elsif(!controls($self,$target)) {                 # can modify object?
+         return err($self,$prog,"Permission denied");
+      }
+
+      $attr = get($target,$name);
+
+      if($attr eq undef) {
+          return err($self,$prog,"No such attribute.");
+      }
+
+      for my $i (balanced_split($',',',2)) {             # split param list
+         if($last eq undef) {
+            $last = $i;
+         } else {
+            push(@wild,$i);
+         }
+      }
+      push(@wild,$last) if($last ne undef);
+
+      mushrun(self   => $self,
+              prog   => $prog,
+              runas  => $target,
+              source => 0,
+              cmd    => $attr,
+              wild   => [ @wild ],
+             );
+   } else {
+       necho(self   => $self,
+             prog   => $prog,
+             source => [ "usage: \@trigger <object>/<attr> [=<parm>]" ],
+            );
+   }
+}
 
 sub cmd_huh
 {

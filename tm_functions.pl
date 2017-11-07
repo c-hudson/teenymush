@@ -1245,7 +1245,6 @@ sub fun_substr
    } elsif($end !~ /^\s*\d+\s*/) {
       return "#-1 Substr expects a numeric value for third argument";
    }
-   printf("SUBSTR: '%s'->'%s'->'%s'\n",$txt,$start,$end);
 
    return substr($txt,$start,$end);
 }

@@ -48,7 +48,6 @@ sub mush_command
       $$hash{cmd} =~ s/\$/\\\$/g;
       $$hash{txt} =~ s/\r\s*|\n\s*//g;
       if($cmd =~ /^$$hash{cmd}$/) {
-         printf("PAT: '$0,$1,$2,$3,$4,$5,$6,$7,$8,$9'\n");
          mushrun(self   => $self,
                  prog   => $prog,
                  runas  => $hash,
@@ -58,7 +57,6 @@ sub mush_command
                  from   => "ATTR"
                 );
       } else {
-         printf("!PAT: '$1,$2,$3,$4,$5,$6,$7,$8,$9'\n");
          mushrun(self   => $self,
                  prog   => $prog,
                  runas  => $hash,

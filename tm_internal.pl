@@ -1618,10 +1618,8 @@ sub date_split
 #
 sub move
 {
-   my ($self,$prog,$target,$dest,$type) = (obj($_[0]),obj($_[1]),obj($_[2]),$_[3]);
-   my $who = $$self{obj_name};
-
-   $who = 'CREATE_COMMAND' if($who eq undef);
+   my ($self,$prog,$target,$dest,$type) = 
+      (obj($_[0]),obj($_[1]),obj($_[2]),obj($_[3]),$_[4]);
 
    my $current = loc($target);
    if(hasflag($current,"ROOM")) {
@@ -1648,7 +1646,7 @@ sub move
        "             ?)",
        $$target{obj_id},
        $$dest{obj_id},
-       $who,
+       ($$self{obj_name} eq undef) ? "CREATE_COMMAND": $$self{obj_name},
        ($type eq undef) ? 3 : 4
    );
 

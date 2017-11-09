@@ -2421,17 +2421,12 @@ sub create_exit
 
    necho(self=>$self,prog=>$prog,source=>["CE: got this far 1"]);
    my $exit = create_object($self,$prog,$name,undef,"EXIT") ||
-      return 0;
+      return undef;
 
-   necho(self=>$self,prog=>$prog,source=>["CE: got this far 2: $in,$out"]);
-
-   if($out ne undef) {
-      if(!link_exit($self,$exit,$in,$out,1)) {
-        necho(self=>$self,prog=>$prog,source=>["CE: got this far 3: error"]);
-      }
+   if(!link_exit($self,$exit,$in,$out,1)) {
+      return undef;
    }
 
-   necho(self=>$self,prog=>$prog,source=>["CE: got this far 3"]);
    return $exit;
 }
 
@@ -2587,7 +2582,7 @@ sub cmd_dig
 sub cmd_open
 {
    my ($self,$prog,$txt) = @_;
-   my ($exit,$destination);
+   my ($exit,$destination,$dest);
   
    if($txt =~ /^\s*([^=]+)\s*=\s*([^ ]+)\s*$/ ||
       $txt =~ /^\s*([^ ]+)\s*$/) {
@@ -2597,10 +2592,6 @@ sub cmd_open
                              "        \@open <ExitName>");
    }
 
-   necho(self => $self,
-         prog => $prog,
-         source => ["Got this far 1" ]
-        );
    if(quota_left($self) < 1) {
       return err($self,$prog,"You are out of QUOTA to create objects");
    }
@@ -2611,26 +2602,19 @@ sub cmd_open
    my $loc = loc($self) ||
       return err($self,$prog,"Unable to determine your location");
 
-   necho(self => $self,
-         prog => $prog,
-         source => ["Got this far 2" ]
-        );
-
    if(!(controls($self,$loc) || hasflag($loc,"ABODE"))) {
       return err($self,$prog,"You do not own this room and it is not ABODE");
    }
 
-   my $dest = locate_object($self,$destination) ||
-      return err($self,$prog,"I can't find that destination location");
 
-   if(!(controls($self,$loc) || hasflag($loc,"LINK_OK"))) {
-      return err($self,$prog,"You do not own this room and it is not LINK_OK");
+   if($destination ne undef) {
+      $dest = locate_object($self,$destination) ||
+         return err($self,$prog,"I can't find that destination location");
+
+      if(!(controls($self,$loc) || hasflag($loc,"LINK_OK"))) {
+         return err($self,$prog,"This is not your room and it is not LINK_OK");
+      }
    }
-   necho(self => $self,
-         prog => $prog,
-         source => ["Got this far: 3 : $exit,$loc,$$dest{obj_id}" ]
-        );
-
 
    my $dbref = create_exit($self,$prog,$exit,$loc,$dest) ||
       return err($self,$prog,"Internal error, unable to create the exit");

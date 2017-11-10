@@ -2765,20 +2765,25 @@ sub cmd_connect
 
       # --- Valid User ------------------------------------------------------#
       $player = one("select * " .                        # find requested user
-                    "  from object " .
-                    " where lower(obj_name) = ?",
-                    $username);
+                    "  from object obj, ".
+                    "       flag flg, ".
+                    "       flag_definition fde" .
+                    " where obj.obj_id = flg.obj_id ".
+                    "   and flg.fde_flag_id = fde.fde_flag_id ".
+                    "   and fde_name = 'PLAYER' " .
+                    "   and lower(obj_name) = ?",
+                    $username
+                   );
       return if invalid_player($sock,{obj_id=>-1,obj_name=>$username},$player);
 
       # --- Valid Password --------------------------------------------------#
       if(!hasflag($player,"GUEST")) {
           my $good = one_val("select count(*) value ".
-                             "  from object " .
+                             "  from object ".
                              " where obj_id = ? " .
                              "   and obj_password = password(?)",
                              $$player{obj_id},
                              $2);
-              
          return if invalid_player($sock,$player,$good,1);          # bad pass
       }
 
@@ -2856,7 +2861,7 @@ sub cmd_connect
 
       for my $obj (lcon(@info{master_room}),$player) {
          if(($atr = get($obj,"ACONNECT")) && $atr ne undef) {
-            mushrun(self   => $player,                 # handle adesc
+            mushrun(self   => $player,                 # handle aconnect
                     runas  => $player,
                     source => 0,
                     cmd    => $atr

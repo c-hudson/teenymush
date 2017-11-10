@@ -197,9 +197,36 @@ delete @honey{keys %honey};
 @command{"\@\@"}     = { fun  => sub { return;}                          };
 @command{"\@split"}  = { fun  => sub { cmd_split(@_); }                  };
 @command{"\@wall"}  = { fun  => sub { cmd_websocket(@_); }          };
+@command{"\@find"}   = { fun  => sub { cmd_find(@_); }          };
 
  
 # ------------------------------------------------------------------------#
+
+sub cmd_find
+{
+   my ($self,$prog,$txt) = @_;
+
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ table("select concat(obj_name, ".
+                           "              '(#', ".
+                           "              o.obj_id, ".
+                           "              fde_letter, ".
+                           "              ')' ".
+                           "             ) object  ".
+                           "  from object o,  ".
+                           "       flag f,  ".
+                           "       flag_definition fd  ".
+                           " where o.obj_id = f.obj_id  ".
+                           "   and f.fde_flag_id = fd.fde_flag_id  ".
+                           "   and o.obj_owner = ?  ".
+                           "   and fde_letter in ('o','R','E','P')",
+                           owner_id($self)
+                          )
+                   ]
+        );
+   
+}
 
 sub cmd_websocket
 {
@@ -1502,7 +1529,7 @@ sub cmd_force
                prog   => $prog,
                runas  => $target,
                source => 0,
-               cmd    => $',
+               cmd    => evaluate($self,$prog,$'),
                hint   => "INTERNAL"
               );
    } else {
@@ -1550,6 +1577,27 @@ sub cmd_list
             prog => $prog,
             source => [ "%s", motd($self,$prog) ]
       );
+   } elsif($txt =~ /^\s*functions\s*$/i) {
+       necho(self   => $self,
+             prog   => $prog,
+             source => [ "Functions: %s",uc(list_functions()) ],
+            );
+   } elsif($txt =~ /^\s*commands\s*$/i) {
+       necho(self   => $self,
+             prog   => $prog,
+             source => [ "Commands: %s\n",uc(join(' ',sort keys %command)) ],
+            );
+   } elsif($txt =~ /^\s*flags{0,1}\s*$/) {
+       necho(self => $self,
+             prog => $prog,
+             source => [ "%s" ,
+                         table("  select fde_name flag, " .
+                               "         fde_letter letter " .
+                               "    from flag_definition " .
+                               "order by fde_name"
+                              )
+                       ]
+            );
    } elsif(!hasflag($self,"WIZARD")) {
       return err($self,$prog,"Permission Denied.");
    } elsif($txt =~ /^\s*site\s*$/i) {
@@ -1567,16 +1615,6 @@ sub cmd_list
                                "   and vao_table = 'site'"
                               )
                        ]
-            );
-   } elsif($txt =~ /^\s*functions\s*$/i) {
-       necho(self   => $self,
-             prog   => $prog,
-             source => [ "Functions: %s",uc(list_functions()) ],
-            );
-   } elsif($txt =~ /^\s*commands\s*$/i) {
-       necho(self   => $self,
-             prog   => $prog,
-             source => [ "Commands: %s\n",uc(join(' ',sort keys %command)) ],
             );
    } elsif($txt =~ /^\s*buffers{0,1}\s*$/) {
        my $hash = @info{io};
@@ -1744,6 +1782,12 @@ sub cmd_drop
    my $target = locate_object($self,$txt,"CONTENT") ||
       return err($self,$prog,"I don't see that here.");
 
+   if(hasflag($target,"ROOM") || hasflag($target,"EXIT")) {
+      return err($self,$prog,"You may not drop exits or rooms.");
+   } elsif($$target{obj_id} == $$self{obj_id}) {
+      return err($self,$prog,"You may not drop yourself.");
+   }
+
    move($self,$prog,$target,fetch(loc($self))) ||
       return err($self,$prog,"Internal error, unable to drop that object");
 
@@ -1814,8 +1858,12 @@ sub cmd_take
 
    if(hasflag($target,"EXIT")) {
       return err($self,$prog,"You may not pick up exits.");
+   } elsif(hasflag($target,"ROOM")) {
+      return err($self,$prog,"You may not pick up rooms.");
    } elsif($$target{obj_id} eq  $$self{obj_id}) {
       return err($self,$prog,"You may not pick up yourself!");
+   } elsif(loc($target) != loc($self)) {
+      return err($self,$prog,"That object is to far away");
    }
 
 
@@ -2419,7 +2467,6 @@ sub create_exit
 {
    my ($self,$prog,$name,$in,$out,$verbose) = @_;
 
-   necho(self=>$self,prog=>$prog,source=>["CE: got this far 1"]);
    my $exit = create_object($self,$prog,$name,undef,"EXIT") ||
       return undef;
 
@@ -2457,12 +2504,12 @@ sub cmd_create
 sub cmd_link
 {
    my ($self,$prog,$txt) = @_;
-   my ($exit_name,$exit,$dest);
+   my ($name,$target,$dest);
 
    if($txt =~ /^\s*([^ ]+)\s*=\s*here\s*$/i) {
-      ($exit_name,$dest) = ($1,loc($self));
+      ($name,$dest) = ($1,"#" . loc($self));
    } elsif($txt =~ /^\s*([^ ]+)\s*=\s*#(\d+)\s*$/) {
-      ($exit_name,$dest) = ($1,$2);
+      ($name,$dest) = ($1,"#" . $2);
    } else {
       err($self,$prog,"syntax: \@link <exit> = <room_dbref>\n" .
                       "        \@link <exit> = here\n");
@@ -2471,27 +2518,63 @@ sub cmd_link
    my $loc = loc($self) ||
       return err($self,$prog,"Unable to determine your location");
 
-   my $exit = locate_object($self,$exit_name,"EXIT") ||
+   my $target = locate_object($self,$name,"EXIT") ||
       return err($self,$prog,"I don't see that here");
 
-   if(!valid_dbref($exit)) {
-      return err($self,$prog,"%s not a valid object.",$exit);
+   my $d = locate_object($self,$dest) ||
+      return err($self,$prog,"I don't see $dest here");
+
+   if(!valid_dbref($target)) {
+      return err($self,$prog,"%s not a valid object.",$name);
    } elsif(!valid_dbref($dest)) {
       return err($self,$prog,"%s not a valid object.",$dest);
    } elsif(!(controls($self,$loc) || hasflag($loc,"LINK_OK"))) {
       return err($self,$prog,"You do not own this room and it is not LINK_OK");
    }
 
- 
-   $dest = fetch($dest);
 
-   link_exit($self,$exit,undef,$dest) ||
-      return err($self,$prog,"Internal error while trying to link exit");
+   if(hasflag($target,"EXIT")) { 
+     
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "DEST: $dest" ],
+           );
+      $dest = fetch($dest);
 
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "Exit linked to %s",obj_name($self,$dest,1) ],
-        );
+      link_exit($self,$target,undef,$dest) ||
+         return err($self,$prog,"Internal error while trying to link exit");
+
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Exit linked to %s",obj_name($self,$dest,1) ],
+           );
+   } elsif(hasflag($target,"EXIT")) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "That is not an object or room." ]
+           );
+   } elsif(controls($self,$target) || hasflag($target,"ABODE")) {
+         sql("update object " . 
+             "   set obj_home = ? ".
+             " where obj_id = ? ",
+             $$d{obj_id},
+             $$target{obj_id}
+            );
+         if($$db{rows} != 1) {
+            return err($self,$prog,"Internal error, unable to set home");
+         }
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "Home set to " . obj_name($self,$d) ]
+              );
+         my_commit;
+   } else {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Permission denied" ]
+           );
+   
+   }
 }
 
 
@@ -2525,7 +2608,7 @@ sub cmd_dig
    }
 
 
-   if($in ne undef && !locate_exit($in,"EXACT")) {
+   if($in ne undef && locate_exit($in,"EXACT")) {
       return err($self,$prog,"Exit '%s' already exists in this location",$in);
    }
 
@@ -2943,6 +3026,8 @@ sub cmd_ex
 {
    my ($self,$prog,$txt) = @_;
    my ($target,$desc,@exit,@content,$atr,$out);
+
+   $txt = evaluate($self,$prog,$txt);
 
    ($txt,$atr) = ($`,$') if($txt =~ /\//);
 

@@ -237,6 +237,7 @@ sub fetch
    my $obj = obj($_[0]);
    my $debug = shift;
 
+   $$obj{obj_id} =~ s/#//g;
    my $hash=one($db,"select * from object where obj_id = ?",$$obj{obj_id}) ||
       return undef;
    return $hash;

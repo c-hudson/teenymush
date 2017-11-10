@@ -420,7 +420,7 @@ sub nospoof
 
    if(hasflag($dest,"NOSPOOF")) {
 #      printf("%s\n",code("long"));
-      return "[" . obj_name($self,$$prog{created_by}) . "] ";
+      return "[" . obj_name($self,$$prog{created_by},1) . "] ";
    }
    return undef;
 }
@@ -957,13 +957,14 @@ sub locate_object
       if(($$hash{fde_name} ne "EXIT" &&
          lc($name) eq lc($$hash{obj_name})) ||
         ($$hash{fde_name} eq 'EXIT' && 
-         $$hash{obj_name} =~ /(^|;)\s*$name([^;]*)\s*(;|$)/i)) {
+         $$hash{obj_name} =~ /(^|;)\s*$name\s*(;|$)/i)) {
          if($exact eq undef) {
             $exact = $hash;
          } else {
             return undef;
          }
       } elsif($indirect ne undef) {
+#         $$hash{obj_name} =~ /(^|;)\s*$name([^;]*)\s*(;|$)/i)) {
          if(length($$indirect{obj_name}) > length($$hash{obj_name})) {
             $indirect = $hash;
          }
@@ -1331,24 +1332,53 @@ sub create_object
       $where = -1;
    }
 
-   sql($db,
-       " insert into object " .
-       "    (obj_name,obj_password,obj_owner,obj_created_by," .
-       "     obj_created_date, obj_home " .
-       "    ) ".
-       "values " .
-       "   (?,password(?),?,?,now(),?)",
-       $name,$pass,$owner,$who,$where);
 
-   if($$db{rows} != 1) {
+   # find an id to reuse. You shouldn't refuse IDs in a db, but it
+   # part of the "charm" of a MUSH.
+   my $id = one_val("select a.obj_id + 1 value ".
+                    "  from object a ".
+                    "     left join object b ".
+                    "        on a.obj_id + 1 = b.obj_id ".
+                    "where b.obj_id is null ".
+                    "  and a.obj_id is not null ".
+                    "limit 1"
+                   );
+
+   if($id ne undef) {
+      sql($db,
+          " insert into object " .
+          "    (obj_id,obj_name,obj_password,obj_owner,obj_created_by," .
+          "     obj_created_date, obj_home " .
+          "    ) ".
+          "values " .
+          "   (?, ?,password(?),?,?,now(),?)",
+          $id,$name,$pass,$owner,$who,$where);
+   } else {
+      sql($db,
+          " insert into object " .
+          "    (obj_name,obj_password,obj_owner,obj_created_by," .
+          "     obj_created_date, obj_home " .
+          "    ) ".
+          "values " .
+          "   (?,password(?),?,?,now(),?)",
+          $name,$pass,$owner,$who,$where);
+   }
+
+   if($$db{rows} != 1) {                           # oops, nothing happened
+      necho(self => $self,
+            prog => $prog,
+            source => [ "object #%s was not created", $id ]
+           );
       my_rollback($db);
       return undef;
    }
 
-   my $hash = one($db,"select last_insert_id() obj_id") ||
-      return my_rollback($db);
+   if($id eq undef) {                             # grab newly created id
+      $id = one_val($db,"select last_insert_id() obj_id") ||
+          return my_rollback($db);
+   }
 
-   my $out = set_flag($self,$prog,$$hash{obj_id},$type,1);
+   my $out = set_flag($self,$prog,$id,$type,1);
    if($out =~ /^#-1 /) {
       necho(self => $self,
             prog => $prog,
@@ -1357,9 +1387,9 @@ sub create_object
       return undef;
    }
    if($type eq "PLAYER" || $type eq "OBJECT") {
-      move($self,$prog,$hash,fetch($where));
+      move($self,$prog,$id,fetch($where));
    }
-   return $$hash{obj_id};
+   return $id;
 }
 
 
@@ -1559,11 +1589,11 @@ sub obj_ref
 
 sub obj_name
 {
-   my ($self,$obj) = (obj(shift),obj(shift));
+   my ($self,$obj,$flag) = (obj(shift),obj(shift),shift);
    
 #   $obj = fetch($obj) if(!defined $$obj{obj_name});
    $obj = fetch($obj);
-   if(controls($self,$obj)) {
+   if(controls($self,$obj) || $flag) {
       return $$obj{obj_name} . "(#" . $$obj{obj_id} . flag_list($obj) . ")";
    } else {
       return $$obj{obj_name};
@@ -1722,7 +1752,6 @@ sub link_exit
           obj_name($self,$self,1),
           4
       );
-      printf("ROWS: db{rows} = $$db{rows}\n");
    }
 
    if($$db{rows} == 1) {

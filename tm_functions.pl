@@ -1210,7 +1210,6 @@ sub fun_sql
 
       my $sql = join(',',@txt);
 #      $sql =~ s/\_/%/g;
-      printf("SQL: '%s'\n",evaluate($self,$prog,$sql));
       necho(self => $self,
             prog => $prog,
             source => [ "Sql: '%s'\n",$type],

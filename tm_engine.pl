@@ -165,7 +165,7 @@ sub mushrun
          @{@connected{@{$arg{self}}{sock}}}{inattr} = {
             attr    => $1,
             object  => $2,
-            content => [ $3 ],
+            content => ($3 eq undef) ? [] : [ $3 ],
             prog    => $arg{prog},
          };
          return;

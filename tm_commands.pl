@@ -3349,7 +3349,7 @@ sub cmd_set2
    my ($self,$prog,$txt) = @_;
 #   $txt =~ s/\r\n/<BR>/g;
 
-   if($txt =~ /^\s*([^& =]+)\s+([^ =]+)\s*= *(.*?) *$/s) {
+   if($txt =~ /^\s*([^& =]+)\s+([^ =]+)\s*=(.*?) *$/s) {
       cmd_set($self,$prog,"$2/$1=$3");
    } elsif($txt =~ /^\s*([^ =]+)\s+([^ =]+)\s*$/s) {
       cmd_set($self,$prog,"$2/$1=");

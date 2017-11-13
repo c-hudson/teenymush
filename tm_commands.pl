@@ -176,6 +176,8 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_readcache(@_);}               };
 @command{"\@halt"}   = { help => "Stops all your running programs.",
                          fun  => sub { cmd_halt(@_);}                    };
+@command{"\@sex"}    = { help => "Sets the generder for an object.",
+                         fun  => sub { cmd_sex(@_);}                     };
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); },
@@ -196,7 +198,7 @@ delete @honey{keys %honey};
                          alias => 1                                      };
 @command{"\@\@"}     = { fun  => sub { return;}                          };
 @command{"\@split"}  = { fun  => sub { cmd_split(@_); }                  };
-@command{"\@wall"}  = { fun  => sub { cmd_websocket(@_); }          };
+@command{"\@websock"}= { fun  => sub { cmd_websocket(@_); }          };
 @command{"\@find"}   = { fun  => sub { cmd_find(@_); }          };
 
  
@@ -228,11 +230,36 @@ sub cmd_find
    
 }
 
+#
+# websocket
+#    Instruct the client to sent a command to the server.
+#
 sub cmd_websocket
 {
    my ($self,$prog,$txt) = @_;
 
-   websock_wall($txt); 
+   if(hasflag(owner($self),"WIZARD")) {
+      websock_wall($txt); 
+   } else {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Permission Denied." ],
+           );
+   }
+}
+
+sub cmd_sex
+{
+    my ($self,$prog,$txt) = @_;
+
+    if($txt =~ /=/) {
+       cmd_set($self,$prog,"$`/sex=" . trim($'));
+    } else {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "I don't know which one you mean!" ],
+           );
+    }
 }
 
 sub cmd_score

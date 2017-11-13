@@ -826,6 +826,7 @@ sub flag_list
 sub valid_dbref 
 {
    my $id = obj(shift);
+   $$id{obj_id} =~ s/#//g;
 
    return one_val("select if(count(*) = 0,0,1) value " . 
                   "  from object " . 

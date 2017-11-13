@@ -90,6 +90,7 @@ my %fun =
    web       => sub { return &fun_web(@_);                              },
    run       => sub { return &fun_run(@_);                              },
    graph     => sub { return &fun_graph(@_);                            },
+   lexits    => sub { return &fun_lexits(@_);                           },
    decode_entities => sub { return &fun_de(@_);                         },
 );
 
@@ -115,6 +116,29 @@ sub var_restore
    }
 }
 
+
+sub fun_lexits
+{
+   my ($self,$prog,$txt) = @_;
+   my @result;
+
+   my $target = locate_object($self,$txt);
+   return "#-1 NOT FOUND" if($target eq undef);
+
+   for my $rec (@{sql("select con.obj_id " .
+                      "  from content con, " .
+                      "       flag flg, " .
+                      "       flag_definition fde " .
+                      " where con.obj_id = flg.obj_id " .
+                      "   and flg.fde_flag_id = fde.fde_flag_id " .
+                      "   and fde_name = 'EXIT' ".
+                      "   and con.con_source_id = ?",
+                      $$target{obj_id}
+               )}) {
+       push(@result,"#" . $$rec{obj_id});
+   }
+   return join(' ',@result);
+}
 
 sub fun_graph
 {

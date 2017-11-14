@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 
 
+use Text::Wrap;
 
 delete @command{keys %command};
 delete @offline{keys %offline};
@@ -172,12 +173,12 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_lock(@_);}                    };
 @command{"\@boot"}   = { help => "Severs the player's connection to the game",
                          fun  => sub { cmd_boot(@_);}                    };
-@command{"\@readcache"}={ help => "Re-reads the servers config file(s)",
-                         fun  => sub { cmd_readcache(@_);}               };
 @command{"\@halt"}   = { help => "Stops all your running programs.",
                          fun  => sub { cmd_halt(@_);}                    };
 @command{"\@sex"}    = { help => "Sets the generder for an object.",
                          fun  => sub { cmd_sex(@_);}                     };
+@command{"\@read"}   = { help => "Reads various data for the MUSH",
+                         fun  => sub { cmd_read(@_);}                    };
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); },
@@ -1169,20 +1170,68 @@ sub cmd_sleep
 #   }
 }
 
-sub cmd_readcache
+sub cmd_read
 {
-   my ($self,$prog) = @_;
+   my ($self,$prog,$txt) = @_;
+   my ($file, $data, $name);
+   my $count = 0;
 
    if(!hasflag($self,"WIZARD")) {
       necho(self   => $self,
             prog   => $prog,
             source => [ "Permission denied." ],
            );
-   } else {
+   } elsif($txt =~ /^\s*config\s*$/) {                # re-read config file
       read_config();
       necho(self   => $self,
             prog   => $prog,
             source => [ "Done" ],
+           );
+   } elsif($txt =~ /^\s*help\s*$/) {                     # import help data
+      if(!open($file,"help.txt")) {
+         return necho(self   => $self,
+                      prog   => $prog,
+                      source => [ "Could not open help.txt for reading." ],
+                     );
+      }
+
+      sql("delete from help");
+
+      while(<$file>) {
+         s/\r|\n//g;
+         if(/^& /) {
+            if($data ne undef) {
+               $count++;
+               $data =~ s/\n$//g;
+               sql("insert into help(hlp_name,hlp_data) " .
+                   "values(?,?)",$name,$data);
+            }
+            $name = $';
+            $data = undef;
+         } else {
+            $data .= $_ . "\n";
+         }
+      }
+
+      if($data ne undef) {
+         $data =~ s/\n$//g;
+         sql("insert into help(hlp_name,hlp_data) " .
+             "values(?,?)",$name,$data);
+         $count++;
+      }
+      my_commit;
+
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s help items read containing %d lines of text.",
+                        $count, $. ],
+           );
+      close($file);
+   
+   } else {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Unknown read item '%s' specified.", trim($txt) ],
            );
    }
 }
@@ -1605,14 +1654,26 @@ sub cmd_list
             source => [ "%s", motd($self,$prog) ]
       );
    } elsif($txt =~ /^\s*functions\s*$/i) {
+       $Text::Wrap::columns=75;
        necho(self   => $self,
              prog   => $prog,
-             source => [ "Functions: %s",uc(list_functions()) ],
+             source => [ "%s",
+                         wrap("Functions: ",
+                              "           ",
+                              uc(list_functions())
+                             )
+                       ]
             );
    } elsif($txt =~ /^\s*commands\s*$/i) {
+       $Text::Wrap::columns=75;
        necho(self   => $self,
              prog   => $prog,
-             source => [ "Commands: %s\n",uc(join(' ',sort keys %command)) ],
+             source => [ "%s\n",
+                         wrap("Commands: ",
+                              "          ",
+                              uc(join(' ',sort keys %command))
+                             )
+                       ]
             );
    } elsif($txt =~ /^\s*flags{0,1}\s*$/) {
        necho(self => $self,
@@ -1857,7 +1918,6 @@ sub cmd_leave
 
 #   my ($self,$prog,$target,$dest,$type) = (obj($_[0]),obj($_[1]),obj($_[2]),$_[3]);
 
-   printf("Move: '$dest'\n");
    move($self,$prog,$self,$dest) ||
       return err($self,$prog,"Internal error, unable to leave that object");
 
@@ -1986,8 +2046,23 @@ sub cmd_enter
    my $target = locate_object($self,$txt,"LOCAL") ||
       return err($self,$prog,"I don't see that here.");
 
-   controls($self,$target) ||
-      return err($self,$prog,"Permission Denied.");
+   # must be owner or object enter_ok to enter it
+   if(!controls($self,$target) && !hasflag($target,"ENTER_OK")) {
+     return err($self,$prog,"Permission denied.");
+   }
+
+   # check to see if object can pass enter lock
+   my $atr = get($target,"LOCK_ENTER");
+
+   if($atr ne undef) {
+      my $lock = lock_eval($self,$target,$atr);
+
+      if($$lock{error}) {
+         return err($self,$prog,"Permission denied, the lock has broken.");
+      } elsif(!$$lock{result}) {
+         return err($self,$prog,"Permission denied.");
+      }
+   }
 
    necho(self   => $self,
          prog   => $prog,
@@ -2431,6 +2506,36 @@ sub cmd_quit
 }
 
 sub cmd_help
+{
+   my ($self,$prog,$txt) = @_;
+
+   $txt = "help" if($txt =~  /^\s*$/);
+   my $help = one_val("select hlp_data value" .
+                      "  from help " . 
+                      " where hlp_name = ? ",
+                      lc(trim($txt))
+                     );
+   if($help eq undef) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "No entry for '%s'", trim($txt) ]
+           );
+   } elsif($help =~ /^RUN: \s*(.*)\s*$/i) {
+      mushrun(self   => $self,
+              prog   => $prog,
+              runas  => $self,
+              source => 0,
+              cmd    => $1
+             );
+   } else {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s", $help  ]
+           );
+   }
+}
+
+sub cmd_help_old
 {
    my ($self,$prog,$txt) = @_;
    my %permalias = (

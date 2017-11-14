@@ -1,0 +1,285 @@
+& help
+   ===[ Basic Commands ]================================================
+
+      go <direction>                look               look <thing>
+      pose <text>                   QUIT               say <text>
+      whisper <player>=<text>       WHO                
+   
+   Quick Help for beginners          |  General MUSH Topics
+      help basics                    |     help topics
+                                     |
+   To get a list of commands         |  To get a list of functions()
+      help commands                  |     help functions
+                                     |
+   Help on a command or function     |  Help on public com system
+      help <command>                 |     com help
+
+   =====================================================================
+& basics
+You've connected to a MUSH, so now what do you do? Well, MUSHes
+are broken up into many different rooms. There's many different ways
+to interact in a room or people within a room. Lets start with a few
+important commands to interact with the things around you.
+
+look
+   This command will tell you about the room your currently in.
+   It should list a description of the room, contents of the room,
+   and a list of exits on how to get out of the room.
+
+go <direction>
+   Traveling through an exit to another room.
+
+say <message>
+   Say something to the people in your current room.
+
+"<message>
+   A shortened version of the say command. This alias will save you
+   a few clicks on the keyboard.
+
+pose <message>
+   Perform an action like smiling by typing in: pose smiles
+
+:<message>
+   a shortened version of the pose command.
+
+whisper <person> = <message>
+   Want to say something to a particular person? Whisper it to them
+   and no one else will hear it. This only works with people in the
+   same room.
+
+WHO
+   Not everyone on-line will be in the same room as you, the WHO
+   command lists everyone connected to the MUSH.
+
+page <person> = <message>
+   Send a message to a person in any room 
+& topics
+    basics
+& "
+command:
+
+   "<message>
+
+Says <message> to everyone in your current location.
+
+Example:              |   Output
+===========================================================
+                      |
+"Hello.               |   You say, "Hello"
+
+Also see: say
+& &
+command:
+
+   &<attribute> <object> = <text>
+
+This command is used to store information on an object. The text
+may be either generic information or Mushcode. <text> can be
+later retrieved with the get function or maybe examined.
+
+Example:              |   Output
+===========================================================
+                      |
+&foo me = bar         |   Set.say, "Hello"
+                      |
+examine me/foo        |   FOO: bar
+
+Also see: examine, get(), @set, &&
+
+& &&
+command: 
+
+   &&<attribute> <object> = <text>
+
+This is the multiline version of the @set and & command. Any
+commands issued after this command will be added to the end
+of attribute's value. Issuing a single blank line will end 
+the command. A period on a blank line can be used in place 
+of a blank line.
+   
+Example:              |   Output
+===========================================================
+                      |
+&&foo me = bar        |
+bar                   |
+.                     |
+boo                   |
+                      |   Set.
+examine me/foo        |   FOO: bar
+                      |   biz
+                      |
+                      |   boo
+
+Also see: examine, get(), @set, &
+& :
+command: 
+
+   :<message>
+ 
+Performes an action to everyone in your current room. If
+there is a space between the ":" and the message, there
+will be no space in between your name and your message.
+This is also a shortcut for the pose command.
+
+
+Example:              |   Output
+===========================================================
+                      |
+:smiles               |   Guest smiles
+: 's eyes light up.   |   Guest's eyes light up.
+
+Also see: pose
+& ;
+command:
+
+   ;<message>
+ 
+This command is like the ":" command except that there
+is no space inserted between your name and the action.
+
+
+Example:              |   Output
+===========================================================
+                      |
+;'s eyes light up.    |   Guest's eyes light up.
+; 's eyes light up.   |   Guest 's eyes light up.
+
+Also see: pose, :
+& @@
+command: 
+
+   @@ <text>
+ 
+This command is useful for putting comments into a Mushcode.
+The command actually does nothing but makes your code more
+readable.
+
+Example:              |   Output
+===========================================================
+                      |
+&&foo me=$dg  *:      |
+   @@ Dog Controller  |
+   @force #0=%0       |
+                      | Set.
+dg smiles.            | Dog smiles.
+& @boot
+command: 
+
+   @boot <player>
+   @boot/port <port#>
+
+Disconnects a player from the game. If the player is connected
+multiple times, then all connections are disconnected. Optionally,
+a port may be specified to be more presice about which connection
+is disconnected. Port numbers are listed on the WHO for wizards.
+
+Example:              |   Output
+===========================================================
+                      |
+@boot adrick          | Adrick has been @booted.
+                      | Adrick has disconnected.
+                      |
+@boot/port 1          | Adrick has been @booted.
+                      | Adrick has disconnected.
+
+Also see: WHO
+& @close
+I don't think this command does anything, scheduled for removal or fixing.
+& @cls
+command: 
+
+   @cls
+
+This command sends a -- line and clear screen command to the console. 
+This is useful for debuging output as it happens. Results are not
+visible from inside the MUSH.
+& @code
+command: 
+
+   @code
+
+Lists stats on how big the version of TeenyMUSH is that is
+currently running broken down by file. Size is listed in bytes
+and lines.
+& @commit
+command: 
+
+   @commit
+
+Forces a commit to the mysql database. TeenyMUSH typically commits
+as needed but occasionally there is a need to force a commit.
+This command is wizard only.
+& @crash
+command: 
+
+   @crash
+
+This forces TeenyMUSH to perform an operation which will crash the
+MUSH. A stack trace will be produced on the console and the player
+invoking the command. The MUSH will recover from the crash and 
+continue on, hopefully. Safe for anyone to use.
+& @create
+command: 
+
+   @create <name>
+
+Creates a object with the specified name. Objects can be molded
+with descriptions, attributes, and flags to be whatever you want. 
+Each object gets its own id number. Keep track of this number
+as it can help with coding it to do things or find it after it
+has been lost.
+
+Example:              |   Output
+===========================================================
+@create puppet        | Object created as: Puppet(#119o)
+
+See Also: @destroy, @set, @describe
+& commands
+run: @list commands
+& functions
+run: @list functions
+& @describe
+command: 
+
+   @describe <name> = <description>
+
+Sets the description for an object. People will see this description
+if they look at the object. An empty description will remove the
+description from the object.
+
+
+Example:               |   Output
+============================================================
+@describe puppet=Shiny | Set.
+
+look puppet            | Shiny
+
+
+See Also: @set
+& @destroy
+command: 
+
+   @destroy <object>
+
+Instantly deletes the object from the MUSH. Opposite of @create.
+& @dig
+command:
+
+   @dig <name> 
+   @dig <name> = <exitlist1> , <exitlist2>
+
+Creates a new room with the specified name. Optionally providing
+an exit list can create exits going in and out of the newly created
+room in one command. Exit list 1 provides exits going to the room
+while exit list 2 provides an exit coming back to your current
+location. Multiple exit names can be provided by use of a semi-
+colon between exit names.
+
+Example:                |  Output
+===============================================================
+@dig Hotel              |  Creates a room named Hotel
+@dig Hotel=In,Out       |  Creates a room with in and out exits
+@dig Hotel=Inn;in,Out;o |  Creates the room with in and out
+                           exits with aliases of in and o.
+
+See also: @open, @link

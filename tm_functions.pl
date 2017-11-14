@@ -1336,19 +1336,17 @@ sub fun_input
 
 sub fun_flags
 {
-   my ($self,$prog) = (shift,shift);
+   my ($self,$prog,$txt) = @_;
 
-   if($#_ != 0) {
-      return "#-1 flags expects an argument but found " . ($#_+1);
-   } elsif(@_[0] =~ /^\s*#(\d+)\s*$/) {
-      if(!valid_dbref($1)) {
-         return "#-1 Object #$1 does not exist";
-      } else {
-         return flag_list($1);
-      }
-   } else {
-      return "#-1 Flags expects an object dbref (example: #1)";
-   }
+   # verify arguments
+   return "#-1" if($txt =~ /^\s*$/);
+
+   # find object
+   my $target = locate_object($self,$txt,"LOCAL");
+   return "#-1" if($target eq undef);
+
+   # return results
+   return flag_list($target);
 }
 
 #

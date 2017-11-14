@@ -155,6 +155,20 @@ CREATE TABLE `flag_permission` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
+-- Table structure for table `help`
+--
+
+DROP TABLE IF EXISTS `help`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `help` (
+  `hlp_name` varchar(50) NOT NULL,
+  `hlp_data` varchar(60000) NOT NULL,
+  PRIMARY KEY (`hlp_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
 -- Table structure for table `log`
 --
 
@@ -299,4 +313,4 @@ CREATE TABLE `valid_option` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2017-11-13  6:34:25
+-- Dump completed on 2017-11-14  2:00:01

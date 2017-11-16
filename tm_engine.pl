@@ -393,6 +393,18 @@ sub run_internal
 #   printf("RUN(%s->%s): '%s%s'\n",@{$$prog{created_by}}{obj_id},@{$$command{runas}}{obj_id},$cmd,$arg);
 
  
+   if(hasflag($$command{runas},"VERBOSE")) {
+      my $owner= owner($$command{runas});
+      necho(self   => $owner,
+            prog   => $prog,
+            target => [ $owner,
+                        "%s] %s%s", 
+                        name($$command{runas}),
+                        $cmd,
+                        (($arg eq undef) ? "" : " " . $arg) 
+                      ]
+           );
+   }
    return &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,$arg,\%switch);
 }
 

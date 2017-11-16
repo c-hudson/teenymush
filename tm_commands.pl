@@ -87,8 +87,6 @@ delete @honey{keys %honey};
                          fun  => sub { return cmd_ex(@_); }              };
 @command{"\@last"}   = { help => "Information about your last connects",
                          fun  => sub { return cmd_last(@_); }            };
-@command{"+time"}    = { help => "Returns the current time",
-                         fun  => sub { cmd_time(@_); }};
 @command{page}       = { help => "Send a message to people in other rooms",
                          fun  => sub { cmd_page(@_); }};
 @command{take}       = { help => "Pick up an object",
@@ -2089,16 +2087,6 @@ sub cmd_enter
           );
 }
 
-sub cmd_time
-{
-   my ($self,$prog) = @_;
-
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "%s", scalar localtime() ],
-        );
-}
-
 sub cmd_to
 {
     my ($self,$prog,$txt) = @_;
@@ -2580,7 +2568,7 @@ sub cmd_pcreate
    if($$user{site_restriction} == 3) {
       necho(self   => $self,
             prog   => $prog,
-            source => [ "%s", getfile("registration.txt") ],
+            source => [ "%s", get("#0","REGISTRATION") ],
            );
    } elsif($txt =~ /^\s*([^ ]+) ([^ ]+)\s*$/) {
       if(inuse_player_name($1)) {

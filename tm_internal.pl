@@ -541,22 +541,35 @@ sub necho
          my $target = obj(shift(@$array));
          my $fmt = shift(@$array);
          my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
-         for my $sock (@{sql("select c1.obj_id, sck_socket, c2.con_source_id " .
-                             "  from content c1, ".
-                             "       content c2, ".
-                             "       socket s " .
-                             " where c1.con_source_id = c2.con_source_id " .
-                             "   and c2.obj_id = ? " .
-                             "   and c1.obj_id = s.obj_id ".
-                             "   and c1.obj_id != ? " .
-                             "   and sck_type = 1 ",
+         for my $sock (@{sql("select c1.obj_id,  ".
+                             "       c1.con_source_id, ".
+                             "       s.sck_socket ".
+                             "  from content c1 left outer join socket s on  ".
+                             "          c1.obj_id = s.obj_id,  ".
+                             "       content c2,  ".
+                             "       flag flg,  ".
+                             "       flag_definition fde ".
+                             " where c1.con_source_id = c2.con_source_id ".
+                             "   and c1.obj_id = flg.obj_id ".
+                             "   and c1.obj_id != ? ".
+                             "   and flg.fde_flag_id = fde.fde_flag_id  ".
+                             "   and c2.obj_id = ? ".
+                             "   and fde_name in ('OBJECT','PLAYER')",
                              $$target{obj_id},
-                             $$target{obj_id}
+                             $$target{obj_id},
                       )}) {
-             my $s = @{@connected{$$sock{sck_socket}}}{sock};
-             printf($s "%s%s",nospoof(@arg{self},@arg{prog},$$sock{obj_id}),
-                $msg);
-             $loc = $$sock{con_source_id};
+             if($$sock{sck_socket} ne undef) {
+                my $s = @{@connected{$$sock{sck_socket}}}{sock};
+                printf($s "%s%s",nospoof(@arg{self},@arg{prog},$$sock{obj_id}),
+                   $msg);
+                $loc = $$sock{con_source_id};
+             } else {
+                echo_output_to_puppet_owner($$sock{obj_id},
+                                            $arg{prog},
+                                            $msg,
+                                            $arg{debug}
+                                           );
+             }
          }
 
          log_output($self,-1,$loc,$msg);
@@ -619,33 +632,37 @@ sub necho
 
 sub echo_output_to_puppet_owner
 {
-   my ($self,$prog,$msg,$debug) = @_;
+   my ($self,$prog,$msg,$debug) = (obj(shift),obj(shift),shift,shift);
+   $msg =~ s/\n*$//;
+
+   my $obj_loc = loc($self);
 
    if(hasflag($self,"PUPPET")) {                      # forward if puppet
       for my $player (@{sql($db,
-                            "select obj1.*, " .
-                            "       obj2.obj_name owner_name, " .
-                            "       sck_socket " .
+                            "select sck_socket, " .
+                            "       obj2.obj_id, " .
+                            "       obj2.obj_name, " .
+                            "       c.con_source_id " .
                             "  from socket sck, " .
                             "       object obj1, " .
-                            "       object obj2 " .
-                            " where sck.obj_id = obj1.obj_id ".
-                            "   and obj1.obj_id =  obj2.obj_owner ".
-                            "   and sck_type = 1 ".
-                            "   and obj2.obj_id = ? ",
+                            "       object obj2, " .
+                            "       content c " .
+                            " where sck.obj_id = obj1.obj_owner ".
+                            "   and obj1.obj_id = ? ".
+                            "   and obj1.obj_owner = obj2.obj_id ".
+                            "   and c.obj_id = obj2.obj_id ".
+                            "   and sck_type = 1 ",
                             $$self{obj_id}
                      )}) {
          my $sock = @{@connected{$$player{sck_socket}}}{sock};
 
-         if($msg !~ /\n$/) {
-            printf($sock "%s%s> %s\n",nospoof($self,$prog,$player),
-                   $$player{owner_name}, $msg);
-#            printf($sock "%s\n",code("long"));
-         } else {
-            printf($sock "%s%s> %s",nospoof($self,$prog,$player),
-                   $$player{owner_name}, $msg);
+         if($obj_loc != $$player{con_source_id}) {
+             printf($sock "%s%s> %s\n",
+                    nospoof($self,$prog,$player),
+                    name($self),
+                    $msg
+                   );
          }
-          
       }
    }
 }

@@ -10,7 +10,14 @@ Installation
 ~~~~~~~~~~~~
      Run the create.sh to create the mysql peices and the tm_config.dat.
 This will create a god character with a password of portrzebie, and an
-initial room. Then run the "tm" perl script. The rest is for you to
-create.
+initial room. Then run the "tm" perl script.
+
+Setup
+~~~~~
+     There are a few special attributes that control how TeenyMUSH
+runs. These typically were set in the netmush.conf but are now stored
+inside the database on object #0. 
+
+
 
 see http://teenymush.blogspot.in/ for more details.

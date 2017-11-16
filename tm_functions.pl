@@ -1692,7 +1692,7 @@ sub evaluate
 
          if($result eq undef) {
             $txt = $after;
-            $out .= "[" . $1 . "(";
+            $out .= "[$fun(";
          } else {                                    # good function, run it
             $txt = shift(@$result);
             my $r = &{@fun{$fun}}($self,$prog,@$result);

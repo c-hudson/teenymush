@@ -14,10 +14,15 @@ initial room. Then run the "tm" perl script.
 
 Setup
 ~~~~~
-     There are a few special attributes that control how TeenyMUSH
-runs. These typically were set in the netmush.conf but are now stored
-inside the database on object #0. 
+     Setup handled in the netmush.conf on TinyMUSH is going to be handled
+by setting attributes on object #0. This allows configuration of the server
+to be done without shell access. Here are the attributes that are
+currently supported:
 
+LOGIN        |  Login screen
+LOGOFF       |  Log off message
+MOTD         |  Message of the day
+REGISTRATION |  Login screen shown when registration is in effect
 
 
 see http://teenymush.blogspot.in/ for more details.

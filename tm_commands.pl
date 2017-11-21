@@ -197,7 +197,7 @@ delete @honey{keys %honey};
                          alias => 1                                      };
 @command{"\@\@"}     = { fun  => sub { return;}                          };
 @command{"\@split"}  = { fun  => sub { cmd_split(@_); }                  };
-@command{"\@websock"}= { fun  => sub { cmd_websocket(@_); }          };
+@command{"\@websocket"}= { fun  => sub { cmd_websocket(@_); }          };
 @command{"\@find"}   = { fun  => sub { cmd_find(@_); }          };
 
  
@@ -289,7 +289,7 @@ sub cmd_trigger
       if($2 eq undef) {
          ($name,$target) = ($1,$self);
       } else {
-         ($name,$target) = ($2,locate_object($self,$1,"LOCAL"));
+         ($name,$target) = ($2,locate_object($self,$prog,$1,"LOCAL"));
       }
 
       if($target eq undef) {
@@ -339,7 +339,7 @@ sub cmd_huh
 }
                   
 sub cmd_offline_huh { my $sock = $$user{sock};
-                      printf($sock "%s",get(0,"login"));
+                      printf($sock "%s",@info{"conf.login"});
                     };
 sub cmd_version
 {
@@ -388,21 +388,21 @@ sub cmd_reset
   }
 }
 
-#      my $eval = lock_eval($self,$self,$txt);
+#      my $eval = lock_eval($self,$prog,$self,$txt);
 sub cmd_lock
 {
    my ($self,$prog,$txt) = @_;
 
    if($txt =~ /^\s*([^ ]+)\s*=\s*/) {
 
-      my $target = locate_object($self,$1,"LOCAL");             # find target
+      my $target = locate_object($self,$prog,$1,"LOCAL");       # find target
 
       if($target eq undef) {                            # found invalid object
          return err($self,$prog,"I don't see that here.");
       } elsif(!controls($self,$target)) {                 # can modify object?
          return err($self,$prog,"Permission denied.");
       } else {                                              # set the lock
-         my $lock = lock_compile($self,$self,$');
+         my $lock = lock_compile($self,$prog,$self,$');
 
          if($$lock{error}) {                               # did lock compile?
             necho(self    => $self,
@@ -730,7 +730,6 @@ sub cmd_boot
             }
          
             my $sock=$$hash{sock};
-            printf($sock "%s",get(0,"logoff"));
             server_disconnect($sock);
             return;
          }
@@ -895,7 +894,7 @@ sub cmd_split
     my @stack;
    
     if($txt =~ /,/) {
-       my $target = locate_object($self,$`,"LOCAL") ||
+       my $target = locate_object($self,$prog,$`,"LOCAL") ||
          return err($self,$prog,"I can't find that");
        my $txt = get($target,$');
        $txt =~ s/\r\s*|\n\s*//g;
@@ -1027,6 +1026,7 @@ sub cmd_dolist
 
        $$cmd{dolist_cmd}   = [ balanced_split($second,";",3) ];
        $$cmd{dolist_list}  = [ split(' ',evaluate($self,$prog,$first)) ];
+
        $$cmd{dolist_count} = 0;
    }
    $$cmd{dolist_count}++;
@@ -1041,11 +1041,6 @@ sub cmd_dolist
    my $list = $$cmd{dolist_cmd};                              # make shortcuts
    my $item = shift(@{$$cmd{dolist_list}});
 
-
-#   if( $#{$$cmd{dolist_list}} >= 0) {
-#       signal_still_running($prog);
-#   }
-    
    for my $i (0 .. $#$list) {              # push commands into the q
       my $new = $$list[$i];
       $new =~ s/\#\#/$item/g;
@@ -1057,6 +1052,8 @@ sub cmd_dolist
               child  => 1,
              );
    }
+
+   return "RUNNING" if($#{$$cmd{dolist_list}} >= 0);
 }
 
 sub good_password
@@ -1168,6 +1165,42 @@ sub cmd_sleep
 #   }
 }
 
+sub read_atr_config
+{
+   my ($self,$prog) = @_;
+
+   my %updated;
+   for my $atr (@{sql("select atr_name, ".
+                       "      atr_value ".
+                       "  from attribute ".
+                       " where obj_id = 0 ".
+                       "   and atr_name like 'conf.%'"
+                      )
+                }) {
+       @info{lc($$atr{atr_name})} = $$atr{atr_value};
+       @updated{lc($$atr{atr_name})} = 1;
+   }
+
+   if($self eq undef) {
+      printf("%s\n", wrap("Updated: ",
+                          "         ",
+                          join(' ', keys %updated)
+                        )
+            );
+   } else {
+      $Text::Wrap::columns=75;
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s",
+                        wrap("Updated: ",
+                             "         ",
+                             join(' ', keys %updated)
+                            )
+                      ]
+        );
+   }
+}
+
 sub cmd_read
 {
    my ($self,$prog,$txt) = @_;
@@ -1181,6 +1214,7 @@ sub cmd_read
            );
    } elsif($txt =~ /^\s*config\s*$/) {                # re-read config file
       read_config();
+      read_atr_config($self,$prog);
       necho(self   => $self,
             prog   => $prog,
             source => [ "Done" ],
@@ -1592,7 +1626,7 @@ sub cmd_force
     my ($self,$prog,$txt) = @_;
 
     if($txt =~ /^\s*([^ ]+)\s*=\s*/) {
-       my $target = locate_object($self,$1,"LOCAL") ||
+       my $target = locate_object($self,$prog,$1,"LOCAL") ||
           return err($self,$prog,"I can't find that");
 
        if(!controls($self,$target)) {
@@ -1637,7 +1671,7 @@ sub motd
 {
    my ($self,$prog) = @_;
    
-   my $atr = get(0,"MOTD");
+   my $atr = @info{"conf.motd"};
    return motd_with_border($self,$prog) if($atr eq undef);
    motd_with_border($self,$prog,evaluate(fetch(0),$prog,$atr));
 }
@@ -1735,7 +1769,7 @@ sub cmd_destroy
    my ($self,$prog,$txt) = @_;
 
    return err($self,$prog,"syntax: \@destroy <object>") if($txt =~ /^\s*$/);
-   my $target = locate_object($self,$txt,"LOCAL") ||
+   my $target = locate_object($self,$prog,$txt,"LOCAL") ||
        return err($self,$prog,"I can't find an object named '%s'",$txt);
 
    if(hasflag($target,"PLAYER")) {
@@ -1776,7 +1810,7 @@ sub cmd_toad
        return err($self,$prog,"syntax: \@toad <object>");
    }
 
-   my $target = locate_object($self,$txt,"LOCAL") ||
+   my $target = locate_object($self,$prog,$txt,"LOCAL") ||
        return err($self,$prog,"I can't find an object named '%s'",$txt);
 
    if(!hasflag($target,"PLAYER")) {
@@ -1828,7 +1862,7 @@ sub cmd_pemit
    my ($self,$prog,$txt) = @_;
 
    if($txt =~ /^\s*([^ =]+)\s*=/s) {
-      my $target = locate_object($self,evaluate($self,$prog,$1),"local");
+      my $target = locate_object($self,$prog,evaluate($self,$prog,$1),"local");
       my $txt=$';
 
       if($target eq undef) {
@@ -1865,7 +1899,7 @@ sub cmd_drop
 {
    my ($self,$prog,$txt) = @_;
 
-   my $target = locate_object($self,$txt,"CONTENT") ||
+   my $target = locate_object($self,$prog,$txt,"CONTENT") ||
       return err($self,$prog,"I don't see that here.");
 
    if(hasflag($target,"ROOM") || hasflag($target,"EXIT")) {
@@ -1938,7 +1972,7 @@ sub cmd_take
 {
    my ($self,$prog,$txt) = @_;
 
-   my $target = locate_object($self,$txt,"LOCAL") ||
+   my $target = locate_object($self,$prog,$txt,"LOCAL") ||
       return err($self,$prog,"I don't see that here.");
 
    if(hasflag($target,"EXIT")) {
@@ -1955,7 +1989,7 @@ sub cmd_take
    my $atr = get($target,"LOCK_DEFAULT");
 
    if($atr ne undef) {
-      my $lock = lock_eval($self,$target,$atr);
+      my $lock = lock_eval($self,$prog,$target,$atr);
 
       if($$lock{error}) {
          return err($self,$prog,"Permission denied, the lock has broken.");
@@ -1993,7 +2027,7 @@ sub cmd_name
    my ($self,$prog,$txt) = @_;
 
    if($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*$/) {
-      my $target = locate_object($self,$1,"LOCAL") ||
+      my $target = locate_object($self,$prog,$1,"LOCAL") ||
          return err($self,$prog,"I don't see that here.");
       my $name = trim($2);
 
@@ -2041,7 +2075,7 @@ sub cmd_enter
 {
    my ($self,$prog,$txt) = @_;
 
-   my $target = locate_object($self,$txt,"LOCAL") ||
+   my $target = locate_object($self,$prog,$txt,"LOCAL") ||
       return err($self,$prog,"I don't see that here.");
 
    # must be owner or object enter_ok to enter it
@@ -2053,7 +2087,7 @@ sub cmd_enter
    my $atr = get($target,"LOCK_ENTER");
 
    if($atr ne undef) {
-      my $lock = lock_eval($self,$target,$atr);
+      my $lock = lock_eval($self,$prog,$target,$atr);
 
       if($$lock{error}) {
          return err($self,$prog,"Permission denied, the lock has broken.");
@@ -2092,7 +2126,7 @@ sub cmd_to
     my ($self,$prog,$txt) = @_;
 
     if($txt =~ /^\s*([^ ]+)\s*/) {
-       my $tg = locate_object($self,$1,"LOCAL") ||
+       my $tg = locate_object($self,$prog,$1,"LOCAL") ||
           return err($self,$prog,"I don't see that here.");
 
        necho(self   => $self,
@@ -2111,7 +2145,7 @@ sub whisper
 {
    my ($self,$prog,$target,$msg) = @_;
 
-   my $obj = locate_object($self,$target,"LOCAL") ||
+   my $obj = locate_object($self,$prog,$target,"LOCAL") ||
 
    return err($self,$prog,"I don't see that here.") if $obj eq undef;
 
@@ -2343,10 +2377,10 @@ sub cmd_teleport
           "        \@teleport <location>");
    }
 
-   $target = locate_object($self,$target) ||
+   $target = locate_object($self,$prog,$target) ||
       return err($self,$prog,"I don't see that object here.");
 
-   $location = locate_object($self,$location) ||
+   $location = locate_object($self,$prog,$location) ||
       return err($self,$prog,"I can't find that location");
 
    controls($self,$target) ||
@@ -2568,7 +2602,7 @@ sub cmd_pcreate
    if($$user{site_restriction} == 3) {
       necho(self   => $self,
             prog   => $prog,
-            source => [ "%s", get("#0","REGISTRATION") ],
+            source => [ "%s", @info{"conf.registration"} ],
            );
    } elsif($txt =~ /^\s*([^ ]+) ([^ ]+)\s*$/) {
       if(inuse_player_name($1)) {
@@ -2638,10 +2672,10 @@ sub cmd_link
    my $loc = loc($self) ||
       return err($self,$prog,"Unable to determine your location");
 
-   my $target = locate_object($self,$name,"EXIT") ||
+   my $target = locate_object($self,$prog,$name,"EXIT") ||
       return err($self,$prog,"I don't see that here");
 
-   my $d = locate_object($self,$dest) ||
+   my $d = locate_object($self,$prog,$dest) ||
       return err($self,$prog,"I don't see $dest here");
 
    if(!valid_dbref($target)) {
@@ -2811,7 +2845,7 @@ sub cmd_open
 
 
    if($destination ne undef) {
-      $dest = locate_object($self,$destination) ||
+      $dest = locate_object($self,$prog,$destination) ||
          return err($self,$prog,"I can't find that destination location");
 
       if(!(controls($self,$loc) || hasflag($loc,"LINK_OK"))) {
@@ -2977,15 +3011,17 @@ sub cmd_connect
                 "[Monitor] %s has connected.",name($user));
             my_commit($db);
 
-      # --- Handle @ACONNECTs -----------------------------------------------#
+      # --- Handle @ACONNECTs on masteroom and players-----------------------#
 
-      for my $obj (lcon(@info{master_room}),$player) {
-         if(($atr = get($obj,"ACONNECT")) && $atr ne undef) {
-            mushrun(self   => $player,                 # handle aconnect
-                    runas  => $player,
-                    source => 0,
-                    cmd    => $atr
-                   );
+      if(@info{"conf.master"} ne undef) {
+         for my $obj (lcon(@info{"conf.master"}),$player) {
+            if(($atr = get($obj,"ACONNECT")) && $atr ne undef) {
+               mushrun(self   => $player,                 # handle aconnect
+                       runas  => $player,
+                       source => 0,
+                       cmd    => $atr
+                      );
+            }
          }
       }
 
@@ -3051,7 +3087,7 @@ sub cmd_set
       } else {                                               # non-user input
          ($target,$attr) = (evaluate($self,$prog,$1),evaluate($self,$prog,$2));
       }
-      ($target,$value) = (locate_object($self,$target),$3);
+      ($target,$value) = (locate_object($self,$prog,$target),$3);
 
       return err($self,$prog,"Unknown object '%s'",$1) if !$target;
       controls($self,$target) || return err($self,$prog,"Permission denied");
@@ -3071,7 +3107,7 @@ sub cmd_set
       my_commit($db);
 
    } elsif($txt =~ /^\s*([^ =\\]+?)\s*= *(.*?) *$/s) { # flag?
-      ($target,$flag) = (locate_object($self,$1),$2);
+      ($target,$flag) = (locate_object($self,$prog,$1),$2);
       return err($self,$prog,"Unknown object '%s'",$1) if !$target;
       controls($self,$target) || return err($self,$prog,"Permission denied");
 
@@ -3127,6 +3163,10 @@ sub list_attr
        $$obj{obj_id},
        @where
       )}) { 
+
+       if($$hash{atr_value} =~ /\n/ && $$hash{atr_value} !~ /^\s*\n/) {
+          $$hash{atr_value} = "\n$$hash{atr_value}";
+       }
        if($$hash{atr_flag} eq undef) {
           push(@result,sprintf("%s: %s",$$hash{atr_name},$$hash{atr_value}));
        } else {
@@ -3159,7 +3199,7 @@ sub cmd_ex
    if($txt =~ /^\s*$/) {
       $target = loc_obj($self);
    } elsif($txt =~ /^\s*(.+?)\s*$/) {
-      $target = locate_object($self,$1) ||
+      $target = locate_object($self,$prog,$1) ||
          return err($self,$prog,"I don't see that here.");
    } else {
        return err($self,$prog,"I don't see that here.");
@@ -3195,7 +3235,7 @@ sub cmd_ex
 
    my $owner = fetch(($$target{obj_owner} == -1) ? 0 : $$target{obj_owner});
    $out .= "\nOwner: " . obj_name($self,$owner,$perm) . 
-           "  Key: " . nvl(lock_uncompile($self,get($target,"LOCK_DEFAULT")),"*UNLOCKED*");
+           "  Key: " . nvl(lock_uncompile($self,$prog,get($target,"LOCK_DEFAULT")),"*UNLOCKED*");
 
    $out .= "\nCreated: $$target{obj_created_date}";
    if(hasflag($target,"PLAYER")) {
@@ -3338,7 +3378,7 @@ sub cmd_look
    if($txt =~ /^\s*$/) {
       $target = loc_obj($self);
       return err($self,$prog,"I don't see that here.") if $target eq undef;
-   } elsif(!($target = locate_object($self,evaluate($self,$prog,$txt)))) {
+   } elsif(!($target = locate_object($self,$prog,evaluate($self,$prog,$txt)))) {
       return err($self,$prog,"I don't see that here.");
    }
 

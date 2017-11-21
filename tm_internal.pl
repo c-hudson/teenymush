@@ -87,12 +87,7 @@ sub string_escaped
 sub evaluate_substitutions
 {
    my ($self,$prog,$t) = @_;
-   my ($tmp,$out,$seq) = ($enactor);
-
-#   if($target ne undef) {
-#      $enactor = $user;
-#      $user = $target;
-#   } 
+   my ($out,$seq);
 
    while($t =~ /(\\|%[brtn#0-9]|%v[0-9]|%w[0-9]|%=<[^>]+>|%\{[^}]+\})/i) {
       ($seq,$t)=($1,$');                                   # store variables
@@ -116,8 +111,6 @@ sub evaluate_substitutions
             $out .= $$user{raw_hostname};
          } elsif($1 eq "socket") {
             $out .= $$user{raw_socket};
-         } elsif($1 eq "enactor") {
-            $out .= $$enactor{obj_name};
          } else {
             $out .= @{$$prog{var}}{$1} if(defined $$prog{var});
          }
@@ -126,10 +119,6 @@ sub evaluate_substitutions
       }
    }
 
-#   if($target ne undef) {
-#      $user = $enactor;
-#      $enactor = $tmp;
-#   }
    return $out . $t;
 }
 
@@ -215,54 +204,6 @@ sub table
 
 
 #
-# force
-#    Force an object to do something. This could be envoked by the @force
-#    command or just when we want something to happen.
-#
-#    Use the Force, Luke.
-#
-sub force
-{
-   my ($prog,$target,$cmd,$force) = @_;
-   my $temp;
-
-#   printf("CONTROLS: '%s'\n",controls($user,$target));
-#   my $result = controls($user,$target) ||
-#      return -1;
-
-   if($cmd =~ /^\s*([^ ]+)(\s*)/) {                          # lookup command
-      my ($cmd,$arg) = lookup_command($prog,\%command,$1,"$2$'",1);
-      return -3 if $cmd eq 'huh';
-
-      $enactor = $user;
-      $user = $target;                                # run command as user
-
-      for my $i (0 .. 9) {                               # copy over %1 - %9
-          $$temp{$i} = $$user{$i};
-          $$user{$i} = $$enactor{$i};
-      }
-      if(hasflag($user,"PLAYER") &&
-         !defined $$user{sock} && defined @connected_user{$$user{obj_id}}) {
-         my $hash = @connected_user{$$user{obj_id}};
-         my $key = (keys %$hash)[0];            # find socket / if connected
-         $$user{sock} = $$hash{$key};                          # any will do
-      }
-
-      &{@{$command{$cmd}}{fun}}($arg);                        # run command
-      for my $i (1 .. 9) {                                # restore $1 - $9
-          $$user{$i} = $$temp{$i};
-      }
-      $user = $enactor;                             # revert to actual user
-      $enactor = undef;
-
-      return 1;                                                  # success
-   } else {
-      return -4;                                              # parse error
-   }
-}
-
-
-#
 # controls
 #    Does the $enactor control the $target?
 #
@@ -315,7 +256,7 @@ sub handle_object_listener
       $$hash{raw_hostname} = $$target{hostname};
       $$hash{raw_raw} = $$target{raw};
       $$hash{raw_socket} = $$target{socket};
-      $$hash{raw_enactor} = $$target{enactor};
+#      $$hash{raw_enactor} = $$target{enactor};
 
       # determine %0 - %9
       if($$hash{cmd} ne $msg) {
@@ -933,28 +874,28 @@ sub locate_player
 
 sub locate_object
 {
-   my ($target,$name,$type) = @_;
+   my ($self,$prog,$name,$type) = @_;
    my ($where, @what,$exact,$indirect);
 
    if($name =~ /^\s*#(\d+)\s*$/) {                                  # dbref
       return fetch($1);
    } elsif($name =~ /^\s*%#\s*$/) {
-      return fetch($enactor);
+      return $$prog{created_by};
    } elsif($name =~ /^\s*me\s*$/) {                                # myself
-      return $target;
+      return $self;
    } elsif($name =~ /^\s*here\s*$/) {
-      return loc_obj($target);
+      return loc_obj($self);
    } elsif($name =~ /^\s*\*([^ ]+)\s*$/) {                  # online-player
       return locate_player($name,"all");
    } elsif($type eq "CONTENT") {
       $where = 'con.con_source_id in ( ? )';
-      (@what[0]) = ($$target{obj_id});
+      (@what[0]) = ($$self{obj_id});
    } elsif($type eq "LOCAL") {
       $where = 'con.con_source_id in ( ? , ? )';
-      ($what[0],$what[1]) = (loc($target),$$target{obj_id});
+      ($what[0],$what[1]) = (loc($self),$$self{obj_id});
    } else {
       $where = 'con.con_source_id in ( ? , ? )';
-      ($what[0],$what[1]) = (loc($target),$$target{obj_id});
+      ($what[0],$what[1]) = (loc($self),$$self{obj_id});
    }
     
    
@@ -1494,10 +1435,15 @@ sub inuse_player_name
 
 sub set
 {
-   my ($self,$prog,$obj,$attribute,$value,$quiet)=
+   my ($self,$prog,$obj,$attribute,$value,$quiet,$type)=
       ($_[0],$_[1],obj($_[2]),$_[3],$_[4],$_[5]);
 
-   if($attribute !~ /^\s*([#a-z0-9\_\-]+)\s*$/i) {
+   # don't strip leading spaces on multi line attributes
+   if(!@{$$prog{cmd}}{multi}) {
+       $value =~ s/^\s+//g;
+   }
+
+   if($attribute !~ /^\s*([#a-z0-9\_\-\.]+)\s*$/i) {
       err($self,$prog,"Attribute name is bad, use the following characters: " .
            "A-Z, 0-9, and _ : $attribute");
    } elsif($value =~ /^\s*$/) {
@@ -1535,6 +1481,11 @@ sub set
           $$user{obj_name},
           $$user{obj_name});
  
+
+      if($$obj{obj_id} eq 0 && $attribute =~ /^conf./i) {
+         @info{$attribute} = $value;
+      }
+
       if(!$quiet) {
           necho(self => $self,
                 prog => $prog,
@@ -1971,13 +1922,13 @@ sub read_config
    my $count=0;
    for my $line (split(/\n/,getfile("tm_config.dat"))) {
       $line =~ s/\r|\n//g;
-      if($line =~/^\s*#/) {
-         # comment, ignore
-      } elsif($line =~ /^\s*([^ =]+)\s*=\s*(.+?)\s*$/) {
+      if($line =~/^\s*#/ || $line =~ /^\s*$/) {
+         # comment or blank line, ignore
+      } elsif($line =~ /^\s*([^ =]+)\s*=\s*(.*?)\s*$/) {
          @info{$1} = $2;
       } else {
          printf("Invalid data in tm_config.dat:\n") if($count == 0);
-         printf("    %s\n",$line);
+         printf("    '%s'\n",$line);
          $count++;
       }
    }

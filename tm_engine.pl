@@ -18,9 +18,11 @@ sub mush_command
    my ($match,$questions,@where)= (0);
 
    ($where[0],$where[1]) = (loc($self),$$self{obj_id});
-   if(defined $info{master_room}) {
+   if(@info{"conf.master"} ne undef) {
       $questions = "?,?,?";
-      push(@where,$info{master_room});
+      my $m = @info{"conf.master"};
+      $m =~ s/#//g;
+      push(@where,$m);
    } else {
       $questions = "?,?";
    }
@@ -103,7 +105,6 @@ sub prog
 
    return {
       stack => [ ],
-      enactor => $self,
       created_by => $self,
       user => 
       var => {},
@@ -187,16 +188,30 @@ sub mushrun
     # copy over command(s)
     my $stack=@{$arg{prog}}{stack};
     if($arg{source}) {
-       unshift(@$stack,{ runas => $arg{runas}, cmd => $arg{cmd}, source => 1 });
+       unshift(@$stack,{ runas  => $arg{runas},
+                         cmd    => $arg{cmd}, 
+                         source => 1,
+                         multi  => ($multi eq undef) ? 0 : 1
+                       }
+              );
     } else {
        for my $i ( balanced_split($arg{cmd},';',3,1) ) {
           $i =~ s/^\s+|\s+$//g;
           if($i ne undef) {
              if(defined $arg{child} && $arg{child}) {
-#                push(@$stack,{runas => $arg{runas},cmd => $i,source => 0});
-                unshift(@$stack,{runas => $arg{runas},cmd => $i,source => 0});
+                unshift(@$stack,{runas  => $arg{runas},
+                                 cmd    => $i,
+                                 source => 0,
+                                 multi  => ($multi eq undef) ? 0 : 1
+                                }
+                       );
              } else {
-                push(@$stack,{runas => $arg{runas}, cmd => $i, source => 0 });
+                push(@$stack,{runas  => $arg{runas},
+                              cmd    => $i, 
+                              source => 0,
+                              multi  => ($multi eq undef) ? 0 : 1
+                             }
+                    );
              }
           }
        }
@@ -320,8 +335,9 @@ sub spin
             $count++;
 
                                                 # stop at 7 milliseconds
-            if(Time::HiRes::gettimeofday() - $start > .7) {
-                printf("Time slice ran long, exiting correctly\n");
+            if(Time::HiRes::gettimeofday() - $start >= 1) {
+                printf("Time slice ran long, exiting correctly [%d cmds]\n",
+                       $count);
                 ualarm(0);
                return;
             }
@@ -413,7 +429,7 @@ sub spin_run
    my ($last,$prog,$command,$foo) = @_;
    my $self = $$command{runas};
    my ($cmd,$hash,$arg,%switch);
-   ($$last{user},$$last{enactor},$$last{cmd}) = ($self,$self,$command);
+   ($$last{user},$$last{cmd}) = ($self,$command);
    $$prog{cmd_last} = $command;
 
 # find command set to use

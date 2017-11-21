@@ -203,9 +203,13 @@ sub server_hostname
    my $sock = shift;
    my $ip = $sock->peerhost;                           # contains ip address
 
-   my $name = gethostbyaddr(inet_aton($ip),AF_INET) ||
-      return $ip;                                 # return lookedup hostname
-   return $name;                         # or last resort, return ip address
+   my $name = gethostbyaddr(inet_aton($ip),AF_INET);
+
+   if($name eq undef || $name =~ /in-addr\.arpa$/) {
+      return $ip;                            # last resort, return ip address
+   } else {
+      return $name;                                         # return hostname
+   }
 }
 
 sub get_free_port
@@ -277,7 +281,7 @@ sub server_handle_sockets
                } elsif($$hash{site_restriction} == 69) {
                   printf($new "%s",getfile("honey.txt"));
                } else {
-                  printf($new "%s\r\n",get(0,"login"));        #  show login
+                  printf($new "%s\r\n",@info{"conf.login"});    #  show login
                }
             }                                                        
          } elsif(sysread($s,$buf,1024) <= 0) {          # socket disconnected
@@ -373,6 +377,7 @@ sub server_disconnect
                 );
              my_commit($db);
          }
+         printf($id "%s",@info{"conf.logoff"});
       }
    }
 
@@ -390,30 +395,54 @@ sub server_disconnect
 sub server_start
 {
    read_config();
+   read_atr_config();
+   read_config();
 
    my $count = 0;
 
    if(@info{port} !~ /^\s*\d+\s*$/) {
       printf("Invalid Port of '%s' defined in tm_config.dat\n",@info{port}); 
       exit();
-   } else {
+   }  else {
       printf("TeenyMUSH listening on port @info{port}\n");
-      printf("HTTP listening on port @info{httpd}\n");
-      printf("Websocket listening on port @info{websocket}\n");
+      $listener = IO::Socket::INET->new(LocalPort => @info{port},
+                                        Listen    => 1,
+                                        Reuse     => 1
+                                       );
+   }
+ 
+   if(@info{"conf.httpd"} ne undef) {
+      if(@info{"conf.httpd"} =~ /^\s*(\d+)\s*$/) {
+         printf("HTTP listening on port %s\n",@info{"conf.httpd"});
+
+         $web = IO::Socket::INET->new(LocalPort => @info{"conf.httpd"},
+                                      Listen    =>1,
+                                      Reuse=>1
+                                     );
+      } else {
+         printf("Invalid httpd port number specified in #0/conf.httpd");
+      }
    }
 
-   websock_init();
+   if(@info{"conf.websocket"} ne undef) {
+      if(@info{"conf.websocket"} =~ /^\s*(\d+)\s*$/) {
+         printf("Websocket listening on port %s\n",@info{"conf.websocket"});
+         websock_init();
+      } else {
+         printf("Invalid websocket port number specified in #0/conf.websocket");
+      }
+   }
 
-   $listener = IO::Socket::INET->new(LocalPort=>@info{port},Listen=>1,Reuse=>1);
-   $web = IO::Socket::INET->new(LocalPort=>@info{httpd},Listen=>1,Reuse=>1);
-
-#   $readable = IO::Select->new();          # setup socket polling routines
-#   $readable->add($listener);
-#   $readable->add($web);
-#   $readable->add($websock);
+   if($ws eq undef) {                             # emulate websocket listener
+      $ws = {};                                              # when not in use
+      $ws->{select_readable} = IO::Select->new();
+   }
 
    $ws->{select_readable}->add($listener);
-   $ws->{select_readable}->add($web);
+
+   if(@info{"conf.httpd"} ne undef) {
+      $ws->{select_readable}->add($web);
+   }
    $readable = $ws->{select_readable};
 
    # main loop;

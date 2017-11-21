@@ -122,7 +122,7 @@ sub fun_lexits
    my ($self,$prog,$txt) = @_;
    my @result;
 
-   my $target = locate_object($self,$txt);
+   my $target = locate_object($self,$prog,$txt);
    return "#-1 NOT FOUND" if($target eq undef);
 
    for my $rec (@{sql("select con.obj_id " .
@@ -382,11 +382,9 @@ sub fun_mudname
 {
    my ($self,$prog) = (shift,shift);
 
-   if(defined @info{mudname}) {
-      return @info{mudname};
-   } else {
-      return "TeenyMUSH";
-   }
+   my $name = @info{"conf.master"};
+
+   return ($name eq undef) ? "TeenyMUSH" : $name;
 }
 
 sub fun_version
@@ -521,7 +519,7 @@ sub fun_loc
 {
    my ($self,$prog,$txt) = @_;
 
-   my $target = locate_object($self,$txt);
+   my $target = locate_object($self,$prog,$txt);
 
    if($target eq undef) {
       return "#-1 NOT FOUND";
@@ -541,7 +539,7 @@ sub fun_hasflag
 
    return 0 if($_[1] =~ /^s*(nospoof|haven|dark|royal|royalty)\s*$/i);
 
-   my $target = locate_object($self,$_[0]);
+   my $target = locate_object($self,$prog,$_[0]);
  
    return "#-1 Unknown Object" if($target eq undef);
 
@@ -978,7 +976,7 @@ sub fun_num
    good_args($#_,1) ||
       return "#-1 FUNCTION (NUM) EXPECTS 1 ARGUMENT";
 
-   my $result = locate_object($self,$_[0]);
+   my $result = locate_object($self,$prog,$_[0]);
  
    if($result eq undef) {
       return "#-1";
@@ -994,7 +992,7 @@ sub fun_name
    good_args($#_,1) ||
       return "#-1 FUNCTION (NAME) EXPECTS 1 ARGUMENT";
 
-   my $result = locate_object($self,$_[0]);
+   my $result = locate_object($self,$prog,$_[0]);
  
    if($result eq undef) {
       return "#-1";
@@ -1011,7 +1009,7 @@ sub fun_type
    good_args($#_,1) ||
       return "#-1 FUNCTION (TYPE) EXPECTS 1 ARGUMENT";
 
-   my $obj = locate_object($self,$_[0]);
+   my $obj = locate_object($self,$prog,$_[0]);
 
    return one_val("select fde_name value " . 
                      "  from object obj, " .
@@ -1037,7 +1035,7 @@ sub fun_u
    set_digit_variables($self,$prog,@_);              # update to new values
 
    if($txt =~ /\//) {                    # input in object/attribute format?
-      ($obj,$attr) = (locate_object($self,$`,"LOCAL"),$');
+      ($obj,$attr) = (locate_object($self,$prog,$`,"LOCAL"),$');
    } else {                                  # nope, just contains attribute
       ($obj,$attr) = ($self,$txt);
    }
@@ -1072,7 +1070,7 @@ sub fun_get
       ($obj,$atr) = ($txt,@_[0]);
    }
 
-   my $target = locate_object($self,evaluate($self,$prog,$obj),"LOCAL");
+   my $target = locate_object($self,$prog,evaluate($self,$prog,$obj),"LOCAL");
 
    if($target eq undef ) {
       return "#-1 Unknown object";
@@ -1342,7 +1340,7 @@ sub fun_flags
    return "#-1" if($txt =~ /^\s*$/);
 
    # find object
-   my $target = locate_object($self,$txt,"LOCAL");
+   my $target = locate_object($self,$prog,$txt,"LOCAL");
    return "#-1" if($target eq undef);
 
    # return results
@@ -1451,7 +1449,7 @@ sub fun_lattr
       ($obj,$atr) = ("me",$txt);                         # only attr provided
    }
 
-   my $target = locate_object($self,$obj,"LOCAL");
+   my $target = locate_object($self,$prog,$obj,"LOCAL");
    return "#-1 Unknown object" if $target eq undef;  # oops, can't find object
 
    for my $attr (@{sql($db,                     # query db for attribute names

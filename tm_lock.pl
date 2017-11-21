@@ -59,7 +59,7 @@ sub do_lock_compare
 #
 sub lock_item_eval
 {
-   my ($self,$obj,$lock,$item) = @_;
+   my ($self,$prog,$obj,$lock,$item) = @_;
    my ($not, $target,$result);
 
    return if(defined $$lock{error} && $$lock{error});      # prev parse error
@@ -71,7 +71,7 @@ sub lock_item_eval
          $$lock{op} = $1;
       }
    } elsif($item =~ /^\s*\((.*)\)\s*/) {             # handle ()'s
-      $result = lock_eval($self,$obj,$1);
+      $result = lock_eval($self,$prog,$obj,$1);
 
       if($$result{error}) {
          lock_error($lock,$$result{errormsg});
@@ -80,7 +80,7 @@ sub lock_item_eval
       }
    } elsif($item =~ /^\s*(!{0,1})\s*([^ ]+)\s*$/) {             # handle item
       $not = ($1 eq "!") ? 1 : 0;
-      $target = locate_object($obj,$2,"LOCAL");
+      $target = locate_object($obj,$prog,$2,"LOCAL");
 
       if($target eq undef) {                             # verify item exists
          return lock_error($lock,"Target($2) does not exist.");
@@ -105,7 +105,7 @@ sub lock_item_eval
 #
 sub lock_eval
 {
-    my ($self,$obj,$txt) = @_;
+    my ($self,$prog,$obj,$txt) = @_;
     my ($start,$depth) = (0,0);
     my $lock = {};
 
@@ -117,7 +117,7 @@ sub lock_eval
           $depth--;
 
           if($depth == 0) {
-             lock_item_eval($self,$obj,$lock,join('',@list[$start .. $i]));
+            lock_item_eval($self,$prog,$obj,$lock,join('',@list[$start .. $i]));
              $start = $i + 1;
           }
        } elsif($depth == 0 && 
@@ -126,7 +126,7 @@ sub lock_eval
                  @list[$i] =~ /^\s*[^\(\)\s]/
                )
               ) {
-          lock_item_eval($self,$obj,$lock,join('',@list[$start .. $i]));
+          lock_item_eval($self,$prog,$obj,$lock,join('',@list[$start .. $i]));
           $start = $i + 1;
        }
     }
@@ -140,7 +140,7 @@ sub lock_eval
 #
 sub lock_item_compile
 {
-   my ($self,$obj,$lock,$item,$flag) = @_;
+   my ($self,$prog,$obj,$lock,$item,$flag) = @_;
    my ($not, $target,$result);
 
    return if(defined $$lock{error} && $$lock{error});      # prev parse error
@@ -157,7 +157,7 @@ sub lock_item_compile
       if($#$array >= 0 && @$array[$#$array] !~ /^\s*[\|\&]\s*$/) {
          lock_error($lock,"Expected operand but found '$item'");
       }
-      $result = lock_compile($self,$obj,$txt);
+      $result = lock_compile($self,$prog,$obj,$txt);
 
       if($$result{error}) {
          lock_error($lock,$$result{errormsg});
@@ -170,7 +170,7 @@ sub lock_item_compile
          lock_error($lock,"Expected operand but found '$item'");
       }
 
-      $target = locate_object($obj,$txt,"LOCAL");
+      $target = locate_object($obj,$prog,$txt,"LOCAL");
       
       if($target eq undef) {                             # verify item exists
          return lock_error($lock,"Target($obj) does not exist");
@@ -193,7 +193,7 @@ sub lock_item_compile
 #
 sub lock_compile
 {
-    my ($self,$obj,$txt,$flag) = @_;
+    my ($self,$prog,$obj,$txt,$flag) = @_;
     my ($start,$depth) = (0,0);
     my $lock = {
        lock => []
@@ -208,6 +208,7 @@ sub lock_compile
 
           if($depth == 0) {
              lock_item_compile($self,
+                               $prog,
                                $obj,
                                $lock,
                                join('',@list[$start .. $i]),
@@ -222,6 +223,7 @@ sub lock_compile
                )
               ) {
           lock_item_compile($self,
+                            $prog,
                             $obj,
                             $lock,
                             join('',@list[$start .. $i]),
@@ -245,9 +247,9 @@ sub lock_compile
 #
 sub lock_uncompile
 {
-    my ($self,$txt) = @_;
+    my ($self,$prog,$txt) = @_;
 
-    my $result = lock_compile($self,$self,$txt,1);
+    my $result = lock_compile($self,$prog,$self,$txt,1);
 
     if($$result{error}) {
        return "*UNLOCKED*";

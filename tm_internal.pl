@@ -210,8 +210,12 @@ sub table
 sub controls
 {
    my ($enactor,$target,$flag) = (obj(shift),obj(shift),shift);
-  
-   if(owner_id($enactor) == owner_id($target)) {
+
+   if($$enactor{obj_id} eq @info{"conf.godlike"}) {
+      return 1;
+   } elsif($$target{obj_id} == 0 && $$enactor{obj_id} != 0) {
+      return 0;
+   } elsif(owner_id($enactor) == owner_id($target)) {
       return 1; 
    } elsif(hasflag($enactor,"WIZARD")) {
       return 1;

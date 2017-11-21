@@ -275,7 +275,7 @@ sub server_handle_sockets
                if($$hash{site_restriction} <= 2) {                  # banned
                   printf("   BANNED   [Booted]\n");
                   if($$hash{site_restriction} == 2) {
-                     printf($new "%s",getfile("badsite.txt"));
+                     printf($new "%s",@info{"conf.badsite"});
                   }
                   server_disconnect(@{@connected{$new}}{sock});
                } elsif($$hash{site_restriction} == 69) {

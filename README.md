@@ -19,10 +19,18 @@ by setting attributes on object #0. This allows configuration of the server
 to be done without shell access. Here are the attributes that are
 currently supported:
 
-LOGIN        |  Login screen
-LOGOFF       |  Log off message
-MOTD         |  Message of the day
-REGISTRATION |  Login screen shown when registration is in effect
-
+conf.login        |  Login screen
+conf.logoff       |  Log off message
+conf.motd         |  Message of the day
+conf.registration |  Login screen shown when registration is in effect
+conf.badsite      |  Login screen for banned sites
+conf.godlike      |  This dbref may modify object #0
+conf.master       |  dbref for the master room
+conf.httpd        |  Port to listen for web requests
+conf.webuser      |  The dbref of the object that all mushcode runs under
+                  |  for the web server.
+conf.webobject    |  The dbref of the object which contains the mushcoded
+                  |  commands that may be run from the web.
+conf.websocket    |  Port to listen to for websocket requests
 
 see http://teenymush.blogspot.in/ for more details.

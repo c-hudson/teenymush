@@ -283,3 +283,26 @@ Example:                |  Output
                            exits with aliases of in and o.
 
 See also: @open, @link
+& @doing
+command:
+
+   @doing <message>
+
+Sets your @doing message which is visible on the DOING/WHO command.
+Use this to tell people what your up to.
+
+See also: DOING, WHO
+& @dolist
+command:
+
+   @dolist <list> = <action>
+
+Takes a list and runs the code once for every item in the list.
+As the code is run, the special symbol ## is replaced with the
+current item from the list.
+
+Example:                |  Output
+===============================================================
+@dolist a b c = say ##  |  You say, "a"
+                        |  You say, "b"
+                        |  You say, "c"

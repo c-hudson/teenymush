@@ -6,11 +6,13 @@ Users can telnet into the server and interact with other users in a world
 of their creation. Customization of the world does not require
 modification of the internal server code. 
 
+
 Installation
 ~~~~~~~~~~~~
 Run the create.sh to create the mysql peices and the tm_config.dat.
 This will create a god character with a password of portrzebie, and an
 initial room. Then run the "tm" perl script.
+
 
 Setup
 ~~~~~

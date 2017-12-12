@@ -1463,7 +1463,7 @@ sub set
             source => [ "Set." ]
            );
    } else {
-      if($value =~ /^\s*(\$|^|!)([^:]+?):/) {
+      if($value =~ /^\s*(\$|\^|\!)([^:]+?):/) {
          ($pat,$value) = ($2,$');
          if($1 eq "\$") {
             $type = 1;

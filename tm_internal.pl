@@ -17,6 +17,17 @@ my %days = (
    mon => 1, tue => 2, wed => 3, thu => 4, fri => 5, sat => 6, sun => 7,
 );
 
+sub glob2re {
+    my ($pat) = @_;
+    $pat =~ s{(\W)}{
+        $1 eq '?' ? '.' :
+        $1 eq '*' ? '(*PRUNE)(.*?)' :
+        '\\' . $1
+    }eg;
+
+    return qr/\A$pat\z/s;
+}
+
 #
 # err
 #    Show the user a the provided message. These could be logged
@@ -297,64 +308,51 @@ sub handle_listener
    my $msg = sprintf($txt,@args);
 
    # search the $$user's location for things that listen
-   for my $hash (@{sql("select obj.*, " .
-                    "       substr(atr_value,2,instr(atr_value,':')-2) cmd,".
-                    "       substr(atr_value,instr(atr_value,':')+1) txt, ".
-                    "       atr.atr_id " .
-                    "  from object obj, " .
-                    "       attribute atr, " .
-                    "       content con1," .
-                    "       content con2, " .
-                    "       flag_definition fld, " . 
-                    "       flag flg  " . 
-                    " where obj.obj_id = atr.obj_id " .
-                    "   and obj.obj_id = con1.obj_id " .
-                    "   and fld.fde_flag_id = flg.fde_flag_id " .
-                    "   and obj.obj_id = flg.obj_id " .
-                    "   and con2.con_source_id = con1.con_source_id " .
-                    "   and con2.obj_id = ? " .
-                    "   and con1.obj_id != con2.obj_id " .
-                    "   and ? like replace(substr(atr_value,1," .
-                    "                      instr(atr_value,':')-1),'*','%')" .
-                    "   and flg.atr_id is null " .
-                    "   and fde_type = 1 " .
-                    "   and fde_name = ? ",
-                    $$runas{obj_id},
-                    "\^" . lc($msg),
-                    "LISTENER"
-                   )
-                }) {
-      $$hash{cmd} =~ s/\*/\(.*\)/g;
-      $$hash{txt} =~ s/\r\s*|\n\s*//g;
 
-      if(atr_hasflag($$hash{atr_id},"CASE")) {
-         #
-         # the select should really do the case comparison, but it would make
-         # a very messy select... so the code will just weed it out here
-         #
-         if($msg =~ /^$$hash{cmd}$/) {
+   for my $hash (@{sql("select atr.obj_id, ".
+                       "       atr_value, ".
+                       "       atr_regexp, ".
+                       "       atr_pattern, ".
+                       "       f2.fde_flag_id ".
+                       "  from content con,  ".
+                       "       content con2, ".
+                       "       flag flg,  ".
+                       "       flag_definition fde, ".
+                       "       attribute atr left outer join flag f2 on ".
+                       "          atr.obj_id = f2.obj_id ".
+                       "          and fde_flag_id = 13 ".
+                       " where atr.obj_id = con.obj_id  ".
+                       "   and atr.obj_id = flg.obj_id  ".
+                       "   and flg.fde_flag_id = fde.fde_flag_id  ".
+                       "   and fde_name = \"LISTENER\"  ".
+                       "   and fde_type = 1 ".
+                       "   and atr.atr_pattern_type = 2 ".
+                       "   and con2.obj_id = ? ".
+                       "   and (con.con_source_id = con2.con_source_id  ".
+                       "      or con.con_source_id = ? ) ",
+                        $$self{obj_id},
+                        $$self{obj_id}
+                      )
+                }) {
+      if($$hash{fde_flag_id} ne undef) {
+         if($msg =~ /$$hash{atr_regexp}/) {
             mushrun(self   => $self,
                     runas => $hash,
-                    cmd    => $$hash{txt},
+                    cmd    => $$hash{atr_value},
                     wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
                     source => 0,
                    );
+             $match=1;
          }
-      } elsif($msg =~ /^$$hash{cmd}$/i) {
-        mushrun(self   => $self,
-                runas  => $hash,
-                source => 0,
-                cmd    => $$hash{txt},
-                wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ]
-               );
-      } else {
-        mushrun(self   => $self,
-                runas  => $hash,
-                source => 0,
-                cmd    => $$hash{txt},
-               );
+      } elsif($msg =~ /$$hash{atr_regexp}/) {
+         mushrun(self   => $self,
+                 runas  => $hash,
+                 source => 0,
+                 cmd    => $$hash{atr_value},
+                 wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ]
+                );
+         $match=1;
       }
-      $match=1;                                   # signal mush command found
    }
    return $match;
 }
@@ -538,8 +536,8 @@ sub necho
       # output needs to be saved for use by http, websocket, or run()
       if(defined $$prog{output} && 
          (@{$$prog{created_by}}{obj_id} == $$target{obj_id} ||
-          $$target{obj_id} == @info{web_user} || 
-          $$target{obj_id} == @info{web_object}
+          $$target{obj_id} == @info{"conf.webuser"} || 
+          $$target{obj_id} == @info{"conf.webobject"}
          )
         ) {
             my $stack = $$prog{output};
@@ -1441,6 +1439,7 @@ sub set
 {
    my ($self,$prog,$obj,$attribute,$value,$quiet,$type)=
       ($_[0],$_[1],obj($_[2]),$_[3],$_[4],$_[5]);
+   my ($pat,$first,$type);
 
    # don't strip leading spaces on multi line attributes
    if(!@{$$prog{cmd}}{multi}) {
@@ -1464,27 +1463,51 @@ sub set
             source => [ "Set." ]
            );
    } else {
-      sql($db,
-          "insert into attribute " .
+      if($value =~ /^\s*(\$|^|!)([^:]+?):/) {
+         ($pat,$value) = ($2,$');
+         if($1 eq "\$") {
+            $type = 1;
+         } elsif($1 eq "^") {
+            $type = 2;
+         } elsif($1 eq "!") {
+            $type = 3;
+         }
+      } else {
+         $type = 0;
+      }
+
+      sql("insert into attribute " .
           "   (obj_id, " .
           "    atr_name, " .
           "    atr_value, " .
+          "    atr_pattern, " .
+          "    atr_pattern_type,  ".
+          "    atr_regexp, ".
+          "    atr_first,  ".
           "    atr_created_by, " .
           "    atr_created_date, " .
           "    atr_last_updated_by, " .
           "    atr_last_updated_date)  " .
           "values " .
-          "   (?,?,?,?,now(),?,now()) " .
+          "   (?,?,?,?,?,?,?,?,now(),?,now()) " .
           "ON DUPLICATE KEY UPDATE  " .
           "   atr_value=values(atr_value), " .
+          "   atr_pattern=values(atr_pattern), " .
+          "   atr_pattern_type=values(atr_pattern_type), " .
+          "   atr_regexp=values(atr_regexp), " .
+          "   atr_first=values(atr_first), " .
           "   atr_last_updated_by=values(atr_last_updated_by), " .
           "   atr_last_updated_date = values(atr_last_updated_date)",
           $$obj{obj_id},
           uc($attribute),
           $value,
+          $pat,
+          $type,
+          glob2re($pat),
+          atr_first($pat),
           $$user{obj_name},
-          $$user{obj_name});
- 
+          $$user{obj_name}
+         );
 
       if($$obj{obj_id} eq 0 && $attribute =~ /^conf./i) {
          @info{$attribute} = $value;

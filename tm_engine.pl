@@ -17,58 +17,42 @@ sub mush_command
    my ($self,$prog,$runas,$cmd) = @_;
    my ($match,$questions,@where)= (0);
 
-   ($where[0],$where[1]) = (loc($self),$$self{obj_id});
-   if(@info{"conf.master"} ne undef) {
-      $questions = "?,?,?";
-      my $m = @info{"conf.master"};
-      $m =~ s/#//g;
-      push(@where,$m);
-   } else {
-      $questions = "?,?";
-   }
+#   my $start = Time::HiRes::gettimeofday();
 
    # look for any attributes in the same room as the player
-   for my $hash (@{sql("select obj.*, " .
-                       "       substr(atr_value,2,instr(atr_value,':')-2) cmd,".
-                       "       substr(atr_value,instr(atr_value,':')+1) txt,".
-                       "       atr_name, ".
-                       "       0 source " .
-                       "  from object obj, attribute atr, content con " .
-                       " where obj.obj_id = atr.obj_id " .
-                       "   and obj.obj_id = con.obj_id " .
-                       "   and ? like  " .
-                       "         replace(replace(substr(atr_value,1," .
-                       "         instr(atr_value,':')-1),'*','%'),'?','_')" .
-                       "   and con.con_source_id in ( $questions ) ",
-                       "\$" . lc($cmd),
-                       @where
+   for my $hash (@{sql("select atr.obj_id, " .
+                       "       atr_value, ".
+                       "       atr_regexp, ".
+                       "       atr_name ".
+                       "  from attribute atr, " .
+                       "       content con, " .
+                       "       content con2  " .
+                       " where atr.obj_id = con.obj_id " .
+                       "   and atr.atr_pattern_type = 1 ".
+                       "   and con2.obj_id = ? ".
+                       "   and atr_first = ? ".
+                       "   and ( con.con_source_id = con2.con_source_id ".
+                       "         or con.con_source_id in ( ?, ? )) ",
+                       $$self{obj_id},
+                       atr_first($cmd),
+                       $$self{obj_id},
+                       @info{"conf.master"}
                       )
                 }) {
-      $$hash{cmd} =~ s/\*/\(.*\)/g;
-      $$hash{cmd} =~ s/\?/(.{1})/g;
-      $$hash{cmd} =~ s/\+/\\+/g;
-      $$hash{cmd} =~ s/\$/\\\$/g;
-      $$hash{txt} =~ s/\r\s*|\n\s*//g;
-      if($cmd =~ /^$$hash{cmd}$/) {
+      if($cmd =~ /$$hash{atr_regexp}/i) {
+         $$hash{txt} =~ s/\r\s*|\n\s*//g;
          mushrun(self   => $self,
                  prog   => $prog,
                  runas  => $hash,
                  source => 0,
-                 cmd    => $$hash{txt},
+                 cmd    => $$hash{atr_value},
                  wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ],
                  from   => "ATTR"
                 );
-      } else {
-         mushrun(self   => $self,
-                 prog   => $prog,
-                 runas  => $hash,
-                 source => 0,
-                 cmd    => $$hash{txt},
-                 from   => "ATTR"
-                );
+         $match=1;                                   # signal mush command found
       }
-      $match=1;                                   # signal mush command found
    }
+#   printf("mushrun: finish -> %s\n",Time::HiRes::gettimeofday() - $start);
    return $match;
 }
 
@@ -271,6 +255,7 @@ sub spin
    my (%last);
    my $count = 0;
 
+   my $total = 0;
    $SIG{ALRM} = \&spin_done;
 
    my $start = Time::HiRes::gettimeofday();
@@ -361,8 +346,12 @@ sub spin
    };
 #   ualarm(0);                                                 # cancel alarm
 #   printf("Count: $count\n");
+#   printf("Spin: finish -> $count\n");
+#   printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count > 1;
+#   printf("      total: '%s'\n",$total) if $count > 1;
 
-   if($@ =~ /alaerm/i) {
+
+   if($@ =~ /alarm/i) {
       printf("Time slice timed out (%2f w/%s cmd) $@\n",
          Time::HiRes::gettimeofday() - $start,$count);
       if(defined @last{user} && defined @{@last{user}}{var}) {

@@ -139,7 +139,8 @@ sub http_process_line
       if($msg eq undef) {
          http_error($s,"Malformed Request");
       } else {
-         my $self = fetch(@info{web_user});
+         my $id = @info{"conf.webuser"};
+         my $self = fetch(@info{"conf.webuser"});
 
          my $msg =  uri_unescape($$data{get});
 #         $msg = $' if($msg =~ /^\s*\/+/);
@@ -163,7 +164,7 @@ sub http_process_line
                 ") values ( " .
                 "  ?, ?, now(), now(), 0, ?, ? ".
                 ")",
-                @info{web_user},
+                @info{"conf.webuser"},
                 @{@http{$s}}{ip},
                 substr($msg,0,254),
                 2

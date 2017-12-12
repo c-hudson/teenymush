@@ -177,6 +177,8 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_sex(@_);}                     };
 @command{"\@read"}   = { help => "Reads various data for the MUSH",
                          fun  => sub { cmd_read(@_);}                    };
+@command{"\@compile"}= { help => "Reads various data for the MUSH",
+                         fun  => sub { cmd_compile(@_);}                 };
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); },
@@ -202,6 +204,56 @@ delete @honey{keys %honey};
 
  
 # ------------------------------------------------------------------------#
+
+sub atr_first
+{
+   my $txt = shift;
+
+   if($txt  =~ /^([^ \(\)\[\]\{\}\*]+)/) {
+      return $1;
+   } else {
+      return undef;
+   }
+}
+
+sub cmd_compile
+{
+   my ($self,$prog,$txt) = @_;
+   my $first;
+
+   if(!hasflag($self,"WIZARD")) {
+      return err($self,$prog,"Permission denied.");
+   }
+
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ "Starting compiling of regexps from globs." ]
+        );
+   for my $hash (@{sql("select atr_id, atr_pattern " .
+                       "  from attribute " .
+                       " where atr_pattern_type != 0")}) {
+   sql("update attribute ".
+       "   set atr_regexp = ?,".
+       "       atr_first = ? ".
+       " where atr_id = ? ",
+       glob2re($$hash{atr_pattern}),
+       atr_first($$hash{atr_pattern}),
+       $$hash{atr_id});
+
+      if($$db{rows} != 1 ) {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "Could not compile %s", $$hash{atr_id} ]
+              );
+      }
+   }
+   my_commit;
+
+   necho(self   => $self,
+      prog   => $prog,
+      source => [ "Finished compiling of regexps from globs." ]
+     );
+}
 
 sub cmd_find
 {
@@ -1177,6 +1229,7 @@ sub read_atr_config
                        "   and atr_name like 'conf.%'"
                       )
                 }) {
+       $$atr{atr_value} =~ s/#//g;
        @info{lc($$atr{atr_name})} = $$atr{atr_value};
        @updated{lc($$atr{atr_name})} = 1;
    }
@@ -3144,6 +3197,8 @@ sub list_attr
    for my $hash (@{sql($db,
        "   select atr_name, " .
        "          atr_value, " .
+       "          atr_pattern, " .
+       "          atr_pattern_type, ".
        "          group_concat(distinct fde_letter order by fde_order " .
        "             separator '') atr_flag " .
        "     from attribute atr left join ( " .
@@ -3163,6 +3218,14 @@ sub list_attr
        $$obj{obj_id},
        @where
       )}) { 
+
+       if($$hash{atr_pattern_type} == 1) {
+          $$hash{atr_value} = "\$$$hash{atr_pattern}:$$hash{atr_value}";
+       } elsif($$hash{atr_pattern_type} == 2) {
+          $$hash{atr_value} = "^$$hash{atr_pattern}:$$hash{atr_value}";
+       } elsif($$hash{atr_pattern_type} == 3) {
+          $$hash{atr_value} = "!$$hash{atr_pattern}:$$hash{atr_value}";
+       }
 
        if($$hash{atr_value} =~ /\n/ && $$hash{atr_value} !~ /^\s*\n/) {
           $$hash{atr_value} = "\n$$hash{atr_value}";

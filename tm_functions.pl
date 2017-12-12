@@ -1232,10 +1232,10 @@ sub fun_sql
 
       my $sql = join(',',@txt);
 #      $sql =~ s/\_/%/g;
-      necho(self => $self,
-            prog => $prog,
-            source => [ "Sql: '%s'\n",$type],
-           );
+#      necho(self => $self,
+#            prog => $prog,
+#            source => [ "Sql: '%s'\n",$type],
+#           );
       if(lc($type) eq "text") {
          $result = text(evaluate($self,$prog,$sql));
       } else {
@@ -1681,7 +1681,8 @@ sub evaluate
    # pick functions out of string when enclosed in []'s 
    #
    while($txt =~ /([\\]*)\[([a-zA-Z_]+)\(/) {
-      my ($esc,$fun,$before,$after) = ($1,fun_lookup($self,$prog,$2,$txt),$`,$');
+      my ($esc,$before,$after,$unmod) = ($1,$`,$',$2);
+      my $fun = fun_lookup($self,$prog,$unmod,$txt);
       $out .= evaluate_substitutions($self,$prog,$before);
       $out .= "\\" x (length($esc) / 2);
 
@@ -1698,7 +1699,7 @@ sub evaluate
             $out .= $r;
          }
       } else {                                # start of function escaped out
-         $out .= "[" . $fun . "(";
+         $out .= "[$unmod(";
          $txt = $after;
       }
    }

@@ -1,6 +1,6 @@
 -- MySQL dump 10.13  Distrib 5.7.20, for Linux (x86_64)
 --
--- Host: localhost    Database: ascii
+-- Host: localhost    Database: dev
 -- ------------------------------------------------------
 -- Server version	5.7.20-0ubuntu0.17.04.1
 
@@ -27,6 +27,10 @@ CREATE TABLE `attribute` (
   `atr_id` int(11) NOT NULL AUTO_INCREMENT,
   `atr_name` varchar(30) DEFAULT NULL,
   `atr_value` varchar(4096) DEFAULT NULL,
+  `atr_pattern` varchar(256) DEFAULT NULL,
+  `atr_first` varchar(256) DEFAULT NULL,
+  `atr_regexp` varchar(256) DEFAULT NULL,
+  `atr_pattern_type` int(11) NOT NULL,
   `atr_created_by` varchar(30) DEFAULT NULL,
   `atr_created_date` date DEFAULT NULL,
   `atr_last_updated_by` varchar(30) DEFAULT NULL,
@@ -35,6 +39,8 @@ CREATE TABLE `attribute` (
   UNIQUE KEY `attribute_unq` (`obj_id`,`atr_name`),
   KEY `attribute_idx1` (`obj_id`),
   KEY `attribute_idx2` (`atr_name`),
+  KEY `attribute_idx3` (`atr_pattern_type`),
+  KEY `attribute_idx4` (`atr_first`),
   CONSTRAINT `attribute_ibfk_1` FOREIGN KEY (`obj_id`) REFERENCES `object` (`obj_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -313,4 +319,4 @@ CREATE TABLE `valid_option` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2017-11-21 10:31:06
+-- Dump completed on 2017-12-12 15:03:08

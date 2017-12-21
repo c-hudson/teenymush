@@ -39,7 +39,11 @@ sub sql
    @info{sqldone} = 0;
 
    delete @$con{rows};
-#   printf("SQL: '%s'\n",$sql);
+
+#   if($sql !~ /^insert into output/) {
+#      printf("SQL: '%s'\n",$sql);
+#   }
+#   printf("     '%s'\n",code("short"));
 
    #
    # clean up the sql a little
@@ -48,7 +52,7 @@ sub sql
    $sql =~ s/\s{2,999}/ /g;
    @info{sql_last} = $sql;
    @info{sql_last_args} = join(',',@args);
-#   @info{sql_last_code} = code();
+   @info{sql_last_code} = code();
 
    # connected/reconnect to DB if needed
    if(!defined $$con{db} || !$$con{db}->ping) {

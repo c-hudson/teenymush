@@ -39,7 +39,7 @@ sub mush_command
                        @info{"conf.master"}
                       )
                 }) {
-      if($cmd =~ /$$hash{atr_regexp}/i) {
+      if($cmd =~ /(?i)$$hash{atr_regexp}/i) {
          $$hash{txt} =~ s/\r\s*|\n\s*//g;
          mushrun(self   => $self,
                  prog   => $prog,
@@ -347,7 +347,7 @@ sub spin
 #   ualarm(0);                                                 # cancel alarm
 #   printf("Count: $count\n");
 #   printf("Spin: finish -> $count\n");
-#   printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count > 1;
+#   printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count >= 1;
 #   printf("      total: '%s'\n",$total) if $count > 1;
 
 
@@ -385,7 +385,7 @@ sub run_internal
    my %switch;
 
    $$prog{cmd} = $command;
-   while($arg =~ /^\s*\/([^ =]+)( |$)/) {                  # find switches
+   while($arg =~ /^\/([^ =]+)( |$)/) {                  # find switches
       @switch{lc($1)} = 1;
       $arg = $';
    }
@@ -410,7 +410,7 @@ sub run_internal
                       ]
            );
    }
-   return &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,$arg,\%switch);
+   return &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,trim($arg),\%switch);
 }
 
 sub spin_run
@@ -439,7 +439,7 @@ sub spin_run
       $hash = \%command;                                    # connected users
    }
 
-   if($$command{cmd} =~ /^\s*([^ \/]+)(\s*)/) {         # split cmd from args
+   if($$command{cmd} =~ /^\s*([^ \/]+)/) {         # split cmd from args
       ($cmd,$arg) = (lc($1),$'); 
    } else {
       return;                                                 # only spaces

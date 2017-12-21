@@ -5,6 +5,7 @@ use HTML::HTML5::Entities;
 use Carp;
 use Text::Glob qw( match_glob glob_to_regex );
 use Scalar::Util qw(looks_like_number);
+use Math::BigInt;
 
 #
 # define which function's arguements should not be evaluated before
@@ -1588,6 +1589,7 @@ sub balanced_split
    my ($last,$i,@stack,$escaped,@depth) = (0,-1);
    my %pair = ( '(' => ')', '{' => '}');
    $delim = "," if $delim eq undef;
+   my $orig = $txt;
 
    $txt = $1 if($type == 3 && $txt =~ /^\s*{(.*)}\s*$/);
    my @array = grep {!/^$/} split(/([\[\]\{\}\(\)$delim])|(\\+)/,$txt);

@@ -44,10 +44,10 @@ delete @honey{keys %honey};
                          fun  => sub { return &cmd_pose(@_); },
                          nsp  => 1                                       };
 @command{";"}        = { help => "Posing without a space after your name",
-                         fun  => sub { return &cmd_pose($_[0],$_[1],$_[2],1); },
+                         fun  => sub { return &cmd_pose(@_[0..3],1); },
                          nsp  => 1                                       };
 @command{"emote"}    = { help => "Posing without a space after your name",
-                         fun  => sub { return &cmd_pose($_[0],$_[1],$_[2],1); },
+                         fun  => sub { return &cmd_pose(@_[0..3],1);      },
                          nsp  => 1                                       };
 @command{who}        = { help => "Display online users",
                          fun  => sub { return &cmd_who(@_); }            };
@@ -1229,7 +1229,9 @@ sub read_atr_config
                        "   and atr_name like 'conf.%'"
                       )
                 }) {
-       $$atr{atr_value} =~ s/#//g;
+       if($$atr{atr_value} =~ /^\s*#\d+\s*$/) {
+          $$atr{atr_value} =~ s/^\s*#//g;
+       }
        @info{lc($$atr{atr_name})} = $$atr{atr_value};
        @updated{lc($$atr{atr_name})} = 1;
    }
@@ -1737,7 +1739,46 @@ sub cmd_list
       necho(self => $self,
             prog => $prog,
             source => [ "%s", motd($self,$prog) ]
-      );
+     );
+   } elsif($txt =~ /^\s*cache\s*$/i) {
+       my ($size,$atr,$age);
+       my $cache = cache_ref();
+       for my $x (keys %$cache) {
+          if(ref($$cache{$x}) eq "HASH") {
+             for my $y (keys %{$$cache{$x}}) {
+                if(ref($$cache{$x}->{$y}) eq "HASH") {
+                   if(defined $$cache{$x}->{$y}->{value} &&
+                      defined $$cache{$x}->{$y}->{ts}) {
+                      $size += length($$cache{$x}->{$y}->{value});
+                      $age += time() - $$cache{$x}->{$y}->{ts};
+                      $atr++;
+                   }
+                } else {
+#                   $size += length($$cache{$x}->{$y});
+#                   $atr++;
+                }
+             }
+          } else {
+#             $size += length($$cache{$x});
+#             $atr++;
+          }
+       }
+       necho(self   => $self,
+             prog   => $prog,
+             source => [ "Internal Cache Sizes\n\n" ]
+            );
+       necho(self   => $self,
+             prog   => $prog,
+             source => [ "   Attributes:  %s",$atr ]
+            );
+       necho(self   => $self,
+             prog   => $prog,
+             source => [ "   Size:        %s bytes",$size]
+            );
+       necho(self   => $self,
+             prog   => $prog,
+             source => [ "   Average Age: %d seconds",$age / $atr]
+            );
    } elsif($txt =~ /^\s*functions\s*$/i) {
        $Text::Wrap::columns=75;
        necho(self   => $self,
@@ -1904,10 +1945,12 @@ sub cmd_think
 {
    my ($self,$prog,$txt) = @_;
 
+   my $start = Time::HiRes::gettimeofday();
    necho(self   => $self,
          prog   => $prog,
          source => [ "%s", evaluate($self,$prog,$txt) ],
         );
+   printf("mushrun: finish -> %s\n",Time::HiRes::gettimeofday() - $start);
 }
 
 sub cmd_pemit
@@ -1965,10 +2008,13 @@ sub cmd_drop
       return err($self,$prog,"Internal error, unable to drop that object");
 
    # provide some visual feed back to the player
-   necho(self   => $self,
-         prog   => $prog,
-         room   => [ $self, "%s dropped %s.", name($self),name($target) ],
-         room2  => [ $self, "%s has arrived.",name($target) ]
+   necho(self    => $self,
+         prog    => $prog,
+         source  => [ "You have dropped %s.\n%s has arrived.", 
+                      name($target), name($target)
+                    ],
+         room    => [ $self, "%s dropped %s.", name($self),name($target) ],
+         room2   => [ $self, "%s has arrived.",name($target) ]
         );
 
    mushrun(self   => $self,
@@ -2034,6 +2080,8 @@ sub cmd_take
       return err($self,$prog,"You may not pick up rooms.");
    } elsif($$target{obj_id} eq  $$self{obj_id}) {
       return err($self,$prog,"You may not pick up yourself!");
+   } elsif(loc($target) == $$self{obj_id}) {
+      return err($self,$prog,"You already have that!");
    } elsif(loc($target) != loc($self)) {
       return err($self,$prog,"That object is to far away");
    }
@@ -2055,8 +2103,8 @@ sub cmd_take
          prog   => $prog,
          source => [ "You have picked up %s.", name($target) ],
          target => [ $target, "%s has picked you up.", name($self) ],
-         room   => [ $target, "%s picks up %s.", name($self),name($target) ],
-         room2  => [ $target, "%s has left.",name($target) ]
+         room   => [ $self, "%s picks up %s.", name($self),name($target) ],
+         room2  => [ $self, "%s has left.",name($target) ]
         );
 
    move($self,$prog,$target,$self) ||
@@ -2509,7 +2557,7 @@ sub cmd_clear
       $| = 1;
       printf("%s\n%s\n%s\n","#" x 65,"-" x 65,"#" x 65);
       print "\033[2J";    #clear the screen
-      print "\033[0;0H"; #jump to 0,0
+      print "\033[0;0H";  #jump to 0,0
       necho(self   => $self,
             prog   => $prog,
             source => [ "Done." ]
@@ -3092,27 +3140,24 @@ sub cmd_doing
 {
    my ($self,$prog,$txt) = @_;
 
-   if($txt =~ /^\s*$/) {                            # no arguments provided
-      sql(e($db,1),
-          "update object " . 
-          "   set obj_doing = NULL " .
-          " where obj_id = ? ",
-          $$self{obj_id}
-         );
-   } else {                                                # doing provided
-      sql(e($db,1),
-          "update object " . 
-          "   set obj_doing = ? " .
-          " where obj_id = ? ",
-          $txt,
-          $$self{obj_id}
-         );
+   if(!defined @connected{$$self{sock}}) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Permission denied." ]
+           );
+   } elsif($txt =~ /^\s*$/) {
+      delete $connected{$$self{sock}}{obj_doing};
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Removed." ]
+           );
+   } else {
+      $connected{$$self{sock}}{obj_doing} = trim($txt);
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Set." ]
+           );
    }
-   my_commit;
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "Set." ]
-        );
 }
 
 
@@ -3444,6 +3489,7 @@ sub cmd_look
    } elsif(!($target = locate_object($self,$prog,evaluate($self,$prog,$txt)))) {
       return err($self,$prog,"I don't see that here.");
    }
+   printf("LOOK: '%s'\n",$$target{obj_id});
 
    $out = obj_name($self,$target);
    if(($desc = get($$target{obj_id},"DESCRIPTION")) && $desc ne undef) {
@@ -3674,7 +3720,7 @@ sub cmd_DOING
         );
 }
 
-sub who
+sub who_old
 {
    my ($self,$prog,$flag) = @_;
    my ($max,@who,$idle,$count,$out,$extra,$hasperm,$name) = (2);
@@ -3758,7 +3804,7 @@ sub who
          $name = "<a href=look/$$hash{obj_id}>$name</a>" .
                  (" " x (15 - length($name)));
       } else {
-         $name = sprintf("%-15s", name($hash));
+         $name = sprintf("%-15s", $$hash{obj_name});
       }
 
       # show connected user details
@@ -3770,6 +3816,88 @@ sub who
              ($$extra_data{site_restriction} == 69) ? " [HoneyPoted]" : ""
             );
       } elsif($$extra_data{site_restriction} != 69) {
+         $out .= sprintf("%s%4s %02d:%02d %4s  %s\r\n",$name,$extra,
+             $$online{h},$$online{m},$$idle{max_val} . $$idle{max_abr},
+             $$extra_data{obj_doing});
+      }
+   }
+   $out .= sprintf("%d Players logged in\r\n",$#who+1);        # show totals
+   return $out;
+}
+
+sub who
+{
+   my ($self,$prog,$flag) = @_;
+   my ($max,@who,$idle,$count,$out,$extra,$hasperm,$name) = (2);
+
+   if(ref($self) eq "HASH") {
+      $hasperm = ($flag || !hasflag($self,"WIZARD")) ? 0 : 1;
+   } else {
+      $hasperm = 0;
+   }
+
+
+   # query the database for connected user, location, and socket
+   # details.
+   for my $key (sort {@{@connected{$b}}{start} <=> @{@connected{$a}}{start}} 
+                keys %connected) {
+      my $hash = @connected{$key};
+
+      if($$hash{obj_id} ne undef) {
+         if(length(loc($hash)) > length($max)) {
+            $max = length(loc($hash));
+         }
+         push(@who,$hash);
+      }
+   }
+      
+   # show headers for normal / wiz who 
+   if($hasperm) {
+      $out .= sprintf("%-15s%10s%5s %-*s %-4s %s\r\n","Player Name","On For",
+                      "Idle",$max,"Loc","Port","Hostname");
+   } else {
+      $out .= sprintf("%-15s%10s%5s  %s\r\n","Player Name","On For","Idle",
+                      "\@doing");
+   }
+
+   $max = 3 if($max < 3);
+
+   # generate detail for every connected user
+   for my $hash (@who) {
+      # determine idle details
+
+      if(defined $$hash{last}) {
+         $idle = date_split(time() - @{$$hash{last}}{time});
+      } else {
+         $idle = { max_abr => 's' , max_val => 0 };
+      }
+
+      # determine connect time details
+      
+      my $online = date_split(time() - fuzzy($$hash{start}));
+      if($$online{max_abr} =~ /^(M|w|d)$/) {
+         $extra = sprintf("%4s",$$online{max_val} . $$online{max_abr});
+      } else {
+         $extra = "    ";
+      } 
+ 
+      if($$prog{hint} eq "WEB") {
+         $name = name($hash);
+         $name = "<a href=look/$$hash{obj_id}>$name</a>" .
+                 (" " x (15 - length($name)));
+      } else {
+         $name = sprintf("%-15s", $$hash{obj_name});
+      }
+
+      # show connected user details
+      if($hasperm) {
+         $out .= sprintf("%s%4s %02d:%02d %4s %-*s %-4s %s%s\r\n",
+             $name,$extra,$$online{h},$$online{m},$$idle{max_val} .
+             $$idle{max_abr},$max,"#" . loc($hash),$$hash{port},
+             short_hn($$hash{hostname}),
+             ($$hash{site_restriction} == 69) ? " [HoneyPoted]" : ""
+            );
+      } elsif($$hash{site_restriction} != 69) {
          $out .= sprintf("%s%4s %02d:%02d %4s  %s\r\n",$name,$extra,
              $$online{h},$$online{m},$$idle{max_val} . $$idle{max_abr},
              $$hash{obj_doing});

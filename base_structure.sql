@@ -208,7 +208,6 @@ CREATE TABLE `object` (
   `obj_last_updated_date` datetime DEFAULT NULL,
   `obj_home` int(11) NOT NULL,
   `obj_quota` int(11) DEFAULT NULL,
-  `obj_doing` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`obj_id`),
   KEY `owner_idx1` (`obj_owner`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
@@ -319,4 +318,4 @@ CREATE TABLE `valid_option` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2017-12-12 15:14:12
+-- Dump completed on 2017-12-21  2:00:02

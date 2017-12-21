@@ -27,6 +27,7 @@ my (%command,                       # commands for after player has connected
     $user,                                             # current user details
     $enactor,                                # object who initated the action
     $obj,
+    %cache,
     %c
    );
 

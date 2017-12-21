@@ -8,6 +8,8 @@ use IO::Socket;
 use Time::Local;
 use Carp;
 
+my %cache;
+
 my %months = (
    jan => 1, feb => 2, mar => 3, apr => 4, may => 5, jun => 6,
    jul => 7, aug => 8, sep => 9, oct => 10, nov => 11, dec => 12,
@@ -25,7 +27,12 @@ sub glob2re {
         '\\' . $1
     }eg;
 
-    return qr/\A$pat\z/s;
+    return qr/\A$pat\z/si;
+}
+
+sub cache_ref
+{
+   return \%cache;
 }
 
 #
@@ -62,18 +69,15 @@ sub code
    my $type = shift;
    my @stack;
 
-   if(Carp::shortmess =~ /#!\/usr\/bin\/perl/) {
+#   if(Carp::shortmess =~ /#!\/usr\/bin\/perl/) {
 
-      if(!$type || $type eq "short") {
-         for my $line (split(/\n/,$`)) {
-            if($line =~ /at ([^ ]+) line (\d+)\s*$/) {
-               push(@stack,"$1:$2");
-            }
+   if(!$type || $type eq "short") {
+      for my $line (split(/\n/,Carp::shortmess)) {
+         if($line =~ /at ([^ ]+) line (\d+)\s*$/) {
+            push(@stack,"$1:$2");
          }
-         return join(',',@stack);
-      } else {
-         return $`;
       }
+      return join(',',@stack);
    } else {
       return Carp::shortmess;
    }
@@ -384,17 +388,19 @@ sub lcon
    my $object = obj(shift);
    my @result;
 
-   for my $obj (@{sql($db,
-                      "select obj.* " .
-                      "  from object obj, " .
-                      "       content con " . 
-                      " where obj.obj_id = con.obj_id " .
-                      "   and con.con_source_id = ? ",
-                      $$object{obj_id},
-                )}) {
-      push(@result,$obj);
+   if(!incache($object,"lcon")) {
+       my @list;
+       for my $obj (@{sql($db,
+                          "select obj_id " .
+                          "  from content con " . 
+                          " where con_source_id = ? ",
+                          $$object{obj_id},
+                    )}) {
+          push(@list,{ obj_id => $$obj{obj_id}});
+       }
+       set_cache($object,"lcon",\@list);
    }
-   return @result;
+   return @{ cache($object,"lcon") };
 }
 
 sub filter_chars
@@ -450,8 +456,25 @@ sub log_output
 }
 
 
+sub echo_socket
+{
+   my ($obj,$prog,$fmt,@args) = (obj(shift),shift,shift,@_);
 
-sub necho
+   my $msg = sprintf($fmt,@args);
+   if(defined @connected_user{$$obj{obj_id}}) {
+      my $list = @connected_user{$$obj{obj_id}};
+
+      for my $socket (keys %$list) {
+         my $s = $$list{$socket};
+         printf($s "%s", $msg);
+      }
+   } else {
+      echo_output_to_puppet_owner($$obj{obj_id},$prog, $msg);
+   }
+}
+
+
+sub necho_old
 {
    my %arg = @_;
    my $prog = $arg{prog};
@@ -547,7 +570,7 @@ sub necho
 
 #      if(!defined @arg{hint} ||
 #         (@arg{hint} eq "ECHO_ROOM" && loc($target) != loc(owner($target)))) {
-         echo_output_to_puppet_owner($target,$arg{prog},$msg,$arg{debug});
+#         echo_output_to_puppet_owner($target,$arg{prog},$msg,$arg{debug});
 #      }
 
       if(defined @{$arg{self}}{loggedin} && !@{$arg{self}}{loggedin}) {
@@ -573,14 +596,111 @@ sub necho
    }
 }
 
+sub necho
+{
+   my %arg = @_;
+   my $prog = $arg{prog};
+   my $self = $arg{self};
+   my $loc;
+
+   if($arg{self} eq undef) {
+      printf("%s\n",print_var(\%arg));
+      printf("%s\n",code("long"));
+   }
+
+   if(defined @{$arg{self}}{loggedin} && !@{$arg{self}}{loggedin}) {
+      # skip checks for non-connected players
+   } elsif(!defined $arg{self}) {             # checked passed in arguments
+      err($self,$prog,"Echo expects a self argument passed in");
+   } elsif(!defined $arg{prog}) {
+      err($self,$prog,"Echo expects a prog argument passed in");
+   } elsif(defined $arg{room}) {
+      if(ref($arg{room}) ne "ARRAY") {
+         err($self,$prog,"Echo expects a room argument expects array data");
+      } elsif(ref(@{$arg{room}}[0]) ne "HASH") {
+         err($self,$prog,"Echo expects first room argument to be HASH " .
+             "data '%s'",@{$arg{room}}[0]);
+      }
+   }
+
+   for my $type ("room", "room2") {                       # handle room echos
+      if(defined $arg{$type}) {
+         my $array = $arg{$type};
+         my $target = obj(shift(@$array));
+         my $fmt = shift(@$array);
+         my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
+
+         for my $obj ( lcon(loc($target)), lcon($target) ) {
+
+            if($$self{obj_id} != $$obj{obj_id}) {
+               echo_socket($obj,
+                           @arg{prog},
+                           "%s%s",
+                           nospoof(@arg{self},@arg{prog},$obj),
+                           $msg
+                          );
+            }
+         }
+#         handle_listener($arg{self},$arg{prog},$target,$fmt,@$array);
+
+      }
+   }
+ 
+   unshift(@{$arg{source}},$arg{self}) if(defined $arg{source});
+
+   for my $type ("source", "target") {
+      next if !defined $arg{$type};
+
+      if(ref($arg{$type}) ne "ARRAY") {
+         return err($arg{self},$arg{prog},"Argument $type is not an array");
+      }
+
+      my ($target,$fmt) = (shift(@{$arg{$type}}), shift(@{$arg{$type}}));
+      my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
+
+
+      # output needs to be saved for use by http, websocket, or run()
+      if(defined $$prog{output} && 
+         (@{$$prog{created_by}}{obj_id} == $$target{obj_id} ||
+          $$target{obj_id} == @info{"conf.webuser"} || 
+          $$target{obj_id} == @info{"conf.webobject"}
+         )
+        ) {
+            my $stack = $$prog{output};
+            push(@$stack,$msg);
+            next;
+      }
+
+#      if(!defined @arg{hint} ||
+#         (@arg{hint} eq "ECHO_ROOM" && loc($target) != loc(owner($target)))) {
+#         echo_output_to_puppet_owner($target,$arg{prog},$msg,$arg{debug});
+#      }
+
+      if(defined @{$arg{self}}{loggedin} && !@{$arg{self}}{loggedin}) {
+         my $self = $arg{self};
+         my $s = @{$connected{$$self{sock}}}{sock};
+         printf($s "%s",$msg);
+      } else {
+         log_output($self,$target,-1,$msg);
+
+         echo_socket($$target{obj_id},
+                     @arg{prog},
+                     "%s%s",
+                     nospoof(@arg{self},@arg{prog},$$target{obj_id}),
+                     $msg
+                    );
+      }
+   }
+}
+
 sub echo_output_to_puppet_owner
 {
    my ($self,$prog,$msg,$debug) = (obj(shift),obj(shift),shift,shift);
    $msg =~ s/\n*$//;
 
-   my $obj_loc = loc($self);
-
    if(hasflag($self,"PUPPET")) {                      # forward if puppet
+      my $obj_loc = loc($self);
+
       for my $player (@{sql($db,
                             "select sck_socket, " .
                             "       obj2.obj_id, " .
@@ -657,18 +777,16 @@ sub name
 {
    my $target = obj(shift);
 
-#   if(!defined $$target{obj_name} && defined $$target{obj_id} && $$target{obj_id} ne undef) {     # no name, query db
-      $$target{obj_name} = one_val("select obj_name value " .
-                                   "  from object "  .
-                                   " where obj_id = ?",
-                                   $$target{obj_id}); 
-#   }
-
-   if($$target{obj_name} eq undef) {           # no name, how'd that happen?
-      $$target{obj_name} = "[<UNKNOWN>]";
+   if(!incache($target,"obj_name")) {
+      my $val = one_val("select obj_name value ".
+                        "  from object ".
+                        " where obj_id = ? ",
+                        $$target{obj_id}
+                       );
+      $val = "[<UNKNOWN>]" if($val eq undef) ;
+      set_cache($target,"obj_name",$val);
    }
-
-   return $$target{obj_name}; 
+   return cache($target,"obj_name");
 }
 
 sub echo_flag
@@ -755,32 +873,64 @@ sub loggedin
    }
 }
 
+sub incache
+{
+   my ($obj,$item) = (obj(shift),shift);
+
+   return undef if(!defined $cache{$$obj{obj_id}});
+   return (defined $cache{$$obj{obj_id}}->{$item}->{value}) ? 1 : 0;
+}
+
+sub set_cache
+{
+   my ($obj,$item,$val) = (obj(shift),shift,shift);
+
+   if($val eq undef) {
+      delete $cache{$$obj{obj_id}}->{$item} if(defined $cache{$$obj{obj_id}});
+   } else {
+      $cache{$$obj{obj_id}}->{$item}->{ts} = time();
+      $cache{$$obj{obj_id}}->{$item}->{value} = $val;
+   }
+}
+
+sub cache
+{
+   my ($obj,$item) = (obj(shift),shift);
+
+   $cache{$$obj{obj_id}}->{$item}->{ts} = time();
+   return $cache{$$obj{obj_id}}->{$item}->{value};
+}
+
 sub flag_list
 {
-   my ($obj,$flag) = (obj($_[0]),$_[1]);
-   my (@list,$array);
+   my ($obj,$flag) = (obj($_[0]),uc($_[1]));
    $flag = 0 if !$flag;
- 
-   for my $hash (@{sql($db,"select * from ( " .
-                           "select fde_name, fde_letter, fde_order" .
-                           "  from flag flg, flag_definition fde " . 
-                           " where flg.fde_flag_id = fde.fde_flag_id " .
-                           "   and obj_id = ? " .
-                           "   and flg.atr_id is null " .
-                           "   and fde_type = 1 " .
-                           " union all " .
-                           "select distinct 'CONNECTED' fde_name, " .
-                           "       'c' fde_letter, " .
-                           "       999 fde_order " .
-                           "  from socket sck " .
-                           " where obj_id = ?) foo " .
-                            "order by fde_order",
-                           $$obj{obj_id},
-                           $$obj{obj_id}
-                          )}) {
-      push(@list,$$hash{$flag ? "fde_name" : "fde_letter"});
+
+   if(!incache($obj,"FLAG_LIST_$flag")) {
+      my (@list,$array);
+      for my $hash (@{sql($db,"select * from ( " .
+                              "select fde_name, fde_letter, fde_order" .
+                              "  from flag flg, flag_definition fde " . 
+                              " where flg.fde_flag_id = fde.fde_flag_id " .
+                              "   and obj_id = ? " .
+                              "   and flg.atr_id is null " .
+                              "   and fde_type = 1 " .
+                              " union all " .
+                              "select distinct 'CONNECTED' fde_name, " .
+                              "       'c' fde_letter, " .
+                              "       999 fde_order " .
+                              "  from socket sck " .
+                              " where obj_id = ?) foo " .
+                               "order by fde_order",
+                              $$obj{obj_id},
+                              $$obj{obj_id}
+                             )}) {
+         push(@list,$$hash{$flag ? "fde_name" : "fde_letter"});
+      }
+       
+      set_cache($obj,"FLAG_LIST_$flag",join($flag ? " " : "",@list));
    }
-   return join($flag ? " " : '',@list);
+   return cache($obj,"FLAG_LIST_$flag");
 }
 
 sub valid_dbref 
@@ -978,6 +1128,21 @@ sub locate_exit
    }
 }
 
+sub remove_flag_cache
+{
+   my ($object, $flag) = (obj(shift),uc(shift));
+
+   set_cache($object,"FLAG_$flag");
+   set_cache($object,"FLAG_LIST_0");
+   set_cache($object,"FLAG_LIST_1");
+
+   if($flag eq "WIZARD") {
+      for my $obj (keys %{$cache{$$object{obj_id}}->{FLAG_DEPENDANCY}}) {
+         delete @cache{$obj};
+      }
+      delete $cache{$$object{obj_id}}->{FLAG_DEPENDANCY};
+   }
+}
 
 
 #
@@ -988,7 +1153,7 @@ sub locate_exit
 sub set_flag
 {
     my ($self,$prog,$obj,$flag,$override) = 
-       (obj($_[0]),$_[1],obj($_[2]),$_[3],$_[4]);
+       (obj($_[0]),$_[1],obj($_[2]),uc($_[3]),$_[4]);
     my $who = $$user{obj_name};;
     my ($remove,$count);
 
@@ -1043,6 +1208,9 @@ sub set_flag
                   "   and fde_flag_id = ?",
                   $$obj{obj_id},
                   $$hash{fde_flag_id});
+
+          remove_flag_cache($obj,$flag);
+         
           my_commit;
           if($flag =~ /^\s*(PUPPET|LISTENER)\s*$/i) {
              necho(self => $self,
@@ -1072,6 +1240,10 @@ sub set_flag
               $$hash{fde_flag_id});
           my_commit;
           return "#-1 Flag note removed [Internal Error]" if($$db{rows} != 1);
+
+          remove_flag_cache($obj,$flag);
+          set_cache($obj,"FLAG_$flag",1);
+
           return "Set.";
        }
     } else {
@@ -1223,29 +1395,36 @@ sub perm
 sub hasflag
 {
    my ($target,$flag) = (obj($_[0]),$_[1]);
+   my $val;
 
-   if($flag eq "WIZARD") {
-      return one_val($db,"select if(count(*) > 0,1,0) value " . 
-                         "  from flag flg, flag_definition fde " .
-                         " where flg.fde_flag_id = fde.fde_flag_id " .
-                         "   and atr_id is null ".
-                         "   and fde_type = 1 " .
-                         "   and obj_id = ? " .
-                         "   and fde_name = ? ",
-                         owner_id($target),
-                         uc($flag));
-   
-   } else {
-      return one_val($db,"select if(count(*) > 0,1,0) value " . 
-                         "  from flag flg, flag_definition fde " .
-                         " where flg.fde_flag_id = fde.fde_flag_id " .
-                         "   and atr_id is null ".
-                         "   and fde_type = 1 " .
-                         "   and obj_id = ? " .
-                         "   and fde_name = ? ",
-                         $$target{obj_id},
-                         uc($flag));
+   if(!incache($target,"FLAG_$flag")) {
+      if($flag eq "WIZARD") {
+         my $owner = owner_id($target);
+         $val = one_val($db,"select if(count(*) > 0,1,0) value " . 
+                            "  from flag flg, flag_definition fde " .
+                            " where flg.fde_flag_id = fde.fde_flag_id " .
+                            "   and atr_id is null ".
+                            "   and fde_type = 1 " .
+                            "   and obj_id = ? " .
+                            "   and fde_name = ? ",
+                            $owner,
+                            uc($flag));
+         # let owner cache object know its value was used for this object
+         $cache{$owner}->{FLAG_DEPENDANCY}->{$$target{obj_id}} = 1;
+      } else {
+         $val = one_val($db,"select if(count(*) > 0,1,0) value " . 
+                            "  from flag flg, flag_definition fde " .
+                            " where flg.fde_flag_id = fde.fde_flag_id " .
+                            "   and atr_id is null ".
+                            "   and fde_type = 1 " .
+                            "   and obj_id = ? " .
+                            "   and fde_name = ? ",
+                            $$target{obj_id},
+                            uc($flag));
+      }
+      set_cache($target,"FLAG_$flag",$val);
    }
+   return cache($target,"FLAG_$flag");
 }
 
 #
@@ -1546,12 +1725,20 @@ sub loc_obj
 {
    my $obj = obj(shift);
 
-   return fetch(one_val($db,
-                        "select con_source_id value " .
+   if(!incache($obj,"con_source_id")) {
+      my $val = one_val("select con_source_id value " .
                         "  from content " .
                         " where obj_id = ?",
                         $$obj{obj_id}
-                       ));
+                       );
+      set_cache($obj,"con_source_id",$val);
+   }
+
+   if(cache($obj,"con_source_id") eq undef) {
+      return undef;
+   } else {
+      return { obj_id => cache($obj,"con_source_id") };
+   }
 }
 
 sub loc
@@ -1586,13 +1773,11 @@ sub obj_ref
 sub obj_name
 {
    my ($self,$obj,$flag) = (obj(shift),obj(shift),shift);
-   
-#   $obj = fetch($obj) if(!defined $$obj{obj_name});
-   $obj = fetch($obj);
+
    if(controls($self,$obj) || $flag) {
-      return $$obj{obj_name} . "(#" . $$obj{obj_id} . flag_list($obj) . ")";
+      return name($obj) . "(#" . $$obj{obj_id} . flag_list($obj) . ")";
    } else {
-      return $$obj{obj_name};
+      return name($obj);
    }
 }
 
@@ -1651,6 +1836,18 @@ sub move
    if(hasflag($current,"ROOM")) {
       set($self,$prog,$current,"LAST_INHABITED",scalar localtime(),1);
    }
+
+   my $loc = loc($target);
+#   printf("move1: target = '%s'\n",$$target{obj_id});
+#   printf("move2: src    = '%s'\n",$loc);
+#   printf("move2: dest   = '%s'\n",$$dest{obj_id});
+
+   set_cache($target,"lcon");
+   set_cache($target,"con_source_id");
+   set_cache($loc,"lcon");
+   set_cache($loc,"con_source_id");
+   set_cache($dest,"lcon");
+   set_cache($dest,"con_source_id");
 
    # look up destination object
    # remove previous location record for object

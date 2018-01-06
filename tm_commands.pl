@@ -2,6 +2,7 @@
 
 
 use Text::Wrap;
+use Devel::Size qw(size total_size);
 
 delete @command{keys %command};
 delete @offline{keys %offline};
@@ -23,6 +24,8 @@ delete @honey{keys %honey};
 @honey{page}          = sub { return honey_page(@_);                     };
 @honey{help}          = sub { return honey_help(@_);                     };
 # ------------------------------------------------------------------------#
+@command{"\@perl"}  = { help => "Run a perl command",
+                         fun  => sub { return &cmd_perl(@_); }           };
 @command{"\@honey"}  = { help => "Put a user into the HoneyPot",
                          fun  => sub { return &cmd_honey(@_); }          };
 @command{say}        = { help => "Broadcast a message to everyone in the room",
@@ -179,6 +182,8 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_read(@_);}                    };
 @command{"\@compile"}= { help => "Reads various data for the MUSH",
                          fun  => sub { cmd_compile(@_);}                 };
+@command{"\@clean"}=   { help => "Cleans the Cache",
+                         fun  => sub { cmd_clean(@_);}                   };
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); },
@@ -279,6 +284,24 @@ sub cmd_find
                    ]
         );
    
+}
+
+sub cmd_perl
+{
+   my ($self,$prog,$txt) = @_;
+
+   if(hasflag($self,"WIZARD")) {
+      eval ( $txt );  
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Done." ],
+           );
+   } else {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Permission Denied." ],
+           );
+   }
 }
 
 #
@@ -1553,30 +1576,16 @@ sub cmd_send
     if(!hasflag($self,"WIZARD")) {
        return err($self,$prog,"Permission Denied.");
     } elsif($txt =~ /^\s*([^ ]+)\s*=/) {
-       my $hash = one($db,
-                        "select * " .
-                        "  from socket ".
-                        " where lower(sck_tag) = lower(?) ",
-                        $1
-                   );
+       my $sock = get_socket($1);
 
-       if($hash eq undef) {
+       if($sock eq undef) {
+          printf("# UNKNOWN SOCKET\n");
           necho(self   => $self,
                 prog   => $prog,
                 source => [ "Unknown socket '%s' requested",$1 ],
                );
-       } elsif(!defined @connected{$$hash{sck_socket}}) {
-          necho(self   => $self,
-                prog   => $prog,
-                source => [ "Socket '%s' has closed.",$1 ],
-               );
        } else {
-          my $sock=@{@connected{$$hash{sck_socket}}}{sock};
           my $txt = evaluate($self,$prog,$');
-#       necho(self   => $self,
-#             prog   => $prog,
-#             source => [ "\@send: '%s'", $txt ]
-#            );
           printf($sock "%s\n",evaluate($self,$prog,$'));
        }
     } else {
@@ -1769,11 +1778,12 @@ sub cmd_list
             );
        necho(self   => $self,
              prog   => $prog,
-             source => [ "   Attributes:  %s",$atr ]
+             source => [ "   Objects:     %s composed of %s items",
+                         scalar keys %$cache,$atr ]
             );
        necho(self   => $self,
              prog   => $prog,
-             source => [ "   Size:        %s bytes",$size]
+             source => [ "   Size:        %s bytes",total_size($cache) ]
             );
        necho(self   => $self,
              prog   => $prog,
@@ -1858,6 +1868,49 @@ sub cmd_list
    }
 }
 
+
+sub cmd_clean
+{
+   my ($self,$prog,$txt) = @_;
+   my $cache = cache_ref();
+   my $del =0;
+
+   for my $x (keys %$cache) {
+      if(ref($$cache{$x}) eq "HASH") {
+         for my $y (keys %{$$cache{$x}}) {
+            if(ref($$cache{$x}->{$y}) eq "HASH") {
+               if(defined $$cache{$x}->{$y}->{value} &&
+                  defined $$cache{$x}->{$y}->{ts}) {
+                  if(time() - $$cache{$x}->{$y}->{ts} > 3600) {
+#                    delete $$cache{$x}->{$y};
+                     $del++;
+                     remove_flag_cache($obj,"FLAG_WIZARD");
+                     printf(" * $x,$y = %s [WIZARD]\n",time() - 
+                           $$cache{$x}->{$y}->{ts});
+                  } else {
+#                     printf("   $x,$y = %s\n",time() - $$cache{$x}->{$y}->{ts});
+                  }
+               } else {
+                  for my $z (keys %{$$cache{$x}->{$y}}) {
+                     if(ref($$cache{$x}-{$y}->{$z}) eq "HASH") {
+                        if(defined $$cache{$x}->{$y}->{$z}->{value} &&
+                           defined $$cache{$x}->{$y}->{$z}->{ts} &&
+                           time() - $$cache{$x}->{$y}->{$z}->{ts} > 3600) {
+#                           delete $$cache{$x}->{$y}->{$z};
+                           $del++;
+                        }
+                     }
+                  }
+               }
+            }
+         }
+      }
+   }
+   necho(self   => $self,
+         prog   => $prog,
+         source  => [ "Cleared %d entries.", $del ]
+        );
+}
 sub cmd_destroy
 {
    my ($self,$prog,$txt) = @_;
@@ -1876,6 +1929,8 @@ sub cmd_destroy
    my $objname = obj_name($self,$target);
 
    sql($db,"delete from object where obj_id = ?",$$target{obj_id});
+   my $cache = cache_ref();
+   delete $$cache{$$target{obj_id}};
 
    if($$db{rows} != 1) {
       my_rollback;
@@ -1950,7 +2005,6 @@ sub cmd_think
          prog   => $prog,
          source => [ "%s", evaluate($self,$prog,$txt) ],
         );
-   printf("mushrun: finish -> %s\n",Time::HiRes::gettimeofday() - $start);
 }
 
 sub cmd_pemit
@@ -2246,8 +2300,7 @@ sub whisper
 {
    my ($self,$prog,$target,$msg) = @_;
 
-   my $obj = locate_object($self,$prog,$target,"LOCAL") ||
-
+   my $obj = locate_object($self,$prog,$target,"LOCAL");
    return err($self,$prog,"I don't see that here.") if $obj eq undef;
 
    if($msg =~ /^\s*:/) {
@@ -3489,7 +3542,6 @@ sub cmd_look
    } elsif(!($target = locate_object($self,$prog,evaluate($self,$prog,$txt)))) {
       return err($self,$prog,"I don't see that here.");
    }
-   printf("LOOK: '%s'\n",$$target{obj_id});
 
    $out = obj_name($self,$target);
    if(($desc = get($$target{obj_id},"DESCRIPTION")) && $desc ne undef) {

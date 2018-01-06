@@ -42,8 +42,8 @@ sub sql
 
 #   if($sql !~ /^insert into output/) {
 #      printf("SQL: '%s'\n",$sql);
+##      printf("     '%s'\n",code("short"));
 #   }
-#   printf("     '%s'\n",code("short"));
 
    #
    # clean up the sql a little

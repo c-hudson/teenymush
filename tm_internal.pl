@@ -245,7 +245,7 @@ sub handle_object_listener
    my $msg = sprintf($txt,@args);
    my $count;
 
-#   printf("handle_object_listener: CALLED ($$target{obj_id}:%s)\n",$msg);
+   printf("handle_object_listener: CALLED ($$target{obj_id}:%s)\n",$msg);
 #   printf("target: '%s' -> '%s'\n",$$target{hostname},$$target{raw});
 #    printf("handle_object_listen: '%s'\n",$msg);
 #    printf("%s\n",code("long"));
@@ -278,6 +278,7 @@ sub handle_object_listener
 #      $$hash{raw_enactor} = $$target{enactor};
 
       # determine %0 - %9
+      printf("LISTEN: '%s' -> '%s'\n",$$hash{cmd},$msg);
       if($$hash{cmd} ne $msg) {
          $$hash{cmd} =~ s/\*/\(.*\)/g;
          if($msg =~ /^$$hash{cmd}$/) {
@@ -299,12 +300,101 @@ sub handle_object_listener
    }
 }
 
+
+sub atr_case
+{
+   my ($obj,$atr) = (obj(shift),shift);
+
+   if(ref($obj) ne "HASH" || 
+     !defined $$obj{obj_id} || 
+     !defined $$obj{atr_name}) {
+     return undef;
+   } elsif(!incache_atrflag($obj,$atr,"CASE")) {
+      my $val = one_val("select count(*) value " .
+                        "  from attribute atr, " .
+                        "       flag flg, " .
+                        "       flag_definition " .
+                        " where atr.obj_id = flg.obj_id ".
+                        "   and fde.fde_flag_id = flg.fde_flag_id ".
+                        "   and fde_name = 'CASE' ".
+                        "   and fde_type = 2 ".
+                        "   and atr_name = ? " . 
+                        "   and atr.obj_id = ? ",
+                        $$obj{obj_id},
+                        $$obj{atr_name}
+                       );
+      set_cache_atrflag($obj,$atr,"CASE",$val);
+   }
+   return cache_atrflag($obj,$atr,"CASE");
+}
+
+sub latr_regexp
+{
+   my $obj = shift;
+   my @result;
+
+   if(!incache($obj,"latr_regexp")) {
+      for my $atr (@{sql("select atr_regexp, atr_value ".
+                         "  from attribute atr ".
+                         " where obj_id = ? ".
+                         "   and atr_regexp is not null ".
+                         "   and atr_pattern_type = 2 ",
+                         $$obj{obj_id}
+                        )
+                   }) {
+         push(@result, { atr_regexp => $$atr{atr_regexp},
+                         atr_value  => $$atr{atr_value}
+                       }
+             );
+      }
+      set_cache($obj,"latr_regexp",\@result);
+   }
+
+   return @{cache($obj,"latr_regexp")};
+}
+
+sub handle_listener
+{
+   my ($self,$prog,$runas,$txt,@args) = @_;
+   my $match = 0;
+
+   my $msg = sprintf($txt,@args);
+   for my $obj (lcon(loc($self))) {
+
+      # don't listen to one self
+      next if $$obj{obj_id} eq $$self{obj_id};
+
+      for my $hash (latr_regexp($obj)) {
+         if(atr_case($obj,$hash)) {
+            if($msg =~ /$$hash{atr_regexp}/) {
+               mushrun(self   => $self,
+                       runas => $obj,
+                       cmd    => $$hash{atr_value},
+                       wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
+                       source => 0,
+                      );
+                $match=1;
+            }
+         } elsif($msg =~ /$$hash{atr_regexp}/i) {
+            mushrun(self   => $self,
+                    runas => $obj,
+                    cmd    => $$hash{atr_value},
+                    wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
+                    source => 0,
+                   );
+             $match=1;
+         }
+      }
+   }
+   return $match;
+}
+
 #
 # handle_listener
 #    handle listening objects and the listener flag. This allows objects
 #    to listen via the "^pattern:mush command".
 #
-sub handle_listener
+sub handle_listener_old
 {
    my ($self,$prog,$runas,$txt,@args) = @_;
    my $match = 0;
@@ -641,7 +731,7 @@ sub necho
                           );
             }
          }
-#         handle_listener($arg{self},$arg{prog},$target,$fmt,@$array);
+         handle_listener($arg{self},$arg{prog},$target,$fmt,@$array);
 
       }
    }
@@ -862,7 +952,7 @@ sub loggedin
          return  @{@connected{$$target{sock}}}{loggedin};
       } else {
          my $result = one_val($db,
-                              "select count(*) value from socket " .
+                              "select count(*) value frOM socket " .
                               " where obj_id = ? ",
                               $$target{obj_id}
                              );
@@ -899,6 +989,34 @@ sub cache
 
    $cache{$$obj{obj_id}}->{$item}->{ts} = time();
    return $cache{$$obj{obj_id}}->{$item}->{value};
+}
+
+sub incache_atrflag
+{
+   my ($obj,$atr,$flag) = (obj(shift),shift,shift);
+
+   return undef if(!defined $cache{$$obj{obj_id}});
+   return (defined $cache{$$obj{obj_id}}->{$atr}->{$flag}->{value}) ? 1 : 0;
+}
+
+sub set_cache_atrflag
+{
+   my ($obj,$atr,$flag,$val) = (obj(shift),shift,shift,shift);
+
+   if($val eq undef) {
+      delete $cache{$$obj{obj_id}}->{$atr}->{$flag};
+   } else {
+      $cache{$$obj{obj_id}}->{$atr}->{$flag}->{ts} = time();
+      $cache{$$obj{obj_id}}->{$atr}->{$flag}->{value} = $val;
+   }
+}
+
+sub cache_atrflag
+{
+   my ($obj,$atr,$flag) = (obj(shift),shift,shift);
+
+   $cache{$$obj{obj_id}}->{$atr}->{$flag}->{ts} = time();
+   return $cache{$$obj{obj_id}}->{$atr}->{$flag}->{value}
 }
 
 sub flag_list
@@ -944,34 +1062,39 @@ sub valid_dbref
                   $$id{obj_id}) || return 0;
 }
 
+#
+# owner
+#    Return the owner of an object. Players own themselves for coding
+#    purposes but are displayed as being owned by #1.
+#
 sub owner
 {
    my $object = obj(shift);
+   my $owner;
 
-   if(hasflag($object,"PLAYER")) {            # players are owned by god,
-      return fetch($object);                # but really they own themselves
-   } elsif(defined $$object{obj_owner}) {
-      return fetch($$object{obj_owner});
-   } else {
-      my $child = fetch($$object{obj_id});
-      return fetch($$child{obj_owner});
+   if(!incache($$object{obj_id},"OWNER")) {
+      if(hasflag($$object{obj_id},"PLAYER")) {
+         $owner = $$object{obj_id};
+      } else { 
+         $owner = one_val("select obj_owner value" .
+                          "  from object" .
+                          " where obj_id = ?",
+                          $$object{obj_id}
+                         );
+      }
+      set_cache($$object{obj_id},"OWNER",$owner);
    }
+   return obj(cache($$object{obj_id},"OWNER"));
 }
 
 sub owner_id
 {
+
    my $object = obj(shift);
 
-   if(hasflag($object,"PLAYER")) {                # players are owned by god,
-      return $$object{obj_id};               # but really they own themselves
-   } elsif(defined $$object{obj_owner}) {
-      return $$object{obj_owner};
-   } else {
-      return one_val("select obj_owner value " .
-                     "  from object " . 
-                     " where obj_id = ?",
-                     $$object{obj_id});
-   }
+   my $owner = owner($object);
+   return $owner if $owner eq undef;
+   return $$owner{obj_id};
 }
 
 sub locate_player
@@ -1137,7 +1260,8 @@ sub remove_flag_cache
    set_cache($object,"FLAG_LIST_1");
 
    if($flag eq "WIZARD") {
-      for my $obj (keys %{$cache{$$object{obj_id}}->{FLAG_DEPENDANCY}}) {
+      my $owner = owner($object);
+      for my $obj (keys %{$cache{$owner}->{FLAG_DEPENDANCY}}) {
          delete @cache{$obj};
       }
       delete $cache{$$object{obj_id}}->{FLAG_DEPENDANCY};
@@ -1328,6 +1452,10 @@ sub set_atr_flag
               $flag
              );
           my_commit;
+
+          if($flag eq "CASE") {
+             set_cache_atrflag($object,$atr,"CASE");
+          }
           return "Flag Removed.";
        } elsif($remove) {
           return "Flag not set.";
@@ -1345,6 +1473,9 @@ sub set_atr_flag
               $atr_id);
           my_commit;
           return "#-1 Flag note removed [Internal Error]" if($$db{rows} != 1);
+          if($flag eq "CASE") {
+             set_cache_atrflag($object,$atr,"CASE");
+          }
           return "Set.";
        }
     } else {
@@ -1456,7 +1587,6 @@ sub create_object
 
    # check quota
    if($type ne "PLAYER" && quota_left($$user{obj_id}) <= 0) {
-      printf("No quota, no create\n");
       return 0;
    }
   
@@ -1688,6 +1818,7 @@ sub set
           $$user{obj_name}
          );
 
+      set_cache($obj,"latr_regexp");
       if($$obj{obj_id} eq 0 && $attribute =~ /^conf./i) {
          @info{$attribute} = $value;
       }

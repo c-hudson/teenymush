@@ -39,7 +39,7 @@ sub mush_command
                        @info{"conf.master"}
                       )
                 }) {
-      if($cmd =~ /(?i)$$hash{atr_regexp}/i) {
+      if($cmd =~ /$$hash{atr_regexp}/i) {
          $$hash{txt} =~ s/\r\s*|\n\s*//g;
          mushrun(self   => $self,
                  prog   => $prog,
@@ -321,7 +321,7 @@ sub spin
 
                                                 # stop at 7 milliseconds
             if(Time::HiRes::gettimeofday() - $start >= 1) {
-                printf("Time slice ran long, exiting correctly [%d cmds]\n",
+                printf("   Time slice ran long, exiting correctly [%d cmds]\n",
                        $count);
                 ualarm(0);
                return;
@@ -347,7 +347,7 @@ sub spin
 #   ualarm(0);                                                 # cancel alarm
 #   printf("Count: $count\n");
 #   printf("Spin: finish -> $count\n");
-#   printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count >= 1;
+   printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count >= 1;
 #   printf("      total: '%s'\n",$total) if $count > 1;
 
 
@@ -431,7 +431,7 @@ sub spin_run
    } elsif($$prog{hint} eq "INTERNAL" || $$prog{hint} eq "WEB") {
       $hash = \%command;
 #      delete @$prog{hint};
-   } elsif(!loggedin($self) && hasflag($self,"PLAYER")) { 
+   } elsif(hasflag($self,"PLAYER") && !loggedin($self)) {
       $hash = \%offline;                                     # offline users
    } elsif(defined $$self{site_restriction} && $$self{site_restriction} == 69) {
       $hash = \%honey;                                   # honeypotted users

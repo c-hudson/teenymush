@@ -5,7 +5,7 @@ use Net::WebSocket::Server;   # See https://metacpan.org/pod/Net::WebSocket::Ser
 sub websock_init
 {
    $websock = IO::Socket::INET->new( Listen    => 5,
-                                     LocalPort => @info{websocket},
+                                     LocalPort => @info{"conf.websocket"},
                                      Proto     => 'tcp',
                                      Domain    => AF_INET,
                                      ReuseAddr => 1,

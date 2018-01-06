@@ -170,7 +170,7 @@ sub range
    my ($emday,$emon,$eyear) = (localtime($end))[3,4,5];
    my ($cmday,$cmon,$cyear) = (localtime($start))[3,4,5];
 
-   if($emday == $cmday && $emon == $cmon && $$eyear == $$cyear) {
+   if($emday == $cmday && $emon == $cmon && $eyear == $cyear) {
       push(@result,$start);
    }
 
@@ -1272,19 +1272,21 @@ sub fun_substr
 }
 
 #
-# socket_Exists
-#    Check the database to see if the named socket exists or not
+# get_socket
+#    Return the socket associated for a named mush socket
 #    
-sub socket_exists
+sub get_socket
 {
-   my $txt = shift;
+   my $txt = trim(uc(shift));
 
-   my $con = one_val("select count(*) value " .
-                     "  from socket " .
-                     " where upper(sck_tag) = upper(trim(?))",
-                     $txt
-                    );
-   return ($con == 0) ? 0 : 1;
+   for my $key (keys %connected) {
+      if(defined $connected{$key}->{sock} &&
+         @connected{$key}->{socket} eq $txt) {
+         return @connected{$key}->{sock};
+      }
+   }
+
+   return undef;
 }
 
 #
@@ -1311,7 +1313,7 @@ sub fun_input
     # check if there is any buffered data and return it.
     # if not, the socket could have closed
     if(!defined $$input{buffer} || $#{$$input{buffer}} == -1) {
-       if(socket_exists(uc($1))) {
+       if(get_socket($1) ne undef) {
           return "#-1 No data found";                  # wait for more data?
        } else {
           return "#-1 Connection closed";                    # socket closed

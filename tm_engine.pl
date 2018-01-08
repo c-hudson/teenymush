@@ -40,7 +40,7 @@ sub mush_command
                       )
                 }) {
       if($cmd =~ /$$hash{atr_regexp}/i) {
-         $$hash{txt} =~ s/\r\s*|\n\s*//g;
+         $$hash{atr_value} =~ s/\r\s*|\n\s*//g;
          mushrun(self   => $self,
                  prog   => $prog,
                  runas  => $hash,
@@ -347,7 +347,7 @@ sub spin
 #   ualarm(0);                                                 # cancel alarm
 #   printf("Count: $count\n");
 #   printf("Spin: finish -> $count\n");
-   printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count >= 1;
+#   printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count >= 1;
 #   printf("      total: '%s'\n",$total) if $count > 1;
 
 

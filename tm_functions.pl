@@ -998,8 +998,7 @@ sub fun_name
    if($result eq undef) {
       return "#-1";
    } else {
-#     printf("NAME(%s) = '%s'\n",@_[0],$$result{obj_name});
-      return $$result{obj_name};
+     return name($result);
    }
 }
 
@@ -1645,6 +1644,9 @@ sub script
 {
    my ($fun,$args,$result) = @_;
 
+#   if($result =~ /^\s*$/) {
+#      printf("FUN: '%s(%s) returned undef\n",$fun,$args);
+#   }
    return;
    if($args !~ /(v|u|get|r)\(/i && $fun !~ /^(v|u|get|r)$/) {
       printf("think [switch(%s(%s),%s,,{WRONG %s(%s) -> %s})]\n",
@@ -1664,7 +1666,7 @@ sub evaluate
    #
    # handle string containing a single non []'ed function
    #
-   if($txt =~ /^([a-zA-Z_]+)\((.*)\)$/) {
+   if($txt =~ /^\s*([a-zA-Z_]+)\((.*)\)\s*$/s) {
       my $fun = fun_lookup($self,$prog,$1,$txt);
       my $result = parse_function($self,$prog,$fun,"$2)",2);
       if($result ne undef) {
@@ -1684,7 +1686,7 @@ sub evaluate
    #
    # pick functions out of string when enclosed in []'s 
    #
-   while($txt =~ /([\\]*)\[([a-zA-Z_]+)\(/) {
+   while($txt =~ /([\\]*)\[([a-zA-Z_]+)\(/s) {
       my ($esc,$before,$after,$unmod) = ($1,$`,$',$2);
       my $fun = fun_lookup($self,$prog,$unmod,$txt);
       $out .= evaluate_substitutions($self,$prog,$before);

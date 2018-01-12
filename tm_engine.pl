@@ -12,6 +12,14 @@
 
 use Time::HiRes "ualarm";
 
+sub single_line
+{
+   my $txt = shift;
+
+   $txt =~ s/\r\s*|\n\s*//g;
+   return $txt;
+}
+
 sub mush_command
 {
    my ($self,$prog,$runas,$cmd) = @_;
@@ -39,13 +47,13 @@ sub mush_command
                        @info{"conf.master"}
                       )
                 }) {
+#      $$hash{atr_value} =~ s/\r\s*|\n\s*//g;
       if($cmd =~ /$$hash{atr_regexp}/i) {
-         $$hash{atr_value} =~ s/\r\s*|\n\s*//g;
          mushrun(self   => $self,
                  prog   => $prog,
                  runas  => $hash,
                  source => 0,
-                 cmd    => $$hash{atr_value},
+                 cmd    => single_line($$hash{atr_value}),
                  wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ],
                  from   => "ATTR"
                 );
@@ -347,7 +355,7 @@ sub spin
 #   ualarm(0);                                                 # cancel alarm
 #   printf("Count: $count\n");
 #   printf("Spin: finish -> $count\n");
-#   printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count >= 1;
+   printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count >= 1;
 #   printf("      total: '%s'\n",$total) if $count > 1;
 
 

@@ -1875,28 +1875,34 @@ sub cmd_clean
    my $cache = cache_ref();
    my $del =0;
 
-   for my $x (keys %$cache) {
+   if(!hasflag($self,"WIZARD")) {
+      return err($self,$prog,"Permission Denied.");
+   }
+
+   my $start = total_size($cache);
+
+   delete $$cache{keys %$cache};
+
+   for my $x (keys %$cache) {                                       # object
       if(ref($$cache{$x}) eq "HASH") {
-         for my $y (keys %{$$cache{$x}}) {
+         for my $y (keys %{$$cache{$x}}) {                       # attribute
             if(ref($$cache{$x}->{$y}) eq "HASH") {
                if(defined $$cache{$x}->{$y}->{value} &&
                   defined $$cache{$x}->{$y}->{ts}) {
                   if(time() - $$cache{$x}->{$y}->{ts} > 3600) {
-#                    delete $$cache{$x}->{$y};
-                     $del++;
-                     remove_flag_cache($obj,"FLAG_WIZARD");
-                     printf(" * $x,$y = %s [WIZARD]\n",time() - 
-                           $$cache{$x}->{$y}->{ts});
-                  } else {
-#                     printf("   $x,$y = %s\n",time() - $$cache{$x}->{$y}->{ts});
+                    delete $$cache{$x}->{$y};
+                    $del++;
+                    if($y eq "FLAG_WIZARD") {
+                       remove_flag_cache($obj,"FLAG_WIZARD");
+                    }
                   }
                } else {
-                  for my $z (keys %{$$cache{$x}->{$y}}) {
+                  for my $z (keys %{$$cache{$x}->{$y}}) {         # atr_flag
                      if(ref($$cache{$x}-{$y}->{$z}) eq "HASH") {
                         if(defined $$cache{$x}->{$y}->{$z}->{value} &&
                            defined $$cache{$x}->{$y}->{$z}->{ts} &&
                            time() - $$cache{$x}->{$y}->{$z}->{ts} > 3600) {
-#                           delete $$cache{$x}->{$y}->{$z};
+                           delete $$cache{$x}->{$y}->{$z};
                            $del++;
                         }
                      }
@@ -1908,7 +1914,8 @@ sub cmd_clean
    }
    necho(self   => $self,
          prog   => $prog,
-         source  => [ "Cleared %d entries.", $del ]
+         source  => [ "Cleared %d entries freeing %d bytes.", $del,
+                      ($start - total_size($cache)) ],
         );
 }
 sub cmd_destroy
@@ -1931,6 +1938,10 @@ sub cmd_destroy
    sql($db,"delete from object where obj_id = ?",$$target{obj_id});
    my $cache = cache_ref();
    delete $$cache{$$target{obj_id}};
+
+   if(hasflag($target,"EXIT")) {
+      delete $$cache{loc($target)}->{lexits};
+   }
 
    if($$db{rows} != 1) {
       my_rollback;

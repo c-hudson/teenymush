@@ -481,9 +481,14 @@ sub lcon
    if(!incache($object,"lcon")) {
        my @list;
        for my $obj (@{sql($db,
-                          "select obj_id " .
-                          "  from content con " . 
-                          " where con_source_id = ? ",
+                          "select con.obj_id " .
+                          "  from content con, " . 
+                          "       flag flg, ".
+                          "       flag_definition fde " .
+                          " where con.obj_id = flg.obj_id " .
+                          "   and flg.fde_flag_id = fde.fde_flag_id ".
+                          "   and fde.fde_name in ('PLAYER','OBJECT') ".
+                          "   and con_source_id = ? ",
                           $$object{obj_id},
                     )}) {
           push(@list,{ obj_id => $$obj{obj_id}});
@@ -491,6 +496,31 @@ sub lcon
        set_cache($object,"lcon",\@list);
    }
    return @{ cache($object,"lcon") };
+}
+
+sub lexits
+{
+   my $object = obj(shift);
+   my @result;
+
+   if(!incache($object,"lexits")) {
+       my @list;
+       for my $obj (@{sql($db,
+                          "select con.obj_id " .
+                          "  from content con, " . 
+                          "       flag flg, ".
+                          "       flag_definition fde " .
+                          " where con.obj_id = flg.obj_id " .
+                          "   and flg.fde_flag_id = fde.fde_flag_id ".
+                          "   and fde.fde_name = 'EXIT' ".
+                          "   and con_source_id = ? ",
+                          $$object{obj_id},
+                    )}) {
+          push(@list,{ obj_id => $$obj{obj_id}});
+       }
+       set_cache($object,"lexits",\@list);
+   }
+   return @{ cache($object,"lexits") };
 }
 
 sub filter_chars
@@ -1207,6 +1237,42 @@ sub locate_object
       }
    }
    return ($exact ne undef) ? $exact : $indirect;
+}
+
+sub locate_exit_new
+{
+   my ($self,$name,$type) = @_;
+   my $partial;
+
+   if($name =~ /^\s*#(\d+)\s*$/) {                                   # dbref
+      if(hasflag($name,"EXIT")) {
+         obj($name);                                        # good exit dbref
+      } else {
+         return undef;                                       # non exit dbref
+      }
+   } elsif($name =~ /^\s*home\s*$/i) { 
+      return home($self);
+   }
+
+   for my $exit (lexits(loc($self))) {      # search all exits in current loc
+      for my $item (split(';',name($exit))) {             # search exit alias
+         if(lc($item) eq lc($name)) {                           # exact match
+            return obj($exit);
+         } elsif(substr(lc($item),0,length($name)) eq lc($name)) { # partial?
+            if($partial ne undef) {                   # more then one partial
+               return undef;                                       # - bail -
+            } else {
+               $partial = $item;                        # one partial, so far
+            }
+         }
+      }
+   }
+
+   if($type eq "EXACT") {                              # only exact matches
+      return undef;
+   } else {
+      return $partial;
+   }
 }
 
 sub locate_exit

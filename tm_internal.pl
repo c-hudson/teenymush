@@ -516,7 +516,7 @@ sub lexits
                           "   and con_source_id = ? ",
                           $$object{obj_id},
                     )}) {
-          push(@list,{ obj_id => $$obj{obj_id}});
+          push(@list,obj($$obj{obj_id}));
        }
        set_cache($object,"lexits",\@list);
    }
@@ -1239,10 +1239,12 @@ sub locate_object
    return ($exact ne undef) ? $exact : $indirect;
 }
 
-sub locate_exit_new
+sub locate_exit
 {
    my ($self,$name,$type) = @_;
    my $partial;
+
+   printf("locate_exit: called\n");
 
    if($name =~ /^\s*#(\d+)\s*$/) {                                   # dbref
       if(hasflag($name,"EXIT")) {
@@ -1250,8 +1252,6 @@ sub locate_exit_new
       } else {
          return undef;                                       # non exit dbref
       }
-   } elsif($name =~ /^\s*home\s*$/i) { 
-      return home($self);
    }
 
    for my $exit (lexits(loc($self))) {      # search all exits in current loc
@@ -1275,7 +1275,7 @@ sub locate_exit_new
    }
 }
 
-sub locate_exit
+sub locate_exit_old
 {
    my ($name,$type) = @_;
    my @partial;
@@ -1916,6 +1916,52 @@ sub get
    } else {
       return undef;
    }
+}
+
+sub dest
+{
+    my $obj = obj(shift);
+
+   if(!incache($obj,"con_dest_id")) {
+      my $val = one_val("select con_dest_id value ".
+                        "  from content ".
+                        " where obj_id = ?",
+                        $$obj{obj_id}
+                       );
+      return undef if $val eq undef;
+      set_cache($obj,"con_dest_id",$val);
+   }
+   return cache($obj,"con_dest_id");
+}
+
+sub home
+{
+   my $obj = obj(shift);
+
+   if(!incache($obj,"home")) {
+      my $val = one_val("select obj_home value".
+                        "  from object " .
+                        " where obj_id = ?",
+                        $$obj{obj_id}
+                       );
+      if($val eq undef) {
+         if(defined @info{"conf.starting_room"}) {
+            return @info{"conf.starting_room"};
+         } else {                          # default to first room created
+            $val = one_val("  select obj.obj_id value " .
+                           "    from object obj, " .
+                           "         flag flg, " .
+                           "         flag_definition fde ".
+                           "   where obj.obj_id = flg.obj_id " .
+                           "     and flg.fde_flag_id = fde.fde_flag_id ".
+                           "     and fde.fde_name = 'ROOM' " .
+                           "order by obj.obj_id limit 1"
+                          );
+         }
+      }
+      set_cache($obj,"home",$val);
+   }
+   return cache($obj,"home");
 }
 
 sub loc_obj

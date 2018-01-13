@@ -92,6 +92,7 @@ my %fun =
    run       => sub { return &fun_run(@_);                              },
    graph     => sub { return &fun_graph(@_);                            },
    lexits    => sub { return &fun_lexits(@_);                           },
+   home      => sub { return &fun_home(@_);                             },
    decode_entities => sub { return &fun_de(@_);                         },
 );
 
@@ -453,9 +454,22 @@ sub fun_lcstr
    my ($self,$prog) = (shift,shift);
 
    good_args($#_,1) ||
-     return "#-1 FUNCTION (LCSTR) EXPECTS 1 ARGUEMENT ($#_)";
+     return "#-1 FUNCTION (LCSTR) EXPECTS 1 ARGUMENT ($#_)";
 
     return lc(shift);
+}
+
+sub fun_home
+{
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,0,1) ||
+      return "#-1 FUNCTION (HOME) EXPECT 0 OR 1 ARGUMENT";
+
+   my $target = locate_object($self,$prog,shift);
+   return "#-1 NOT FOUND" if($target eq undef);
+
+   return "#" . home($target);
 }
 
 #
@@ -466,7 +480,7 @@ sub fun_ucstr
    my ($self,$prog) = (shift,shift);
 
     good_args($#_,1) ||
-      return "#-1 FUNCTION (UCSTR) EXPECTS 1 ARGUEMENT ($#_)";
+      return "#-1 FUNCTION (UCSTR) EXPECTS 1 ARGUMENT ($#_)";
 
     return uc(shift);
 }
@@ -479,7 +493,7 @@ sub fun_capstr
    my ($self,$prog) = (shift,shift);
 
    good_args($#_,1) ||
-     return "#-1 FUNCTION (SQUISH) EXPECTS 1 ARGUEMENT ($#_)";
+     return "#-1 FUNCTION (SQUISH) EXPECTS 1 ARGUMENT ($#_)";
 
     return ucfirst(shift);
 }
@@ -495,7 +509,7 @@ sub fun_squish
    my $txt = @_[0];
 
    good_args($#_,1) ||
-     return "#-1 FUNCTION (SQUISH) EXPECTS 1 ARGUEMENT ($#_)";
+     return "#-1 FUNCTION (SQUISH) EXPECTS 1 ARGUMENT ($#_)";
 
    $txt =~ s/^\s+|\s+$//g;
    $txt =~ s/\s+/ /g;
@@ -507,7 +521,7 @@ sub fun_eq
    my ($self,$prog) = (shift,shift);
 
    good_args($#_,2) ||
-      return "#-1 FUNCTION (EQ) EXPECTS 2 ARGUEMENTS";
+      return "#-1 FUNCTION (EQ) EXPECTS 2 ARGUMENTS";
 
    my ($one,$two) = @_;
 
@@ -536,7 +550,7 @@ sub fun_hasflag
    my ($self,$prog) = (shift,shift);
 
    good_args($#_,2) ||
-      return "#-1 FUNCTION (HASFLAG) EXPECTS 2 ARGUEMENTS";
+      return "#-1 FUNCTION (HASFLAG) EXPECTS 2 ARGUMENTS";
 
    return 0 if($_[1] =~ /^s*(nospoof|haven|dark|royal|royalty)\s*$/i);
 
@@ -559,7 +573,7 @@ sub fun_gt
    my ($self,$prog) = (shift,shift);
 
    good_args($#_,2) ||
-      return "#-1 FUNCTION (GT) EXPECTS 2 ARGUEMENTS";
+      return "#-1 FUNCTION (GT) EXPECTS 2 ARGUMENTS";
    return (@_[0] > @_[1]) ? 1 : 0;
 }
 
@@ -568,7 +582,7 @@ sub fun_gte
    my ($self,$prog) = (shift,shift);
 
    good_args($#_,2) ||
-      return "#-1 FUNCTION (GTE) EXPECTS 2 ARGUEMENTS";
+      return "#-1 FUNCTION (GTE) EXPECTS 2 ARGUMENTS";
    return (@_[0] >= @_[1]) ? 1 : 0;
 }
 
@@ -577,7 +591,7 @@ sub fun_lt
    my ($self,$prog) = (shift,shift);
 
    good_args($#_,2) ||
-      return "#-1 FUNCTION (LT) EXPECTS 2 ARGUEMENTS";
+      return "#-1 FUNCTION (LT) EXPECTS 2 ARGUMENTS";
    return (@_[0] < @_[1]) ? 1 : 0;
 }
 
@@ -586,7 +600,7 @@ sub fun_lte
    my ($self,$prog) = (shift,shift);
 
    good_args($#_,2) ||
-      return "#-1 FUNCTION (LT) EXPECTS 2 ARGUEMENTS";
+      return "#-1 FUNCTION (LT) EXPECTS 2 ARGUMENTS";
    return (@_[0] <= @_[1]) ? 1 : 0;
 }
 
@@ -606,7 +620,7 @@ sub fun_isnum
    my ($self,$prog) = (shift,shift);
 
    good_args($#_,1) ||
-      return "#-1 FUNCTION (ISNUM) EXPECTS 1 ARGUEMENT";
+      return "#-1 FUNCTION (ISNUM) EXPECTS 1 ARGUMENT";
 
    return looks_like_number($_[0]) ? 1 : 0;
 }
@@ -616,7 +630,7 @@ sub fun_lnum
    my ($self,$prog) = (shift,shift);
 
    good_args($#_,1) ||
-      return "#-1 FUNCTION (LNUM) EXPECTS 1 ARGUEMENT";
+      return "#-1 FUNCTION (LNUM) EXPECTS 1 ARGUMENT";
 
    return "#-1 ARGUMENT MUST BE NUMBER" if(!looks_like_number($_[0]));
 
@@ -638,7 +652,7 @@ sub fun_not
    my ($self,$prog) = (shift,shift);
 
    good_args($#_,1) ||
-      return "#-1 FUNCTION (NOT) EXPECTS 1 ARGUEMENTS";
+      return "#-1 FUNCTION (NOT) EXPECTS 1 ARGUMENTS";
 
    return (! $_[0] ) ? 1 : 0;
 }
@@ -1100,7 +1114,7 @@ sub fun_setq
    my ($register,$value) = @_;
 
    good_args($#_,2) ||
-      return "#-1 FUNCTION (SETQ) EXPECTS 2 ARGUEMENTS";
+      return "#-1 FUNCTION (SETQ) EXPECTS 2 ARGUMENTS";
 
    $register =~ s/^\s+|\s+$//g;
    $value =~ s/^\s+|\s+$//g;
@@ -1117,7 +1131,7 @@ sub fun_r
    my ($register) = @_;
 
    good_args($#_,1) ||
-      return "#-1 FUNCTION (R) EXPECTS 1 ARGUEMENTS";
+      return "#-1 FUNCTION (R) EXPECTS 1 ARGUMENTS";
 
    $register =~ s/^\s+|\s+$//g;
    
@@ -1160,7 +1174,7 @@ sub fun_remove
    my (%remove, @result);
 
    good_args($#_,2,3) ||
-      return "#-1 FUNCTION (REMOVE) EXPECTS 2 OR 3 ARGUEMENTS";
+      return "#-1 FUNCTION (REMOVE) EXPECTS 2 OR 3 ARGUMENTS";
 
    if($delim eq undef || $delim eq " ") {
       $list =~ s/^\s+|\s+$//g;

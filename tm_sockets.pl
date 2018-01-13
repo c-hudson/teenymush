@@ -86,7 +86,7 @@ sub lookup_command
          return ($match,trim($txt));
       } elsif($$user{site_restriction} == 69) {
          return ('huh',trim($txt));
-      } elsif($txt =~ /^\s*$/ && $type && locate_exit($cmd)) {  # exit match
+      } elsif($txt =~ /^\s*$/ && $type && locate_exit($self,$cmd)) {  # exit?
          return ("go",$cmd);
       } elsif(mush_command($self,$hash,trim($cmd . " " . $txt,1))) { #mush cmd
          return ("\@\@",$cmd . " " . $txt);    

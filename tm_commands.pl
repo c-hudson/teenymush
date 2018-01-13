@@ -2472,7 +2472,7 @@ sub cmd_last
 sub cmd_go
 {
    my ($self,$prog,$txt) = @_;
-   my ($hash,$dest);
+   my ($exit ,$dest);
 
    $txt =~ s/^\s+|\s+$//g;
 
@@ -2486,28 +2486,29 @@ sub cmd_go
             room2  => [ $self, "%s has left.",name($self) ],
            );
 
-      $dest = one("select obj2.* " .
-                  "  from object obj1, " .
-                  "       object obj2 " . 
-                  " where obj1.obj_home = obj2.obj_id " .
-                  "   and obj1.obj_id = ? " ,
-                  $$self{obj_id});
+      $dest = home($self);
 
-      # default to room #0
-      $dest = fetch(0) if($dest eq undef || !defined $$dest{obj_id});
+      necho(self   => $self,
+            prog   => $prog,
+            room   => [ $self, "%s goes home.", name($self) ],
+            room2  => [ $self, "%s has left.",name($self) ],
+           );
 
    } else {
       # find the exit to go through
-      $hash = locate_exit($txt) ||
+      $exit = locate_exit($self,$txt) ||
          return err($self,$prog,"You can't go that way.");
+ 
+      $dest = dest($exit);
   
       # grab the destination object
-      $dest = fetch($$hash{con_dest_id}) ||
+      if(dest($exit) eq undef) {
          return err($self,$prog,"That exit does not go anywhere");
+      }
       necho(self   => $self,
             prog   => $prog,
             room   => [ $self, "%s goes %s.",name($self),
-                        first($$hash{obj_name}) 
+                        first(name($exit))
                       ],
             room2  => [ $self, "%s has left.",name($self) ],
            );
@@ -2927,7 +2928,7 @@ sub cmd_dig
    }
 
 
-   if($in ne undef && locate_exit($in,"EXACT")) {
+   if($in ne undef && locate_exit($self,$in,"EXACT")) {
       return err($self,$prog,"Exit '%s' already exists in this location",$in);
    }
 
@@ -2998,7 +2999,7 @@ sub cmd_open
       return err($self,$prog,"You are out of QUOTA to create objects");
    }
 
-   !locate_exit($exit,"EXACT") ||
+   !locate_exit($self,$exit,"EXACT") ||
       return err($self,$prog,"Exit '%s' already exists in this location",$exit);
 
    my $loc = loc($self) ||

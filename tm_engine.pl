@@ -466,7 +466,7 @@ sub spin_run
                    \%switch,
                    1
                   );
-   } elsif(locate_exit($$command{cmd})) {            # handle exit as command
+   } elsif(locate_exit($self,$$command{cmd})) {        # handle exit as command
       return &{@{$$hash{"go"}}{fun}}($$command{runas},$prog,$$command{cmd});
    } elsif(mush_command($self,$prog,$$command{runas},$$command{cmd})) {
       return 1;                                   # mush_command runs command

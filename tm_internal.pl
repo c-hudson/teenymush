@@ -8,7 +8,7 @@ use IO::Socket;
 use Time::Local;
 use Carp;
 
-my %cache;
+# my %cache;
 
 my %months = (
    jan => 1, feb => 2, mar => 3, apr => 4, may => 5, jun => 6,
@@ -330,15 +330,15 @@ sub atr_case
 
 sub latr_regexp
 {
-   my $obj = shift;
+   my ($obj,$type) = @_;
    my @result;
 
-   if(!incache($obj,"latr_regexp")) {
+   if(!incache($obj,"latr_regexp_$type")) {
       for my $atr (@{sql("select atr_regexp, atr_value ".
                          "  from attribute atr ".
                          " where obj_id = ? ".
                          "   and atr_regexp is not null ".
-                         "   and atr_pattern_type = 2 ",
+                         "   and atr_pattern_type = $type ",
                          $$obj{obj_id}
                         )
                    }) {
@@ -347,10 +347,10 @@ sub latr_regexp
                        }
              );
       }
-      set_cache($obj,"latr_regexp",\@result);
+      set_cache($obj,"latr_regexp_$type",\@result);
    }
 
-   return @{cache($obj,"latr_regexp")};
+   return @{cache($obj,"latr_regexp_$type")};
 }
 
 sub handle_listener
@@ -364,7 +364,7 @@ sub handle_listener
       # don't listen to one self
       next if $$obj{obj_id} eq $$self{obj_id};
 
-      for my $hash (latr_regexp($obj)) {
+      for my $hash (latr_regexp($obj,2)) {
          if(atr_case($obj,$hash)) {
             if($msg =~ /$$hash{atr_regexp}/) {
                mushrun(self   => $self,
@@ -1244,8 +1244,6 @@ sub locate_exit
    my ($self,$name,$type) = @_;
    my $partial;
 
-   printf("locate_exit: called\n");
-
    if($name =~ /^\s*#(\d+)\s*$/) {                                   # dbref
       if(hasflag($name,"EXIT")) {
          obj($name);                                        # good exit dbref
@@ -1642,6 +1640,37 @@ sub atr_hasflag
                  $attribute,
                  $flag
                 );
+}
+
+#
+# destroy_object
+#    Delete an object from the database and cache.
+#
+sub destroy_object 
+{
+    my $obj = obj(shift);
+
+   my $loc = loc($obj);
+
+   sql("delete " .
+       "  from content ".
+       " where obj_id = ?",
+       $$obj{obj_id}
+      );
+
+   if($$db{rows} != 1) {
+      my_rollback;
+      return 0;
+   }  else {
+
+      delete $cache{$$obj{obj_id}};
+      set_cache($loc,"lcon");
+      set_cache($loc,"con_source_id");
+      set_cache($loc,"lexits");
+      my_commit;
+
+      return 1;
+   }
 }
 
 sub create_object

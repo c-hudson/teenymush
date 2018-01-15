@@ -1751,24 +1751,23 @@ sub cmd_list
      );
    } elsif($txt =~ /^\s*cache\s*$/i) {
        my ($size,$atr,$age);
-       my $cache = cache_ref();
-       for my $x (keys %$cache) {
-          if(ref($$cache{$x}) eq "HASH") {
-             for my $y (keys %{$$cache{$x}}) {
-                if(ref($$cache{$x}->{$y}) eq "HASH") {
-                   if(defined $$cache{$x}->{$y}->{value} &&
-                      defined $$cache{$x}->{$y}->{ts}) {
-                      $size += length($$cache{$x}->{$y}->{value});
-                      $age += time() - $$cache{$x}->{$y}->{ts};
+       for my $x (keys %cache) {
+          if(ref($cache{$x}) eq "HASH") {
+             for my $y (keys %{$cache{$x}}) {
+                if(ref($cache{$x}->{$y}) eq "HASH") {
+                   if(defined $cache{$x}->{$y}->{value} &&
+                      defined $cache{$x}->{$y}->{ts}) {
+                      $size += length($cache{$x}->{$y}->{value});
+                      $age += time() - $cache{$x}->{$y}->{ts};
                       $atr++;
                    }
                 } else {
-#                   $size += length($$cache{$x}->{$y});
+#                   $size += length($cache{$x}->{$y});
 #                   $atr++;
                 }
              }
           } else {
-#             $size += length($$cache{$x});
+#             $size += length($cache{$x});
 #             $atr++;
           }
        }
@@ -1779,11 +1778,11 @@ sub cmd_list
        necho(self   => $self,
              prog   => $prog,
              source => [ "   Objects:     %s composed of %s items",
-                         scalar keys %$cache,$atr ]
+                         scalar keys %cache,$atr ]
             );
        necho(self   => $self,
              prog   => $prog,
-             source => [ "   Size:        %s bytes",total_size($cache) ]
+             source => [ "   Size:        %s bytes",total_size(\%cache) ]
             );
        necho(self   => $self,
              prog   => $prog,
@@ -1872,37 +1871,36 @@ sub cmd_list
 sub cmd_clean
 {
    my ($self,$prog,$txt) = @_;
-   my $cache = cache_ref();
    my $del =0;
 
    if(!hasflag($self,"WIZARD")) {
       return err($self,$prog,"Permission Denied.");
    }
 
-   my $start = total_size($cache);
+   my $start = total_size(\%cache);
 
-   delete $$cache{keys %$cache};
+   delete @cache{keys %cache};
 
-   for my $x (keys %$cache) {                                       # object
-      if(ref($$cache{$x}) eq "HASH") {
-         for my $y (keys %{$$cache{$x}}) {                       # attribute
-            if(ref($$cache{$x}->{$y}) eq "HASH") {
-               if(defined $$cache{$x}->{$y}->{value} &&
-                  defined $$cache{$x}->{$y}->{ts}) {
-                  if(time() - $$cache{$x}->{$y}->{ts} > 3600) {
-                    delete $$cache{$x}->{$y};
+   for my $x (keys %cache) {                                       # object
+      if(ref($cache{$x}) eq "HASH") {
+         for my $y (keys %{$cache{$x}}) {                       # attribute
+            if(ref($cache{$x}->{$y}) eq "HASH") {
+               if(defined $cache{$x}->{$y}->{value} &&
+                  defined $cache{$x}->{$y}->{ts}) {
+                  if(time() - $cache{$x}->{$y}->{ts} > 3600) {
+                    delete $cache{$x}->{$y};
                     $del++;
                     if($y eq "FLAG_WIZARD") {
                        remove_flag_cache($obj,"FLAG_WIZARD");
                     }
                   }
                } else {
-                  for my $z (keys %{$$cache{$x}->{$y}}) {         # atr_flag
-                     if(ref($$cache{$x}-{$y}->{$z}) eq "HASH") {
-                        if(defined $$cache{$x}->{$y}->{$z}->{value} &&
-                           defined $$cache{$x}->{$y}->{$z}->{ts} &&
-                           time() - $$cache{$x}->{$y}->{$z}->{ts} > 3600) {
-                           delete $$cache{$x}->{$y}->{$z};
+                  for my $z (keys %{$cache{$x}->{$y}}) {         # atr_flag
+                     if(ref($cache{$x}-{$y}->{$z}) eq "HASH") {
+                        if(defined $cache{$x}->{$y}->{$z}->{value} &&
+                           defined $cache{$x}->{$y}->{$z}->{ts} &&
+                           time() - $cache{$x}->{$y}->{$z}->{ts} > 3600) {
+                           delete $cache{$x}->{$y}->{$z};
                            $del++;
                         }
                      }
@@ -1915,9 +1913,10 @@ sub cmd_clean
    necho(self   => $self,
          prog   => $prog,
          source  => [ "Cleared %d entries freeing %d bytes.", $del,
-                      ($start - total_size($cache)) ],
+                      ($start - total_size(\%cache)) ],
         );
 }
+
 sub cmd_destroy
 {
    my ($self,$prog,$txt) = @_;
@@ -1935,22 +1934,12 @@ sub cmd_destroy
    my $name = name($target);
    my $objname = obj_name($self,$target);
 
-   sql($db,"delete from object where obj_id = ?",$$target{obj_id});
-   my $cache = cache_ref();
-   delete $$cache{$$target{obj_id}};
-
-   if(hasflag($target,"EXIT")) {
-      delete $$cache{loc($target)}->{lexits};
-   }
-
-   if($$db{rows} != 1) {
-      my_rollback;
+   if(!destroy_object($target)) {
       necho(self   => $self,
             prog   => $prog,
             source  => [ "Internal error, object not destroyed." ],
            );
    } else {
-      my_commit;
       necho(self   => $self,
             prog   => $prog,
             source => [ "%s was destroyed.",$objname ],
@@ -1977,10 +1966,7 @@ sub cmd_toad
       return err($self,$prog,"Only Players can be \@toaded");
    }
 
-   sql($db,"delete from object where obj_id = ?",$$target{obj_id});
-
-   if($$db{rows} != 1) {
-      my_rollback;
+   if(!destroy_object($target)) {
       necho(self   => $self,
             prog   => $prog,
             source => [ "Internal error, %s was not \@toaded.",
@@ -2001,8 +1987,6 @@ sub cmd_toad
             room2  => [ $target, "%s has left.",name($target) ]
            );
    }
-
-   my_commit;
 }
 
 

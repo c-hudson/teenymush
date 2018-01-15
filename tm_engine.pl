@@ -7,9 +7,6 @@
 #
 
 
-
-
-
 use Time::HiRes "ualarm";
 
 sub single_line
@@ -20,48 +17,44 @@ sub single_line
    return $txt;
 }
 
+sub run_container_commands
+{
+   my ($self,$prog,$runas,$container,$cmd) = @_;
+   my $match = 0;
+
+   for my $obj (lcon($container)) {
+      for my $hash (latr_regexp($obj,1)) {
+         if($cmd =~ /$$hash{atr_regexp}/) {
+            mushrun(self   => $self,
+                    prog   => $prog,
+                    runas  => $obj,
+                    source => 0,
+                    cmd    => single_line($$hash{atr_value}),
+                    wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ],
+                    from   => "ATTR"
+                   );
+            $match=1;                             # signal mush command found
+         }
+      }
+   }
+   return $match;
+}
+
+#
+# mush_command
+#   Search Order  is objects you carry, objects around you, and objects in
+#   the master room.
+#
 sub mush_command
 {
    my ($self,$prog,$runas,$cmd) = @_;
-   my ($match,$questions,@where)= (0);
+   my $i =  0;
 
-#   my $start = Time::HiRes::gettimeofday();
-
-   # look for any attributes in the same room as the player
-   for my $hash (@{sql("select atr.obj_id, " .
-                       "       atr_value, ".
-                       "       atr_regexp, ".
-                       "       atr_name ".
-                       "  from attribute atr, " .
-                       "       content con, " .
-                       "       content con2  " .
-                       " where atr.obj_id = con.obj_id " .
-                       "   and atr.atr_pattern_type = 1 ".
-                       "   and con2.obj_id = ? ".
-                       "   and atr_first = ? ".
-                       "   and ( con.con_source_id = con2.con_source_id ".
-                       "         or con.con_source_id in ( ?, ? )) ",
-                       $$self{obj_id},
-                       atr_first($cmd),
-                       $$self{obj_id},
-                       @info{"conf.master"}
-                      )
-                }) {
-#      $$hash{atr_value} =~ s/\r\s*|\n\s*//g;
-      if($cmd =~ /$$hash{atr_regexp}/i) {
-         mushrun(self   => $self,
-                 prog   => $prog,
-                 runas  => $hash,
-                 source => 0,
-                 cmd    => single_line($$hash{atr_value}),
-                 wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ],
-                 from   => "ATTR"
-                );
-         $match=1;                                   # signal mush command found
-      }
+   for my $obj ($self,loc($self),@info{"conf.master"}) {
+      $i += run_container_commands($self,$prog,$runas,$obj,$cmd);
    }
-#   printf("mushrun: finish -> %s\n",Time::HiRes::gettimeofday() - $start);
-   return $match;
+ 
+   return ($i > 0) ? 1 : 0;
 }
 
 

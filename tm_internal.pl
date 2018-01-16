@@ -1862,6 +1862,8 @@ sub set
           lc($attribute),
           $$obj{obj_id}
          );
+      set_cache($obj,"latr_regexp_1");
+      set_cache($obj,"latr_regexp_2");
       necho(self   => $self,
             prog   => $prog,
             source => [ "Set." ]
@@ -1913,7 +1915,8 @@ sub set
           $$user{obj_name}
          );
 
-      set_cache($obj,"latr_regexp");
+      set_cache($obj,"latr_regexp_1");
+      set_cache($obj,"latr_regexp_2");
       if($$obj{obj_id} eq 0 && $attribute =~ /^conf./i) {
          @info{$attribute} = $value;
       }

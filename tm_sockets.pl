@@ -293,7 +293,8 @@ sub server_handle_sockets
             @{@connected{$s}}{buf} .= $buf;                     # store input
           
                                                          # breakapart by line
-            while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
+#            while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
+            while(@{@connected{$s}}{buf} =~ /\n/) {
                @{@connected{$s}}{buf} = $';                # store left overs
 #               if(@{@connected{$s}}{raw} > 0) {
 #                  printf("#%s# %s\n",@{@connected{$s}}{raw},$`);
@@ -330,6 +331,9 @@ sub server_disconnect
       my $prog = prog($hash,$hash);
 
       if(defined $$hash{raw} && $$hash{raw} > 0) {             # MUSH Socket
+         if($$hash{buf} !~ /^\s*$/) {
+            server_process_line($hash,$$hash{buf});    # process pending line
+         }                                                   # needed for www
          necho(self => $hash,
                prog => $prog,
                "[ Connection closed ]"

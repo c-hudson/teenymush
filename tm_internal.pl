@@ -19,6 +19,10 @@ my %days = (
    mon => 1, tue => 2, wed => 3, thu => 4, fri => 5, sat => 6, sun => 7,
 );
 
+#
+# glob2re
+#    Convert a global pattern into a regular expression
+#
 sub glob2re {
     my ($pat) = @_;
     $pat =~ s{(\W)}{
@@ -27,13 +31,9 @@ sub glob2re {
         '\\' . $1
     }eg;
 
-    return qr/\A$pat\z/si;
+    return "(?mnsx:\\A$pat\\z)";
 }
 
-sub cache_ref
-{
-   return \%cache;
-}
 
 #
 # err
@@ -305,23 +305,21 @@ sub atr_case
 {
    my ($obj,$atr) = (obj(shift),shift);
 
-   if(ref($obj) ne "HASH" || 
-     !defined $$obj{obj_id} || 
-     !defined $$obj{atr_name}) {
+   if(ref($obj) ne "HASH" || !defined $$obj{obj_id}) {
      return undef;
    } elsif(!incache_atrflag($obj,$atr,"CASE")) {
       my $val = one_val("select count(*) value " .
                         "  from attribute atr, " .
                         "       flag flg, " .
-                        "       flag_definition " .
+                        "       flag_definition fde " .
                         " where atr.obj_id = flg.obj_id ".
                         "   and fde.fde_flag_id = flg.fde_flag_id ".
                         "   and fde_name = 'CASE' ".
                         "   and fde_type = 2 ".
                         "   and atr_name = ? " . 
                         "   and atr.obj_id = ? ",
-                        $$obj{obj_id},
-                        $$obj{atr_name}
+                        $atr,
+                        $$obj{obj_id}
                        );
       set_cache_atrflag($obj,$atr,"CASE",$val);
    }
@@ -334,7 +332,7 @@ sub latr_regexp
    my @result;
 
    if(!incache($obj,"latr_regexp_$type")) {
-      for my $atr (@{sql("select atr_regexp, atr_value ".
+      for my $atr (@{sql("select atr_name, atr_regexp, atr_value ".
                          "  from attribute atr ".
                          " where obj_id = ? ".
                          "   and atr_regexp is not null ".
@@ -343,7 +341,8 @@ sub latr_regexp
                         )
                    }) {
          push(@result, { atr_regexp => $$atr{atr_regexp},
-                         atr_value  => $$atr{atr_value}
+                         atr_value  => $$atr{atr_value},
+                         atr_name   => $$atr{atr_name}
                        }
              );
       }
@@ -365,7 +364,7 @@ sub handle_listener
       next if $$obj{obj_id} eq $$self{obj_id};
 
       for my $hash (latr_regexp($obj,2)) {
-         if(atr_case($obj,$hash)) {
+         if(atr_case($obj,$$hash{atr_name})) {
             if($msg =~ /$$hash{atr_regexp}/) {
                mushrun(self   => $self,
                        runas => $obj,
@@ -1869,7 +1868,8 @@ sub set
             source => [ "Set." ]
            );
    } else {
-      if($value =~ /^\s*(\$|\^|\!)([^:]+?):/) {
+      # match $/^/! till the first unescaped :
+      if($value =~ /([\$\^\!])(.+?)(?<![\\])([:])/) {
          ($pat,$value) = ($2,$');
          if($1 eq "\$") {
             $type = 1;
@@ -1878,6 +1878,7 @@ sub set
          } elsif($1 eq "!") {
             $type = 3;
          }
+         $pat =~ s/\\:/:/g;
       } else {
          $type = 0;
       }

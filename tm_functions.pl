@@ -1592,6 +1592,43 @@ sub unescape_join
    return join('',@out);
 }
 
+# sub balanced_split_new
+# {
+#    my ($txt,$delim,$type,$debug) = @_;
+#    my ($last,$i,@stack,$escaped,@depth,$ch) = (0,-1);
+#    my %pair = ( '(' => ')', '{' => '}');
+# 
+# 
+#    while($i < $size) {
+#       $ch = substr($txt,$i,1);
+#       
+#       if(!$escaped && $ch eq '\\') {
+#          $escape = 1;
+#       } elsif($escaped) {
+#          $escaped = 0;
+#       } elsif(defined @pair{$ch}) {
+#          push(@depth,{ ch    => @pair{$ch},
+#                        last  => $last,
+#                        i     => $i,
+#                        stack => $#stack+1
+#                      });
+#       } elsif($#depth == -1 && $ch eq $delim) {    # delim at right depth
+#          push(@stack,unescape_join(\@array,$last,$i-1));
+#          $last = $i+1;
+#       } elsif($type <= 2 && $#depth == -1 && $ch eq ")") {     # func end
+#          push(@stack,unescape_join(\@array,$last,$i-1));
+#          $last = $i+1;
+#          $i = $#array;
+#       }
+# 
+#       if($i > $#array && $#depth > -1) {                      # missing match
+#          my $hash = pop(@depth);
+#          delete @stack[$$hash{stack} .. $#stack];      # rollback to starting
+#          $last = $$hash{last};                                    # character
+#          $i = $$hash{i} + 1;
+#       }
+#    }
+# }
 #
 # balanced_split
 #    Split apart a string but allow the string to have "",{},()s

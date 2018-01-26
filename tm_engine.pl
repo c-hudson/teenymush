@@ -348,7 +348,7 @@ sub spin
 #   ualarm(0);                                                 # cancel alarm
 #   printf("Count: $count\n");
 #   printf("Spin: finish -> $count\n");
-   printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count >= 1;
+   printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count > 1;
 #   printf("      total: '%s'\n",$total) if $count > 1;
 
 

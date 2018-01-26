@@ -3321,7 +3321,7 @@ sub list_attr
           $$hash{atr_value} = "!$$hash{atr_pattern}:$$hash{atr_value}";
        }
 
-       if($$hash{atr_value} =~ /\n/ && $$hash{atr_value} !~ /^\s*\n/) {
+       if($$hash{atr_value} =~ /\n/ && $$hash{atr_value} !~ /^\s*[\$!^]/) {
           $$hash{atr_value} = "\n$$hash{atr_value}";
        }
        if($$hash{atr_flag} eq undef) {
@@ -3890,6 +3890,7 @@ sub who
    for my $key (sort {@{@connected{$b}}{start} <=> @{@connected{$a}}{start}} 
                 keys %connected) {
       my $hash = @connected{$key};
+      next if $$hash{raw} != 0;
 
       if($$hash{obj_id} ne undef) {
          if(length(loc($hash)) > length($max)) {

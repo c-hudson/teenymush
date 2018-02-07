@@ -979,7 +979,8 @@ sub fun_edit
    good_args($#_,3) ||
       return "#-1 FUNCTION (EDIT) EXPECTS 3 ARGUMENTS";
 
-   $from =~ s/(.)/\\\1/g;
+   $from = quotemeta($from);
+   $to= quotemeta($to);
    $txt =~ s/$from/$to/ig;
    return $txt;
 }
@@ -1571,65 +1572,6 @@ sub parse_function
 
 
 #
-# unescape
-#    Escapes have already been counted and applied, but the array still
-#    contains the original number of escapes. This function will just
-#    weed out the extras while not modifying the orignal as the data
-#    may need to be rolled back.
-#
-sub unescape_join
-{
-   my ($array,$start,$stop) = @_;
-   my @out;
-
-   for my $i ($start .. $stop) {
-      if($$array[$i] =~ /^\\/) {
-         push(@out,"\\" x (length($$array[$i]) / 2));
-      } else {
-         push(@out,$$array[$i]);
-      }
-   }
-   return join('',@out);
-}
-
-# sub balanced_split_new
-# {
-#    my ($txt,$delim,$type,$debug) = @_;
-#    my ($last,$i,@stack,$escaped,@depth,$ch) = (0,-1);
-#    my %pair = ( '(' => ')', '{' => '}');
-# 
-# 
-#    while($i < $size) {
-#       $ch = substr($txt,$i,1);
-#       
-#       if(!$escaped && $ch eq '\\') {
-#          $escape = 1;
-#       } elsif($escaped) {
-#          $escaped = 0;
-#       } elsif(defined @pair{$ch}) {
-#          push(@depth,{ ch    => @pair{$ch},
-#                        last  => $last,
-#                        i     => $i,
-#                        stack => $#stack+1
-#                      });
-#       } elsif($#depth == -1 && $ch eq $delim) {    # delim at right depth
-#          push(@stack,unescape_join(\@array,$last,$i-1));
-#          $last = $i+1;
-#       } elsif($type <= 2 && $#depth == -1 && $ch eq ")") {     # func end
-#          push(@stack,unescape_join(\@array,$last,$i-1));
-#          $last = $i+1;
-#          $i = $#array;
-#       }
-# 
-#       if($i > $#array && $#depth > -1) {                      # missing match
-#          my $hash = pop(@depth);
-#          delete @stack[$$hash{stack} .. $#stack];      # rollback to starting
-#          $last = $$hash{last};                                    # character
-#          $i = $$hash{i} + 1;
-#       }
-#    }
-# }
-#
 # balanced_split
 #    Split apart a string but allow the string to have "",{},()s
 #    that keep segments together... but only if they have a matching
@@ -1638,54 +1580,60 @@ sub unescape_join
 sub balanced_split
 {
    my ($txt,$delim,$type,$debug) = @_;
-   my ($last,$i,@stack,$escaped,@depth) = (0,-1);
-   my %pair = ( '(' => ')', '{' => '}');
-   $delim = "," if $delim eq undef;
-   my $orig = $txt;
+   my ($last,$i,@stack,@depth,$ch,$buf) = (0,-1);
 
-   $txt = $1 if($type == 3 && $txt =~ /^\s*{(.*)}\s*$/);
-   my @array = grep {!/^$/} split(/([\[\]\{\}\(\)$delim])|(\\+)/,$txt);
-   while(++$i <= $#array) {
+   my $size = length($txt);
+   while(++$i < $size) {
+      $ch = substr($txt,$i,1);
 
-      if(@array[$i] =~ /^\\/) {                             # count escapes
-         $escaped = length(@array[$i]) % 2;
-      } elsif($escaped) {                             # item escaped, skipped
-         $escaped = 0;
-      } elsif(@array[$i] eq undef || length(@array[$i]) > 1) {
-         # empty or text string
-      } elsif($#depth >=0 && @{@depth[$#depth]}{ch} eq @array[$i]) {
-         pop(@depth);                                      # found pair match
-      } elsif(defined @pair{@array[$i]}) {
-         push(@depth,{  ch    => @pair{@array[$i]},      # found special char
-                        last  => $last,
-                        i     => $i,
-                        stack => $#stack+1
-                     });
-      } elsif($#depth == -1 && @array[$i] eq $delim) { # delim at right depth
-         push(@stack,unescape_join(\@array,$last,$i-1));
-         $last = $i+1;
-      } elsif($type <= 2 && $#depth == -1 && @array[$i] eq ")") { # func end
-         push(@stack,unescape_join(\@array,$last,$i-1));
-         $last = $i+1;
-         $i = $#array;
-      }
-
-      if($i > $#array && $#depth > -1) {                      # missing match
-         my $hash = pop(@depth);
-         delete @stack[$$hash{stack} .. $#stack];      # rollback to starting
-         $last = $$hash{last};                                    # character
-         $i = $$hash{i} + 1;
+      if($ch eq "\\") {
+         $buf .= substr($txt,++$i,1);
+         next;
+      } else {
+         if($ch eq "(" || $ch eq "{") {                  # start of segment
+            $buf .= $ch;
+            push(@depth,{ ch    => $ch,
+                          last  => $last,
+                          i     => $i,
+                          stack => $#stack+1,
+                          buf   => $buf
+                        });
+         } elsif($#depth >= 0) {
+            $buf .= $ch;
+            if($ch eq ")" && @{@depth[$#depth]}{ch} eq "(") {
+               pop(@depth);
+            } elsif($ch eq "}" && @{@depth[$#depth]}{ch} eq "{") {
+               pop(@depth);
+            }
+         } elsif($#depth == -1) {
+            if($ch eq $delim) {    # delim at right depth
+               push(@stack,$buf);
+               $last = $i+1;
+               $buf = undef;
+            } elsif($type <= 2 && $ch eq ")") {                   # func end
+               push(@stack,$buf);
+               $last = $i+1;
+               $i = $size;
+               $buf = undef;
+               last;                                      # jump out of loop
+            } else {
+               $buf .= $ch;
+            }
+         } else {
+            $buf .= $ch;
+         }
       }
    }
 
    if($type == 3) {
-      push(@stack,join('',@array[$last .. $#array]));
+      push(@stack,substr($txt,$last));
       return @stack;
-   } else { 
-      unshift(@stack,join('',@array[$last .. $#array]));
+   } else {
+      unshift(@stack,substr($txt,$last));
       return ($#depth != -1) ? undef : @stack;
    }
 }
+
 
 #
 # script

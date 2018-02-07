@@ -184,6 +184,8 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_compile(@_);}                 };
 @command{"\@clean"}=   { help => "Cleans the Cache",
                          fun  => sub { cmd_clean(@_);}                   };
+@command{"give"}=      { help => "Give money or objects",
+                         fun  => sub { cmd_give(@_);}                    };
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); },
@@ -336,6 +338,10 @@ sub cmd_sex
     }
 }
 
+#
+#  cmd_score
+#     Tell the player how much money it has.
+#
 sub cmd_score
 {
    my ($self,$prog,$txt) = @_;
@@ -343,7 +349,7 @@ sub cmd_score
    if($txt =~ /^\s*$/) {
       necho(self   => $self,
             prog   => $prog,
-            source => [ "You have 0 pennies." ],
+            source => [ "You have %s.", money($self,1) ],
            );
    } else {
       necho(self   => $self,
@@ -352,6 +358,63 @@ sub cmd_score
            );
    }
 };
+
+sub cmd_give
+{
+   my ($self,$prog,$txt) = @_;
+
+
+   if($txt =~ /=/) {
+      my ($target,$what) = (locate_object($self,$prog,$`),$');
+      return err($self,$prog,"Give to whom?") if $target eq undef;
+
+      if($what =~ /^\s*\-{0,1}(\d+)\s*$/) {
+         $what = $1 . $2;
+         if($what == 0) {
+            return err($self,$prog,"You must specificy a positive amount of ".
+                       "money.");
+         } elsif(hasflag($self,"WIZARD")) {
+            # can give money
+         } elsif($what < 0) {
+            return err($self,$prog,"You may not take away money.");
+         } elsif($what > money($self)) {
+            return err($self,$prog,"You don't have %s to give!",
+               pennies($what));
+         }
+
+         if(!hasflag($self,"WIZARD") && !give_money($self,-$what)) {
+            my_rollback();
+            return err($self,$prog,"Internal error, unable to give money to ".
+               "%s.",
+               name($target));
+         }
+
+         if(!give_money($target,$what)) {
+            my_rollback();
+            return err($self,"Internal error, unable to give money to %s.",
+               name($target));
+         }
+
+         my_commit;
+
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "You give %s %s to %s.",
+                           $what,
+                           ($what == 1) ? @info{"conf.money_name_singular"} :
+                                          @info{"conf.money_name_plural"},
+                           name($target) ],
+               target => [ $target, "%s gives you %s %s.",
+                           name($self),
+                           $what,
+                           ($what == 1) ? @info{"conf.money_name_singular"} :
+                                          @info{"conf.money_name_plural"} ]
+              );
+      } else {
+        err($self,$prog,"You can only give money, right now.");
+      }
+   }
+}
 
 sub cmd_trigger
 {
@@ -1244,6 +1307,16 @@ sub read_atr_config
 {
    my ($self,$prog) = @_;
 
+   my %default = (
+      money_name_plural   => "Pennies",
+      money_name_singular => "Penny",
+      paycheck            => 50,
+      starting_money      => 150,
+      linkcost            => 1,
+      digcost             => 10,
+      createcost          => 10,
+   );
+
    my %updated;
    for my $atr (@{sql("select atr_name, ".
                        "      atr_value ".
@@ -1258,6 +1331,19 @@ sub read_atr_config
        @info{lc($$atr{atr_name})} = $$atr{atr_value};
        @updated{lc($$atr{atr_name})} = 1;
    }
+
+   for my $key (keys %default) {
+      if(!defined @info{"conf.$key"}) {
+         @info{"conf.$key"} = @default{$key};
+      }
+   }
+
+   if(!defined @info{"conf.money_name_plural"}) {
+      @info{"conf.money_name_plural"} = "pennies";
+   } 
+   if(!defined @info{"conf.money_name_plural"}) {
+      @info{"conf.money_name_plural"} = "pennies";
+   } 
 
    if($self eq undef) {
       printf("%s\n", wrap("Updated: ",
@@ -1586,7 +1672,8 @@ sub cmd_send
                );
        } else {
           my $txt = evaluate($self,$prog,$');
-          printf($sock "%s\n",evaluate($self,$prog,$'));
+          printf($sock "%s\r\n",evaluate($self,$prog,$'));
+          printf("!#! {%s}\n",evaluate($self,$prog,$'));
        }
     } else {
        necho(self   => $self,
@@ -2781,21 +2868,26 @@ sub create_exit
    return $exit;
 }
 
-
 sub cmd_create
 {
    my ($self,$prog,$txt) = (@_[0],@_[1],trim(@_[2]));
 
    if(quota_left($self) <= 0) {
       return err($self,$prog,"You are out of QUOTA to create objects.");
-   } if(length($txt) > 50) {
+   } elsif(length($txt) > 50) {
       return err($self,$prog,
                  "Object name may not be greater then 50 characters"
                 );
+   } elsif(money($self) < @info{"conf.createcost"}) {
+      return err($self,$prog,"You need at least ".pennies("createcost").".");
    }
 
    my $dbref = create_object($self,$prog,$txt,undef,"OBJECT") ||
       return err($self,$prog,"Unable to create object");
+
+   if(!give_money($self,"-" . @info{"conf.createcost"})) {
+      return err($self,$prog,"Unable to deduct cost of object.");
+   }
 
    necho(self   => $self,
          prog   => $prog,
@@ -2885,7 +2977,8 @@ sub cmd_link
 sub cmd_dig
 {
    my ($self,$prog,$txt) = @_;
-   my ($loc,$room_name,$room,$in,$out);
+   my ($loc,$room_name,$room,$in,$out,$cost);
+     
   
    if($txt =~ /^\s*([^\=]+)\s*=\s*([^,]+)\s*,\s*(.+?)\s*$/ ||
       $txt =~ /^\s*([^=]+)\s*=\s*([^,]+)\s*$/ ||
@@ -2909,6 +3002,21 @@ sub cmd_dig
                 );
    } elsif($in eq undef && $out eq undef && quota_left($self) < 1) {
       return err($self,$prog,"You are out of QUOTA to create objects");
+   } elsif($in ne undef && $out ne undef) {
+      $cost = @info{"conf.digcost"} + (@info{"conf.linkcost"} * 2);
+   } elsif($in ne undef || $out ne undef) {
+      $cost = @info{"conf.digcost"} + @info{"conf.linkcost"};
+   } elsif($in eq undef && $out eq undef) { 
+      $cost = @info{"conf.digcost"};
+   }
+
+   if($cost > money($self)) {
+      return err($self,$prog,"You need at least " . pennies($cost));
+   }
+
+   if(!give_money($self,"-" . $cost)) {
+      return err($self,$prog,"Internal error, couldn't debit " .
+                 pennies($cost));
    }
 
 
@@ -3392,7 +3500,13 @@ sub cmd_ex
 
    my $owner = fetch(($$target{obj_owner} == -1) ? 0 : $$target{obj_owner});
    $out .= "\nOwner: " . obj_name($self,$owner,$perm) . 
-           "  Key: " . nvl(lock_uncompile($self,$prog,get($target,"LOCK_DEFAULT")),"*UNLOCKED*");
+           "  Key: " . nvl(lock_uncompile($self,
+                                          $prog,
+                                          get($target,"LOCK_DEFAULT")
+                                         ),
+                           "*UNLOCKED*"
+                          ) .
+           "  " . ucfirst(@info{"conf.money_name_plural"}).": ". money($target);
 
    $out .= "\nCreated: $$target{obj_created_date}";
    if(hasflag($target,"PLAYER")) {
@@ -3517,6 +3631,11 @@ sub cmd_inventory
               );
       }
    }
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ "You have %s", pennies($self) ],
+        );
+  
 }
 
 

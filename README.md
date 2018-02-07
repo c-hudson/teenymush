@@ -21,18 +21,25 @@ by setting attributes on object #0. This allows configuration of the server
 to be done without shell access. Here are the attributes that are
 currently supported:
 
-conf.login        |  Login screen
-conf.logoff       |  Log off message
-conf.motd         |  Message of the day
-conf.registration |  Login screen shown when registration is in effect
-conf.badsite      |  Login screen for banned sites
-conf.godlike      |  This dbref may modify object #0
-conf.master       |  dbref for the master room
-conf.httpd        |  Port to listen for web requests
-conf.webuser      |  The dbref of the object that all mushcode runs under
-                  |  for the web server.
-conf.webobject    |  The dbref of the object which contains the mushcoded
-                  |  commands that may be run from the web.
-conf.websocket    |  Port to listen to for websocket requests
+conf.login              |  Login screen
+conf.logoff             |  Log off message
+conf.motd               |  Message of the day
+conf.registration       |  Login screen shown when registration is in effect
+conf.badsite            |  Login screen for banned sites
+conf.godlike            |  This dbref may modify object #0
+conf.master             |  dbref for the master room
+conf.httpd              |  Port to listen for web requests
+conf.webuser            |  The dbref of the object that all mushcode runs under
+                        |  for the web server.
+conf.webobject          |  The dbref of the object which contains the mushcoded
+                        |  commands that may be run from the web.
+conf.websocket          |  Port to listen to for websocket requests
+conf.money_name_plural  |  Plural form of money's name
+conf.money_name_singlar |  Singular form of money's name
+conf.starting_money     |  How much money does a player get on @create
+conf.paycheck           |  How much money does a player get per day on connect
+conf.linkcost           |  Cost of link
+conf.digcost            |  Cost of room
+conf.createcost         |  Cost of object
 
 see http://teenymush.blogspot.in/ for more details.

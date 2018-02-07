@@ -24,7 +24,7 @@ sub run_container_commands
 
    for my $obj (lcon($container)) {
       for my $hash (latr_regexp($obj,1)) {
-         if($cmd =~ /$$hash{atr_regexp}/) {
+         if($cmd =~ /$$hash{atr_regexp}/i) {
             mushrun(self   => $self,
                     prog   => $prog,
                     runas  => $obj,

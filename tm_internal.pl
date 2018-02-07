@@ -25,13 +25,16 @@ my %days = (
 #
 sub glob2re {
     my ($pat) = @_;
+
+    return undef if $pat eq undef;
     $pat =~ s{(\W)}{
         $1 eq '?' ? '.' :
         $1 eq '*' ? '(*PRUNE)(.*?)' :
         '\\' . $1
     }eg;
 
-    return "(?mnsx:\\A$pat\\z)";
+#    return "(?mnsx:\\A$pat\\z)";
+    return "(?msx:\\A$pat\\z)";
 }
 
 
@@ -62,6 +65,26 @@ sub first
    $delim = ';' if $delim eq undef;
 
    return (split($delim,$txt))[0];
+}
+
+sub pennies
+{
+   my $what = shift;
+   my $amount;
+
+   if(ref($what) eq "HASH" && defined $$what{obj_id}) {
+      $amount = money($what);
+   } elsif($what !~ /^\s*\-{0,1}(\d+)\s*$/) {
+      $amount = @info{"conf.$what"};
+   } else {
+      $amount = $what;
+   }
+
+   if($amount == 1) {
+      return $amount . " " . @info{"conf.money_name_singular"} . ".";
+   } else {
+      return $amount . " " . @info{"conf.money_name_plural"} . ".";
+   }
 }
 
 sub code
@@ -245,61 +268,19 @@ sub handle_object_listener
    my $msg = sprintf($txt,@args);
    my $count;
 
-   printf("handle_object_listener: CALLED ($$target{obj_id}:%s)\n",$msg);
-#   printf("target: '%s' -> '%s'\n",$$target{hostname},$$target{raw});
-#    printf("handle_object_listen: '%s'\n",$msg);
-#    printf("%s\n",code("long"));
-    echo_output_to_puppet_owner($target,prog($target,$target),$msg);
-
-   for my $hash (@{sql("select obj.obj_id, " .
-                    "       substr(atr_value,2,instr(atr_value,':')-2) cmd,".
-                    "       substr(atr_value,instr(atr_value,':')+1) txt ".
-                    "  from object obj, " .
-                    "       attribute atr, " .
-                    "       flag_definition fld, " . 
-                    "       flag flg  " . 
-                    " where obj.obj_id = atr.obj_id " .
-                    "   and fld.fde_flag_id = flg.fde_flag_id " .
-                    "   and obj.obj_id = flg.obj_id " .
-                    "   and obj.obj_id = ? " .
-                    "   and ? like replace(substr(atr_value,1," .
-                    "                      instr(atr_value,':')-1),'*','%')" .
-                    "   and flg.atr_id is null " .
-                    "   and fde_type = 1 " .
-                    "   and fde_name = ? ",
-                    $$target{obj_id},
-                    "\!" . lc($msg),
-                    "SOCKET_PUPPET"
-                   )
-                }) {
-      $$hash{raw_hostname} = $$target{hostname};
-      $$hash{raw_raw} = $$target{raw};
-      $$hash{raw_socket} = $$target{socket};
-#      $$hash{raw_enactor} = $$target{enactor};
-
-      # determine %0 - %9
-      printf("LISTEN: '%s' -> '%s'\n",$$hash{cmd},$msg);
-      if($$hash{cmd} ne $msg) {
-         $$hash{cmd} =~ s/\*/\(.*\)/g;
-         if($msg =~ /^$$hash{cmd}$/) {
-            mushrun(self   => $hash,
-                    runas  => $hash,
-                    cmd    => $$hash{txt},
-                    wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
-                    source => 0,
-                   );
-         } else {
-            mushrun(self   => $hash,
-                    runas  => $hash,
-                    cmd    => $$hash{txt},
-                    wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
-                    source => 0,
-                   );
-         }
+   for my $hash (latr_regexp($target,3)) {
+      if($msg =~ /$$hash{atr_regexp}/i) {
+         mushrun(self   => $target,
+                 runas  => $target,
+                 cmd    => single_line($$hash{atr_value}),
+                 wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
+                 source => 0,
+                 from   => "ATTR",
+                );
+         $count++;
       }
    }
 }
-
 
 sub atr_case
 {
@@ -887,6 +868,36 @@ sub e
    return $db;
 }
 
+sub money
+{
+   my ($target,$flag) = (obj(shift),shift);
+
+   my $owner = owner($target);
+
+   if(!incache($owner,"obj_money")) {
+      my $money = one_val("select obj_money value ".
+                          "  from object ".
+                          " where obj_id = ? ",
+                          $$owner{obj_id}
+                         );
+      $money = 0 if $money eq undef;
+      set_cache($owner,"obj_money",$money);
+   }
+
+   if($flag) {
+      if(cache($owner,"obj_money") == 1) {
+         return "1 " . @info{"conf.money_name_singular"};
+      } else {
+         return cache($owner,"obj_money") . 
+                " " . 
+                @info{"conf.money_name_plural"};
+      }
+   } else {
+      return cache($owner,"obj_money");
+   }
+}
+
+
 #
 # name
 #    Return the name of the object from the database if it hasn't already
@@ -1463,13 +1474,13 @@ sub set_atr_flag
         "            flag_definition fde2 " .
         " where fde1.fde_permission = fde2.fde_flag_id " .
         "   and fde1.fde_type = 2 " .
-        "   and fde1.fde_name=upper(?)",
+        "   and fde1.fde_name=trim(upper(?))",
         $flag
        );
 
     if($hash eq undef || !defined $$hash{fde_flag_id} ||
        $$hash{fde_name} eq "ANYONE") {       # unknown flag?
-       return "#-1 Unknown Flag.";
+       return "#-1 Unknown Flag. ($flag)";
     }
 
     if(!perm($object,$$hash{fde_name})) {
@@ -1838,6 +1849,33 @@ sub inuse_player_name
    return $result;
 }
 
+#
+# give_money
+#    Give money to a person. Objects can't have money, so its given to
+#    the object's owner.
+#
+sub give_money
+{
+   my ($target,$amount) = (obj(shift),shift);
+   my $owner = owner($target);
+
+   # $money doesn't contain a number
+   return undef if($amount !~ /^\s*\-{0,1}(\d+)\s*$/);
+
+   my $money = money($target);
+
+   sql("update object " .
+       "   set obj_money = ? ".
+       " where obj_id = ? ",
+       $money + $amount,
+       $$owner{obj_id});
+
+   return undef if($$db{rows} != 1);
+   set_cache($target,"obj_money",$money + $amount);
+
+   return 1;
+}
+
 sub set
 {
    my ($self,$prog,$obj,$attribute,$value,$quiet,$type)=
@@ -1863,6 +1901,7 @@ sub set
          );
       set_cache($obj,"latr_regexp_1");
       set_cache($obj,"latr_regexp_2");
+      set_cache($obj,"latr_regexp_3");
       necho(self   => $self,
             prog   => $prog,
             source => [ "Set." ]
@@ -1918,6 +1957,7 @@ sub set
 
       set_cache($obj,"latr_regexp_1");
       set_cache($obj,"latr_regexp_2");
+      set_cache($obj,"latr_regexp_3");
       if($$obj{obj_id} eq 0 && $attribute =~ /^conf./i) {
          @info{$attribute} = $value;
       }

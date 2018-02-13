@@ -477,7 +477,11 @@ sub cmd_huh
 }
                   
 sub cmd_offline_huh { my $sock = $$user{sock};
-                      printf($sock "%s",@info{"conf.login"});
+                      if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
+                         ws_echo($sock,@info{"conf.login"});
+                      } else {
+                         printf($sock "%s",@info{"conf.login"});
+                      }
                     };
 sub cmd_version
 {
@@ -1673,7 +1677,6 @@ sub cmd_send
        } else {
           my $txt = evaluate($self,$prog,$');
           printf($sock "%s\r\n",evaluate($self,$prog,$'));
-          printf("!#! {%s}\n",evaluate($self,$prog,$'));
        }
     } else {
        necho(self   => $self,

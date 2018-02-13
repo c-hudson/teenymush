@@ -266,7 +266,8 @@ sub server_handle_sockets
                             loggedin => 0,
                             raw      => 0,
                             start    => time(),
-                            port     => get_free_port()
+                            port     => get_free_port(),
+                            type     => "MUSH"
                           };
                add_site_restriction($hash);
                @connected{$new} = $hash;
@@ -329,6 +330,7 @@ sub server_disconnect
    if(defined @connected{$id}) {
       my $hash = @connected{$id};
       my $prog = prog($hash,$hash);
+      my $type = @{@connected{$id}}{type};
 
       if(defined $$hash{raw} && $$hash{raw} > 0) {             # MUSH Socket
          if($$hash{buf} !~ /^\s*$/) {
@@ -381,7 +383,12 @@ sub server_disconnect
                 );
              my_commit($db);
          }
-         printf($id "%s",@info{"conf.logoff"});
+
+         if($type eq "WEBSOCKET") {
+            ws_echo($id,@info{"conf.logoff"});
+         } else {
+            printf($id "%s",@info{"conf.logoff"});
+         }
       }
    }
 

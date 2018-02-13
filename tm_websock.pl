@@ -14,12 +14,34 @@ sub websock_init
 
    $ws = Net::WebSocket::Server->new(
       listen => $websock,
+      tick_period => 1,
       on_connect => sub { my( $serv, $conn ) = @_;
-                          $conn->on( utf8 => sub{ processMessage( @_, 0 ) } );
+                          $conn->on( ready =>      sub{ ws_login_screen(@_); },
+                                     utf8  =>      sub{ ws_process( @_, 0 );},
+                                     disconnect => sub { ws_disconnect(@_); },
+                                   );
                         },  
    );
    $ws->{select_readable}->add($websock);
    $ws->{conns} = {};
+}
+
+sub ws_disconnect
+{
+    my ($conn, $code, $reason) = @_;
+
+    my $sock = $conn->{socket};
+
+    $ws->{select_readable}->remove( $conn->{socket} );
+
+    server_disconnect( $conn->{socket} );
+    
+}
+
+sub ws_login_screen
+{
+   my $conn = shift;
+   $conn->send('','t' . @info{"conf.login"});
 }
 
 sub websock_io
@@ -35,9 +57,24 @@ sub websock_io
                               lastrecv => time,
                               ip       => server_hostname($sock)
                             };
+
       $ws->{select_readable}->add( $sock );
       $ws->{on_connect}($ws, $conn );
       @c{$conn} = $conn;
+
+      # attach the socket to the mush data structure 
+      my $hash = { sock     => $sock,             # store connect details
+                   conn     => $conn,
+                   hostname => server_hostname($sock),
+                   ip       => $sock->peerhost,
+                   loggedin => 0,
+                   raw      => 0,
+                   start    => time(),
+                   port     => get_free_port(),
+                   type     => "WEBSOCKET"
+                 };
+      add_site_restriction($hash);
+      @connected{$sock} = $hash;
    } elsif( $ws->{watch_readable}{$sock} ) {
       $ws->{watch_readable}{$sock}{cb}( $ws , $sock );
    } elsif( $ws->{conns}{$sock} ) {
@@ -47,7 +84,7 @@ sub websock_io
    } else {
       warn "filehandle $sock became readable, but no handler took " .
            "responsibility for it; removing it";
-#      $ws->{select_readable}->remove( $sock );
+      $ws->{select_readable}->remove( $sock );
    }
 
 #   if( $ws->{watch_writable}{$sock} ) {
@@ -60,28 +97,24 @@ sub websock_io
 
 }
 
-sub processMessage {
+#
+# ws_process
+#    A message has come in via the websocket, hand it off to the MUSH
+#    via the server_proces_line() function. The websocket client sends
+#    a flag via the first character (text, html, and publeo, etc). 
+#    Currently, that flag is just being stripped and ignored. Maybe
+#    later?
+#
+sub ws_process {
    my( $conn, $msg, $ssl ) = @_;
+   $msg = substr($msg,1);
+   $msg =~ s/\r|\n//g;
 
    $ssl = $ssl ? ',SSL' : '';
-   my $from = 0;
-   my $peeraddr = join( '.', unpack( 'C4', $conn->{socket}->peeraddr() ) );
 
-   # Used to exit the script after 15min inactivity
-   my $timeout = time;
-
-   my $self = fetch(@info{"conf.webuser"});
    printf("   %s\@ws [%s]\n", @{$ws->{conns}{$conn->{socket}}}{ip},$msg);
 
-   my $prog = mushrun(self   => $self,
-                      runas  => $self,
-                      source => 0,
-                      cmd    => $msg,
-                      hint   => "WEBSOCKET",
-                      sock   => $conn,
-                      output => []
-                     );
-   $$prog{sock} = $conn;
+   server_process_line(@connected{$conn->{socket}},$msg);
 }
 
 

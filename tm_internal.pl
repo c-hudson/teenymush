@@ -28,7 +28,7 @@ sub glob2re {
 
     return undef if $pat eq undef;
     $pat =~ s{(\W)}{
-        $1 eq '?' ? '.' :
+        $1 eq '?' ? '(.)' :
         $1 eq '*' ? '(*PRUNE)(.*?)' :
         '\\' . $1
     }eg;
@@ -556,6 +556,31 @@ sub log_output
 }
 
 
+#
+# ws_echo
+#    The send might crash if the websocket has disconnected the evals should
+#    probably be removed once this is more stable. With that in mind,
+#    currently crash will be treated as a disconnect.
+#
+sub ws_echo
+{
+   my ($s, $msg) = @_;
+
+   return if not defined @connected{$s};
+   my $conn = @{@connected{$s}}{conn};
+   # this might crash if the websocket dies, the evals should
+   # probably be removed once this is more stable. With that in mind,
+   # currently crash will be treated as a disconnect.
+   eval {
+      printf("### %s\n",$msg);
+      $conn->send('','t'.$msg);
+   };
+
+   if($@) {
+       ws_disconnect($conn);
+   }
+}
+
 sub echo_socket
 {
    my ($obj,$prog,$fmt,@args) = (obj(shift),shift,shift,@_);
@@ -566,135 +591,18 @@ sub echo_socket
 
       for my $socket (keys %$list) {
          my $s = $$list{$socket};
-         printf($s "%s", $msg);
+
+         if(@{@connected{$s}}{type} eq "WEBSOCKET") {
+             ws_echo($s,$msg);
+         } else {
+            printf($s "%s",$msg);
+         }
       }
    } else {
       echo_output_to_puppet_owner($$obj{obj_id},$prog, $msg);
    }
 }
 
-
-sub necho_old
-{
-   my %arg = @_;
-   my $prog = $arg{prog};
-   my $self = $arg{self};
-   my $loc;
-
-   if($arg{self} eq undef) {
-      printf("%s\n",print_var(\%arg));
-      printf("%s\n",code("long"));
-   }
-
-   if(defined @{$arg{self}}{loggedin} && !@{$arg{self}}{loggedin}) {
-      # skip checks for non-connected players
-   } elsif(!defined $arg{self}) {             # checked passed in arguments
-      err($self,$prog,"Echo expects a self argument passed in");
-   } elsif(!defined $arg{prog}) {
-      err($self,$prog,"Echo expects a prog argument passed in");
-   } elsif(defined $arg{room}) {
-      if(ref($arg{room}) ne "ARRAY") {
-         err($self,$prog,"Echo expects a room argument expects array data");
-      } elsif(ref(@{$arg{room}}[0]) ne "HASH") {
-         err($self,$prog,"Echo expects first room argument to be HASH " .
-             "data '%s'",@{$arg{room}}[0]);
-      }
-   }
-
-   for my $type ("room", "room2") {                       # handle room echos
-      if(defined $arg{$type}) {
-         my $array = $arg{$type};
-         my $target = obj(shift(@$array));
-         my $fmt = shift(@$array);
-         my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
-         for my $sock (@{sql("select c1.obj_id,  ".
-                             "       c1.con_source_id, ".
-                             "       s.sck_socket ".
-                             "  from content c1 left outer join socket s on  ".
-                             "          c1.obj_id = s.obj_id,  ".
-                             "       content c2,  ".
-                             "       flag flg,  ".
-                             "       flag_definition fde ".
-                             " where c1.con_source_id = c2.con_source_id ".
-                             "   and c1.obj_id = flg.obj_id ".
-                             "   and c1.obj_id != ? ".
-                             "   and flg.fde_flag_id = fde.fde_flag_id  ".
-                             "   and c2.obj_id = ? ".
-                             "   and fde_name in ('OBJECT','PLAYER')",
-                             $$target{obj_id},
-                             $$target{obj_id},
-                      )}) {
-             if($$sock{sck_socket} ne undef) {
-                my $s = @{@connected{$$sock{sck_socket}}}{sock};
-                printf($s "%s%s",nospoof(@arg{self},@arg{prog},$$sock{obj_id}),
-                   $msg);
-                $loc = $$sock{con_source_id};
-             } else {
-                echo_output_to_puppet_owner($$sock{obj_id},
-                                            $arg{prog},
-                                            $msg,
-                                            $arg{debug}
-                                           );
-             }
-         }
-
-         log_output($self,-1,$loc,$msg);
-         handle_listener($arg{self},$arg{prog},$target,$fmt,@$array);
-      }
-   }
- 
-   unshift(@{$arg{source}},$arg{self}) if(defined $arg{source});
-
-   for my $type ("source", "target") {
-      next if !defined $arg{$type};
-
-      if(ref($arg{$type}) ne "ARRAY") {
-         return err($arg{self},$arg{prog},"Argument $type is not an array");
-      }
-
-      my ($target,$fmt) = (shift(@{$arg{$type}}), shift(@{$arg{$type}}));
-      my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
-
-
-      # output needs to be saved for use by http, websocket, or run()
-      if(defined $$prog{output} && 
-         (@{$$prog{created_by}}{obj_id} == $$target{obj_id} ||
-          $$target{obj_id} == @info{"conf.webuser"} || 
-          $$target{obj_id} == @info{"conf.webobject"}
-         )
-        ) {
-            my $stack = $$prog{output};
-            push(@$stack,$msg);
-            next;
-      }
-
-#      if(!defined @arg{hint} ||
-#         (@arg{hint} eq "ECHO_ROOM" && loc($target) != loc(owner($target)))) {
-#         echo_output_to_puppet_owner($target,$arg{prog},$msg,$arg{debug});
-#      }
-
-      if(defined @{$arg{self}}{loggedin} && !@{$arg{self}}{loggedin}) {
-         my $self = $arg{self};
-         my $s = @{$connected{$$self{sock}}}{sock};
-         printf($s "%s",$msg);
-      } else {
-         log_output($self,$target,-1,$msg);
-
-         if(hasflag($target,"PLAYER")) {         # echo to all player's sockets
-            for my $sock (@{sql($db,
-                          "select * from socket " .
-                          " where obj_id = ? " .
-                          " and sck_type = 1",
-                          $$target{obj_id}
-                         )}) {
-               my $s = @{@connected{$$sock{sck_socket}}}{sock};
-               printf($s "%s%s",nospoof(@arg{self},@arg{prog},$$sock{obj_id}),
-                   $msg);
-            }
-         }
-      }
-   }
-}
 
 sub necho
 {
@@ -779,7 +687,15 @@ sub necho
       if(defined @{$arg{self}}{loggedin} && !@{$arg{self}}{loggedin}) {
          my $self = $arg{self};
          my $s = @{$connected{$$self{sock}}}{sock};
-         printf($s "%s",$msg);
+
+         # this might crash if the websocket dies, the evals should
+         # probably be removed once this is more stable. With that in mind,
+         # currently crash will be treated as a disconnect.
+         if(@{@connected{$s}}{type} eq "WEBSOCKET") {
+             ws_echo($s,$msg);
+         } else {
+            printf($s "%s",$msg);
+         }
       } else {
          log_output($self,$target,-1,$msg);
 
@@ -1005,7 +921,7 @@ sub loggedin
 
 sub incache
 {
-   my ($obj,$item) = (obj(shift),shift);
+   my ($obj,$item) = (obj(shift),trim(uc(shift)));
 
    return undef if(!defined $cache{$$obj{obj_id}});
    return (defined $cache{$$obj{obj_id}}->{$item}->{value}) ? 1 : 0;
@@ -1013,7 +929,7 @@ sub incache
 
 sub set_cache
 {
-   my ($obj,$item,$val) = (obj(shift),shift,shift);
+   my ($obj,$item,$val) = (obj(shift),trim(uc(shift)),shift);
 
    if($val eq undef) {
       delete $cache{$$obj{obj_id}}->{$item} if(defined $cache{$$obj{obj_id}});
@@ -1025,7 +941,7 @@ sub set_cache
 
 sub cache
 {
-   my ($obj,$item) = (obj(shift),shift);
+   my ($obj,$item) = (obj(shift),trim(uc(shift)));
 
    $cache{$$obj{obj_id}}->{$item}->{ts} = time();
    return $cache{$$obj{obj_id}}->{$item}->{value};
@@ -1033,7 +949,7 @@ sub cache
 
 sub incache_atrflag
 {
-   my ($obj,$atr,$flag) = (obj(shift),shift,shift);
+   my ($obj,$atr,$flag) = (obj(shift),trim(uc(shift)),shift);
 
    return undef if(!defined $cache{$$obj{obj_id}});
    return (defined $cache{$$obj{obj_id}}->{$atr}->{$flag}->{value}) ? 1 : 0;
@@ -1041,7 +957,7 @@ sub incache_atrflag
 
 sub set_cache_atrflag
 {
-   my ($obj,$atr,$flag,$val) = (obj(shift),shift,shift,shift);
+   my ($obj,$atr,$flag,$val)=(obj(shift),trim(uc(shift)),shift,shift);
 
    if($val eq undef) {
       delete $cache{$$obj{obj_id}}->{$atr}->{$flag};
@@ -1053,7 +969,7 @@ sub set_cache_atrflag
 
 sub cache_atrflag
 {
-   my ($obj,$atr,$flag) = (obj(shift),shift,shift);
+   my ($obj,$atr,$flag) = (obj(shift),trim(uc(shift)),trim(uc(shift)));
 
    $cache{$$obj{obj_id}}->{$atr}->{$flag}->{ts} = time();
    return $cache{$$obj{obj_id}}->{$atr}->{$flag}->{value}
@@ -1459,6 +1375,7 @@ sub set_atr_flag
     my ($object,$atr,$flag,$override) = (obj($_[0]),$_[1],$_[2],$_[3]);
     my $who = $$user{obj_name};
     my ($remove,$count);
+    $flag = uc(trim($flag));
 
     $who = "CREATE_USER" if($flag eq "PLAYER" && $who eq undef);
     ($flag,$remove) = ($',1) if($flag =~ /^\s*!\s*/);         # remove flag 
@@ -1509,31 +1426,29 @@ sub set_atr_flag
        }
 
        # see if flag is already set
-       my $flag = one_val($db,
-                          "select ofg_id value " .
-                          "  from flag " .
-                          " where atr_id = ? " .
-                          "   and fde_flag_id = ?",
-                          $atr_id,
-                          $$hash{fde_flag_id}
-                         );
+       my $flag_id = one_val($db,
+                             "select ofg_id value " .
+                             "  from flag " .
+                             " where atr_id = ? " .
+                             "   and fde_flag_id = ?",
+                             $atr_id,
+                             $$hash{fde_flag_id}
+                            );
                                
        # add flag to the object/user
-       if($flag ne undef && $remove) {
+       if($flag_id ne undef && $remove) {
           sql($db,
               "delete from flag " .
               " where ofg_id= ? ",
-              $flag
+              $flag_id
              );
           my_commit;
 
-          if($flag eq "CASE") {
-             set_cache_atrflag($object,$atr,"CASE");
-          }
+          set_cache_atrflag($object,$atr,$flag);
           return "Flag Removed.";
        } elsif($remove) {
           return "Flag not set.";
-       } elsif($flag ne undef) {
+       } elsif($flag_id ne undef) {
           return "Already Set.";
        } else {
           sql($db,
@@ -1547,9 +1462,7 @@ sub set_atr_flag
               $atr_id);
           my_commit;
           return "#-1 Flag note removed [Internal Error]" if($$db{rows} != 1);
-          if($flag eq "CASE") {
-             set_cache_atrflag($object,$atr,"CASE");
-          }
+          set_cache_atrflag($object,$atr,$flag);
           return "Set.";
        }
     } else {

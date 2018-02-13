@@ -93,8 +93,16 @@ my %fun =
    graph     => sub { return &fun_graph(@_);                            },
    lexits    => sub { return &fun_lexits(@_);                           },
    home      => sub { return &fun_home(@_);                             },
+   latr      => sub { return &fun_latr(@_); },
    decode_entities => sub { return &fun_de(@_);                         },
 );
+
+sub fun_latr
+{
+   my ($self,$prog,$obj,$atr) = @_;
+
+   return atr_case(obj($obj),$atr);
+}
 
 sub var_backup
 {
@@ -1345,6 +1353,10 @@ sub fun_input
        $data =~ s/`/\\`/g;
        $data =~ s/‘/\\`/g;
        $data =~ s/‚/\\,/g;
+       $data =~ s/⚡/`/g;
+       $data =~ s/↑ /N /g;
+       $data =~ s/↓ /S /g;
+       $data =~ s/↘ /SE /g;
        return $data;
     }
 }

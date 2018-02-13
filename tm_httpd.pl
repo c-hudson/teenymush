@@ -40,7 +40,7 @@ sub http_accept
                     data => {},
                     ip   => server_hostname($new),
                   };
-#   printf("   %s\@web Connect\n",@{@http{$new}}{ip});
+   printf("   %s\@web Connect\n",@{@http{$new}}{ip});
 }
 
 sub http_disconnect
@@ -95,7 +95,7 @@ sub http_reply
 
 sub http_reply_simple
 {
-   my ($s,$fmt,@args) = @_;
+   my ($s,$type,$fmt,@args) = @_;
 
    my $msg = sprintf($fmt,@args);
 
@@ -103,7 +103,7 @@ sub http_reply_simple
    http_out($s,"Date: %s",scalar localtime());
    http_out($s,"Last-Modified: %s",scalar localtime());
    http_out($s,"Connection: close");
-   http_out($s,"Content-Type: text/html; charset=ISO-8859-1");
+   http_out($s,"Content-Type: text/$type; charset=ISO-8859-1");
    http_out($s,"");
    http_out($s,$fmt,@args);
    http_disconnect($s);
@@ -171,8 +171,14 @@ sub http_process_line
                );
          }
 
-         if($msg =~ /^\s*socket\s*$/i) {
-            http_reply_simple($s,"%s",getfile("socket.txt"));
+         if($msg =~ /^\s*(socket|wsclient\.html|wsclient\.js|ansi\.css|style\.css)\s*$/i) {
+            if($1 eq "wsclient.html") {
+               http_reply_simple($s,"html","%s",getfile($1));
+            } else {
+               my $file = getfile($1);
+               $file =~ s/\n/\r\n/g;
+               http_reply_simple($s,"css","%s",$file);
+            }
          } else {
             my $prog = mushrun(self   => $self,
                                runas  => $self,

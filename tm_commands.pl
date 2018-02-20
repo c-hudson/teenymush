@@ -280,7 +280,8 @@ sub cmd_find
                            " where o.obj_id = f.obj_id  ".
                            "   and f.fde_flag_id = fd.fde_flag_id  ".
                            "   and o.obj_owner = ?  ".
-                           "   and fde_letter in ('o','R','E','P')",
+                           "   and CAST(fde_letter as binary) in " .
+                           "       ('o','R','e','P')",
                            owner_id($self)
                           )
                    ]
@@ -2292,6 +2293,8 @@ sub cmd_name
           $name,
           $$target{obj_id},
           );
+ 
+      set_cache($target,"obj_name");
 
       if($$db{rows} == 1) {
 
@@ -2630,8 +2633,14 @@ sub cmd_teleport
       return err($self,$prog,"Permission Denied.");
 
    if(hasflag($location,"EXIT")) {
-      if(loc($location) == loc($self) && loc($self) == loc($target)) {
-         $location = fetch(destination($location));
+      if((owner(loc($location)) == $$self{obj_id} &&
+         loc($location) == loc($target)) ||
+         hasflag($self,"WIZARD")) {
+         $location = fetch(dest($location));
+
+         if($location eq undef) {
+            return err($self,$prog,"That exit does not go anywhere.");
+         }
       } else {
          return err($self,$prog,"Permission Denied.");
       }
@@ -2760,7 +2769,12 @@ sub cmd_quit
 
    if(defined $$self{sock}) {
       my $sock = $$self{sock};
-      printf($sock "%s",get(0,"LOGOFF"));
+
+      if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
+         ws_echo($sock,@info{"conf.logoff"});
+      } else {
+         printf($sock "%s",@info{"conf.logoff"});
+      }
       server_disconnect($sock);
    } else {
       err($self,$prog,"Permission denied [Non-players may not quit]");
@@ -3140,8 +3154,14 @@ sub invalid_player
    } elsif($value ne undef && $data eq $value) {
       return 0;
    }
-   printf($sock "Either that player does not exist, or has a different " .
+
+   if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
+      ws_echo($sock,"Either that player does not exist, or has a different " .
           "password.\r\n");
+   } else {
+      printf($sock "Either that player does not exist, or has a different " .
+          "password.\r\n");
+   }
   
    # log invalid connects for possible brute attack detection?
    sql("insert into socket_history ".
@@ -3288,7 +3308,11 @@ sub cmd_connect
 
    } else {
       # not sure this can actually happen
-      printf($sock "Invalid command, try: connect <user> <password>\r\n");
+      if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
+         ws_echo($sock,"Invalid command, try: connect <user> <password>");
+      } else {
+         printf($sock "Invalid command, try: connect <user> <password>\r\n");
+      }
    }
 }
 

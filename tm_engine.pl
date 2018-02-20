@@ -264,7 +264,7 @@ sub spin
 
    eval {
        local $SIG{__DIE__} = sub {
-          printf("----- [ Crash Report@ %s ]-----\n",scalar localtime());
+          printf("----- [ Crash REPORT@ %s ]-----\n",scalar localtime());
           printf("User:     %s\nCmd:      %s\n",name($user),
               @{@last{cmd}}{cmd});
           if(defined @info{sql_last}) {
@@ -332,7 +332,7 @@ sub spin
             my $prog = shift(@$thread);
             if($$prog{hint} eq "WEBSOCKET") {
                my $msg = join("",@{@$prog{output}});
-               $prog->{sock}->send('','t' . $msg);
+               $prog->{sock}->send_utf8($msg);
            } elsif($$prog{hint} eq "WEB") {
                if(defined $$prog{output}) {
                   http_reply($$prog{sock},join("",@{@$prog{output}}));
@@ -384,6 +384,11 @@ sub run_internal
 {
    my ($hash,$cmd,$command,$prog,$arg,$type) = @_;
    my %switch;
+
+   # The player is probably disconnected but there are commands in the queue.
+   # These orphaned commands are being run against the not logged in commands
+   #  set which will crash this function. These commands should just be ignored.
+   return if($$hash{cmd} =~ /^CODE\(.*\)$/);
 
    $$prog{cmd} = $command;
    while($arg =~ /^\/([^ =]+)( |$)/) {                  # find switches

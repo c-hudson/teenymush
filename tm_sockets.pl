@@ -347,13 +347,6 @@ sub server_disconnect
             );
          my_commit($db);
       } elsif(defined $$hash{connect_time}) {                # Player Socket
-         necho(self => $hash,
-               prog => $prog,
-               room => [ $hash, "%s has disconnected.",name($hash) ]
-              );
-         echo_flag($hash,$prog,"CONNECTED,PLAYER,MONITOR",
-                   "[Monitor] %s has disconnected.",name($hash));
-
 
          my $key = connected_user($hash);
          delete @{@connected_user{$$hash{obj_id}}}{$key};
@@ -384,11 +377,12 @@ sub server_disconnect
              my_commit($db);
          }
 
-         if($type eq "WEBSOCKET") {
-            ws_echo($id,@info{"conf.logoff"});
-         } else {
-            printf($id "%s",@info{"conf.logoff"});
-         }
+         necho(self => $hash,
+               prog => $prog,
+               room => [ $hash, "%s has disconnected.",name($hash) ]
+              );
+         echo_flag($hash,$prog,"CONNECTED,PLAYER,MONITOR",
+                   "[Monitor] %s has disconnected.",name($hash));
       }
    }
 

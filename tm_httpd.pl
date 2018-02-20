@@ -40,7 +40,7 @@ sub http_accept
                     data => {},
                     ip   => server_hostname($new),
                   };
-   printf("   %s\@web Connect\n",@{@http{$new}}{ip});
+#   printf("   %s\@web Connect\n",@{@http{$new}}{ip});
 }
 
 sub http_disconnect
@@ -171,15 +171,10 @@ sub http_process_line
                );
          }
 
-         if($msg =~ /^\s*(socket|wsclient\.html|wsclient\.js|ansi\.css|style\.css)\s*$/i) {
-            if($1 eq "wsclient.html") {
-               http_reply_simple($s,"html","%s",getfile($1));
-            } else {
-               my $file = getfile($1);
-               $file =~ s/\n/\r\n/g;
-               http_reply_simple($s,"css","%s",$file);
-            }
-         } else {
+         # html/js/css should be a static file, so just return the file
+         if($msg =~ /\.(html|js|css)$/i && -e "txt/" . trim($msg)) {
+            http_reply_simple($s,$1,"%s",getfile(trim($msg)));
+         } else {                                          # mush command
             my $prog = mushrun(self   => $self,
                                runas  => $self,
                                source => 0,

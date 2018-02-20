@@ -80,7 +80,7 @@ later retrieved with the get function or maybe examined.
 Example:              |   Output
 ===========================================================
                       |
-&foo me = bar         |   Set.say, "Hello"
+&foo me = bar         |   Set.
                       |
 examine me/foo        |   FOO: bar
 

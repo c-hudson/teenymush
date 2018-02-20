@@ -556,31 +556,6 @@ sub log_output
 }
 
 
-#
-# ws_echo
-#    The send might crash if the websocket has disconnected the evals should
-#    probably be removed once this is more stable. With that in mind,
-#    currently crash will be treated as a disconnect.
-#
-sub ws_echo
-{
-   my ($s, $msg) = @_;
-
-   return if not defined @connected{$s};
-   my $conn = @{@connected{$s}}{conn};
-   # this might crash if the websocket dies, the evals should
-   # probably be removed once this is more stable. With that in mind,
-   # currently crash will be treated as a disconnect.
-   eval {
-      printf("### %s\n",$msg);
-      $conn->send('','t'.$msg);
-   };
-
-   if($@) {
-       ws_disconnect($conn);
-   }
-}
-
 sub echo_socket
 {
    my ($obj,$prog,$fmt,@args) = (obj(shift),shift,shift,@_);
@@ -736,11 +711,20 @@ sub echo_output_to_puppet_owner
          my $sock = @{@connected{$$player{sck_socket}}}{sock};
 
          if($obj_loc != $$player{con_source_id}) {
-             printf($sock "%s%s> %s\n",
-                    nospoof($self,$prog,$player),
-                    name($self),
-                    $msg
-                   );
+            if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
+                ws_echo($sock,
+                        nospoof($self,$prog,$player) .
+                        name($self) .
+                        "> " .
+                        $msg
+                       );
+            } else {
+               printf($sock "%s%s> %s\n",
+                      nospoof($self,$prog,$player),
+                      name($self),
+                      $msg
+                     );
+            }
          }
       }
    }
@@ -764,7 +748,11 @@ sub echo_nolog
       for my $key (keys %connected) {
          if($$target{obj_id} eq @{$connected{$key}}{obj_id}) {
             my $sock = @{$connected{$key}}{sock};
-            printf($sock "%s",$out);
+            if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
+               ws_echo($sock,$out);
+            } else {
+               printf($sock "%s",$out);
+            }
          }
       }
 #   }

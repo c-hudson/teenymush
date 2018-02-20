@@ -31,18 +31,43 @@ sub ws_disconnect
     my ($conn, $code, $reason) = @_;
 
     my $sock = $conn->{socket};
-
     $ws->{select_readable}->remove( $conn->{socket} );
-
     server_disconnect( $conn->{socket} );
-    
+    $conn->disconnect();
+    delete $ws->{conns}{$sock};
 }
 
 sub ws_login_screen
 {
    my $conn = shift;
-   $conn->send('','t' . @info{"conf.login"});
+
+   ws_echo($conn->{socket}, @info{"conf.login"});
 }
+
+#
+# ws_echo
+#    The send might crash if the websocket has disconnected the evals should
+#    probably be removed once this is more stable. With that in mind,
+#    currently crash will be treated as a disconnect.
+#
+sub ws_echo
+{
+   my ($s, $msg) = @_;
+
+   return if not defined @connected{$s};
+   my $conn = @{@connected{$s}}{conn};
+   # this might crash if the websocket dies, the evals should
+   # probably be removed once this is more stable. With that in mind,
+   # currently crash will be treated as a disconnect.
+   eval {
+      $conn->send('','t'.$msg);
+   };
+
+   if($@) {
+       ws_disconnect($conn);
+   }
+}
+
 
 sub websock_io
 {
@@ -107,14 +132,29 @@ sub websock_io
 #
 sub ws_process {
    my( $conn, $msg, $ssl ) = @_;
-   $msg = substr($msg,1);
    $msg =~ s/\r|\n//g;
 
    $ssl = $ssl ? ',SSL' : '';
 
-   printf("   %s\@ws [%s]\n", @{$ws->{conns}{$conn->{socket}}}{ip},$msg);
+   if($msg =~ /^#M# /) {
+      printf("   %s\@ws [%s]\n", @{$ws->{conns}{$conn->{socket}}}{ip},$');
+      @{$ws->{conns}{$conn->{socket}}}{type} = "NON_INTERACTIVE";
+      my $self = fetch(@info{"conf.webuser"});
 
-   server_process_line(@connected{$conn->{socket}},$msg);
+      my $prog = mushrun(self   => $self,
+                         runas  => $self,
+                         source => 0,
+                         cmd    => $',
+                         hint   => "WEBSOCKET",
+                         sock   => $conn,
+                         output => []
+                        );
+      $$prog{sock} = $conn;
+   } else {
+      printf("   %s\@ws [%s]\n", @{$ws->{conns}{$conn->{socket}}}{ip},$msg);
+      $msg = substr($msg,1);
+      server_process_line(@connected{$conn->{socket}},$msg);
+   }
 }
 
 
@@ -124,8 +164,20 @@ sub websock_wall
 
    my $hash = $ws->{conns};
 
+   printf("websocket_wall called\n");
    for my $key ( keys %$hash) {
       my $client = $$hash{$key}->{conn};
-      $client->send_utf8("### Trigger ### $txt");
+
+      if(@{$ws->{conns}{$client->{socket}}}{type} eq "NON_INTERACTIVE") {
+         eval {
+            $client->send_utf8("### Trigger ### $txt");
+         };
+         if($@) {
+            ws_disconnect($client);
+         }
+      } else {
+#         printf("Skipped $client\n");
+      }
    }
+   printf("websocket_wall done\n");
 }

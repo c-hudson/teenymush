@@ -3451,7 +3451,7 @@ sub list_attr
 
       # convert single line unreadable mushcode into hopefully readable
       # multiple line code
-      if(!defined $$switch{ugly}) {
+      if(!defined $$switch{raw}) {
          if(length($$hash{atr_value}) > 78 &&
             $$hash{atr_value} !~ /\n/ &&
             $$hash{atr_value} =~ /^\s*([\$|\[|^|!|@])/) {
@@ -3502,6 +3502,8 @@ sub cmd_ex
    my ($self,$prog,$txt,$switch) = @_;
 #   my ($self,$prog,$txt) = @_;
    my ($target,$desc,@exit,@content,$atr,$out);
+
+   validate_switches($self,$prog,$switch,"raw") || return;
 
    $txt = evaluate($self,$prog,$txt);
 
@@ -3577,7 +3579,7 @@ sub cmd_ex
    }
 
    if($perm) {                                             # show attributes
-      my $attr = list_attr($target);
+      my $attr = list_attr($target,undef,$switch);
       $out .= "\n" . $attr if($attr ne undef);
    }
 

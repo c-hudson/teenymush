@@ -129,10 +129,11 @@ sub dprint
         $out .= sprintf("%s%s\n"," " x $depth,$txt);
                                          # Text enclosed in {}, split apart?
     } elsif($txt =~ /^\s*{\s*(.+?)}\s*([;,]{0,1})\s*$/s) {
-        $txt = pretty($depth+3,$1);
+        my ($grouped,$ending) = ($1,$2);
+        $txt = pretty($depth+3,$grouped);
         $txt =~ s/^\s+//;
         $out .= sprintf("%s{  %s"," " x $depth,$txt);
-        $out .= sprintf("%s}$2\n"," " x $depth);
+        $out .= sprintf("%s}%s\n"," " x $depth,$ending);
     } else {                                    # generic text, wrapping it
        # $out .= sprintf("%s%s\n"," " x $depth,$txt);
        $out .= wrap(" " x $depth," " x $depth,$txt) . "\n";
@@ -193,14 +194,23 @@ sub fmt_switch
     my ($first,$second) = fmt_balanced_split(shift(@list),'=',3);
 
 
-    # show @command + first subsegment
-    $out .= dprint($depth,"%s %s",$cmd,$first);
+    my $len = $depth + length($cmd) + 1;                  # first subsegment
+    if($len + length($first)  > $max) {                        # multilined
+        $first =~ s/=\s*$//g;
+       $out .= dprint($depth,
+                      "%s %s=",
+                      $cmd,
+                      substr(noret(function_print($len-3,$first)),$len)
+                     );
+    } else {                                                  # single lined
+       $out .= dprint($depth,"%s %s",$cmd,$first);
+    }
 
-    # show second subsegment
-    $out .= dprint($depth+3,"%s",$second);
+
+    $out .= dprint($depth+3,"%s",$second);               # second subsegment
 
     # show the rest of the segments at alternating depths
-    for my $i (0 .. $#list) {
+    for my $i (0 .. $#list) {                         # remaining segments
        my $indent = ($i % 2 == 0) ? 6 : 3;
 
        if($depth + $indent + length(@list[$i]) < $max ||
@@ -430,6 +440,7 @@ sub pretty
 # 
 # my $code='&list me=[u(fnd,%0,%1,after(first(v(who)),|))];@select 0=[match(v(who),%#|*)],{@pemit %#=Tao: Sorry, Your not playing right now.},[match(first(v(who)),%#|*)],{@pemit %#=Tao: Sorry, its [name(before(first(v(who)),|))] turn right now.},[u(isval,%0,%1,.)],{@pemit %#=Tao: That is not a valid move, try again.},[words(v(list))],{@pemit %#=Tao: Sorry, that move does not result in a capture.},{&who me=[rest(v(who))] [first(v(who))];@dolist [first(%0)]|[first(%1)] [v(list)] END=@select ##=END,{@pemit %#=[u(board,{%n played [first(%0)],[first(%1)]})];@pemit [before(first(v(who)),|)]=[u(board,{%n played [first(%0)],[first(%1)]})]},{&c[before(##,|)] me=[replace(v(c[before(##,|)]),after(##,|),after(rest(v(who)),|),|)]}}';
 # my $code='[setq(0,iter(u(num,3),[u(ck,2,%2,add(%0,##),add(%1,##))][u(ck,3,%2,add(%0,##),%1)][u(ck,4,%2,add(%0,##),add(%1,-##))][u(ck,5,%2,%0,add(%1,-##))][u(ck,6,%2,add(%0,-##),add(%1,-##))][u(ck,7,%2,add(%0,-##),%1)][u(ck,8,%2,add(%0,-##),add(%1,##))]))]';
+# my $code='@switch [t(match(get(#5/hangout_list),%1))][match(bus cab bike motorcycle car walk boomtube,%0)]=0*,@pemit %#=Double-check the DB Number. That does not seem to be a viable option.,11,{@tel %#=%1;@wait 1=@remit [loc(%#)]=A bus pulls up to the local stop. %N steps out.},12,{@tel %#=%1;@wait 1=@remit [loc(%#)]=A big yellow taxi arrives. A figure inside pays the tab%, then steps out and is revealed to be %N.},13,{@tel %#=%1;@wait 1=@remit [loc(%#)]=%N arrives in the area%, pedaling %p bicycle.},14,{@tel %#=%1;@wait 1=@remit [loc(%#)]=%N pulls up on %p motorcycle%, kicking the stand and stepping off.},15,{@tel %#=%1;@wait 1=@remit [loc(%#)]=%N pulls up in %p car%, parking and then getting out.},16,{@tel %#=%1;@wait 1=@remit %N walks down the street in this direction.=<an emit>},17,{@tel %#=%1;@wait 1=@remit [loc(%#)]=A boomtube opens%, creating a spiraling rift in the air. After a moment%, %N steps out.},@pemit %#=That method of travel does not seem to exist.';
 # 
 # 
-# printf("%s\n",function_print(0,$code));
+# printf("%s\n",pretty(0,$code));

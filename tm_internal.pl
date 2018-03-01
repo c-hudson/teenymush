@@ -37,6 +37,32 @@ sub glob2re {
     return "(?msx:\\A$pat\\z)";
 }
 
+sub validate_switches
+{
+   my ($self,$prog,$switch,@switches) = @_;
+   my (%hash,$name);
+
+   @hash{@switches} = (0 .. $#switches);
+
+   printf("KEYS: '%s'\n",join(',',keys %hash));
+   for my $key (keys %$switch) {
+      if(!defined @hash{$key}) {
+         if(@{$$prog{cmd}}{cmd} =~ /^\s*([^ \/]+)/) {
+            $name = $1;
+         } else {
+            $name = "N/A";
+         }
+         necho(self => $self,
+               prog => $prog,
+               source => [ "Unrecognized switch '%s' for command '%s'",
+                           $key,$name ],
+         );
+         return 0;
+      }
+   }
+   return 1;
+}
+
 
 #
 # err

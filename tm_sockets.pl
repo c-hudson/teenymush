@@ -297,9 +297,9 @@ sub server_handle_sockets
 #            while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
             while(@{@connected{$s}}{buf} =~ /\n/) {
                @{@connected{$s}}{buf} = $';                # store left overs
-#               if(@{@connected{$s}}{raw} > 0) {
-#                  printf("#%s# %s\n",@{@connected{$s}}{raw},$`);
-#               }
+               if(@{@connected{$s}}{raw} > 0) {
+                  printf("#%s# %s\n",@{@connected{$s}}{raw},$`);
+               }
 
                server_process_line(@connected{$s},$`);         # process line
             }

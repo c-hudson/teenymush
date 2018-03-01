@@ -1678,6 +1678,7 @@ sub cmd_send
        } else {
           my $txt = evaluate($self,$prog,$');
           printf($sock "%s\r\n",evaluate($self,$prog,$'));
+          printf("# '%s'\r\n",evaluate($self,$prog,$'));
        }
     } else {
        necho(self   => $self,
@@ -3413,7 +3414,7 @@ sub cmd_set
 
 sub list_attr
 {
-   my ($obj,$atr) = @_;
+   my ($obj,$atr,$switch) = @_;
    my ($query,@where,@result);
 
    $atr =~ s/\*/%/g;
@@ -3448,26 +3449,43 @@ sub list_attr
        @where
       )}) { 
 
-       if($$hash{atr_pattern_type} == 1) {
-          $$hash{atr_value} = "\$$$hash{atr_pattern}:$$hash{atr_value}";
-       } elsif($$hash{atr_pattern_type} == 2) {
-          $$hash{atr_value} = "^$$hash{atr_pattern}:$$hash{atr_value}";
-       } elsif($$hash{atr_pattern_type} == 3) {
-          $$hash{atr_value} = "!$$hash{atr_pattern}:$$hash{atr_value}";
-       }
+      # convert single line unreadable mushcode into hopefully readable
+      # multiple line code
+      if(!defined $$switch{ugly}) {
+         if(length($$hash{atr_value}) > 78 &&
+            $$hash{atr_value} !~ /\n/ &&
+            $$hash{atr_value} =~ /^\s*([\$|\[|^|!|@])/) {
+            if($1 eq "[") {
+               $$hash{atr_value}=function_print(0,
+                                                single_line($$hash{atr_value})
+                                               );
+            } else {
+               $$hash{atr_value}="\n".pretty(3,single_line($$hash{atr_value}));
+            }
+         }
+      }
 
-       if($$hash{atr_value} =~ /\n/ && $$hash{atr_value} !~ /^\s*[\$!^]/) {
-          $$hash{atr_value} = "\n$$hash{atr_value}";
-       }
-       if($$hash{atr_flag} eq undef) {
-          push(@result,sprintf("%s: %s",$$hash{atr_name},$$hash{atr_value}));
-       } else {
-          push(@result,sprintf("%s[%s]: %s",@$hash{atr_name},$$hash{atr_flag},
-              $$hash{atr_value}));
-       }
-       if(uc($$hash{atr_name}) eq uc($atr)) {
-          return @result[$#result];
-       }
+      if($$hash{atr_pattern_type} == 1) {
+         $$hash{atr_value} = "\$$$hash{atr_pattern}:$$hash{atr_value}";
+      } elsif($$hash{atr_pattern_type} == 2) {
+         $$hash{atr_value} = "^$$hash{atr_pattern}:$$hash{atr_value}";
+      } elsif($$hash{atr_pattern_type} == 3) {
+         $$hash{atr_value} = "!$$hash{atr_pattern}:$$hash{atr_value}";
+      }
+
+      if($$hash{atr_value} =~ /\n/ && $$hash{atr_value} !~ /^\s*[\$!^]/) {
+         $$hash{atr_value} = "\n$$hash{atr_value}";
+      }
+
+      if($$hash{atr_flag} eq undef) {
+         push(@result,sprintf("%s: %s",$$hash{atr_name},$$hash{atr_value}));
+      } else {
+         push(@result,sprintf("%s[%s]: %s",@$hash{atr_name},$$hash{atr_flag},
+             $$hash{atr_value}));
+      }
+      if(uc($$hash{atr_name}) eq uc($atr)) {
+         return @result[$#result];
+      }
    }
 
    if($#result == -1 && $atr eq undef) {
@@ -3481,7 +3499,8 @@ sub list_attr
 
 sub cmd_ex
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = @_;
+#   my ($self,$prog,$txt) = @_;
    my ($target,$desc,@exit,@content,$atr,$out);
 
    $txt = evaluate($self,$prog,$txt);
@@ -3503,7 +3522,7 @@ sub cmd_ex
       if($perm) {
          return necho(self   => $self,
                       prog   => $prog,
-                      source => [ "%s",list_attr($target,$atr)],
+                      source => [ "%s",list_attr($target,$atr,$switch)],
                      );
       }
       return err($self,$prog,"Permission denied.");

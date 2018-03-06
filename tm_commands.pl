@@ -1678,7 +1678,6 @@ sub cmd_send
        } else {
           my $txt = evaluate($self,$prog,$');
           printf($sock "%s\r\n",evaluate($self,$prog,$'));
-          printf("# '%s'\r\n",evaluate($self,$prog,$'));
        }
     } else {
        necho(self   => $self,
@@ -3659,29 +3658,22 @@ sub cmd_ex
 sub cmd_inventory
 {
    my ($self,$prog,$txt) = @_;
+   my $out;
 
    my $inv = [ lcon($self) ];
 
    if($#$inv == -1) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "You are not carrying anything." ],
-           );
+      $out .= "You are not carrying anything.";
    } else {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "You are carrying:" ],
-           );
+      $out = "You are carrying:";
       for my $i (0 .. $#$inv) {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "%s", obj_name($self,$$inv[$i]) ],
-              );
+         $out .= "\n" . obj_name($self,$$inv[$i]);
       }
    }
+
    necho(self   => $self,
          prog   => $prog,
-         source => [ "You have %s", pennies($self) ],
+         source => [ "%s\nYou have %s", $out,pennies($self) ],
         );
   
 }

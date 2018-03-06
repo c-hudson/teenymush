@@ -44,7 +44,6 @@ sub validate_switches
 
    @hash{@switches} = (0 .. $#switches);
 
-   printf("KEYS: '%s'\n",join(',',keys %hash));
    for my $key (keys %$switch) {
       if(!defined @hash{$key}) {
          if(@{$$prog{cmd}}{cmd} =~ /^\s*([^ \/]+)/) {

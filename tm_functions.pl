@@ -1357,6 +1357,7 @@ sub fun_input
        $data =~ s/↑ /N /g;
        $data =~ s/↓ /S /g;
        $data =~ s/↘ /SE /g;
+       $data =~ s/→ /E /g;
        return $data;
     }
 }

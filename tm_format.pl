@@ -40,6 +40,7 @@ my %fmt_cmd = (
     '@select' => sub { fmt_switch(@_); },
     '@dolist' => sub { fmt_dolist(@_); },
     '&'       => sub { fmt_amper(@_);  },
+    '@while'  => sub { fmt_while(@_);  },
 );
 
 
@@ -169,6 +170,21 @@ sub fmt_dolist
     return $out;
 }
 
+sub fmt_while
+{
+   my ($depth,$cmd,$txt) = @_;
+   my $out;
+
+   if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*(;{0,1})\s*$/s) {
+      $out .= dprint($depth,"%s ( %s ) {",$cmd,$1);
+      $out .= pretty($depth+3,$2);
+      $out .= dprint($depth,"}%s",$3);
+      return $out;
+   } else {
+      return dprint($depth,"%s",$cmd . " " . $txt);
+   }
+}
+
 #
 # fmt_switch
 #   Handle formating for @switch/select
@@ -200,10 +216,10 @@ sub fmt_switch
        $out .= dprint($depth,
                       "%s %s=",
                       $cmd,
-                      substr(noret(function_print($len-3,$first)),$len)
+                      substr(noret(function_print($len-3,trim($first))),$len)
                      );
     } else {                                                  # single lined
-       $out .= dprint($depth,"%s %s",$cmd,$first);
+       $out .= dprint($depth,"%s %s",$cmd,trim($first));
     }
 
 
@@ -417,8 +433,10 @@ sub pretty
        my ($cmd,$arg) = split_command($txt);
        if(defined @fmt_cmd{$cmd}) {
           $out .= &{@fmt_cmd{$cmd}}($depth,$cmd,$arg);
+          $out =~ s/\n+$//g if($depth==3);
        } elsif(defined @fmt_cmd{lc($cmd)}) {
           $out .= &{@fmt_cmd{lc($cmd)}}($depth,$cmd,$arg);
+          $out =~ s/\n+$//g if($depth==3);
        } else {
           $out .= dprint($depth,"%s",$txt);
        }

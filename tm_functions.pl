@@ -93,16 +93,25 @@ my %fun =
    graph     => sub { return &fun_graph(@_);                            },
    lexits    => sub { return &fun_lexits(@_);                           },
    home      => sub { return &fun_home(@_);                             },
-   latr      => sub { return &fun_latr(@_); },
+   rand      => sub { return &fun_rand(@_);                             },
    decode_entities => sub { return &fun_de(@_);                         },
 );
 
-sub fun_latr
+sub fun_rand
 {
-   my ($self,$prog,$obj,$atr) = @_;
+   my ($self,$prog,$txt) = @_;
 
-   return atr_case(obj($obj),$atr);
+   if($txt =~ /^\s*(\d+)\s*$/) {
+      if($1 < 1) {
+         return "#-1 ARGUEMENT MUST BE GREATER OR EQUAL TO 1";
+      } else {
+         return sprintf("%d",rand($1));
+      }
+   } else {
+      return "#-1 ARGUEMENT MUST BE INTEGER";
+   }
 }
+
 
 sub var_backup
 {

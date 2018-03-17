@@ -226,16 +226,24 @@ sub fmt_switch
     $out .= dprint($depth+3,"%s",$second);               # second subsegment
 
     # show the rest of the segments at alternating depths
-    for my $i (0 .. $#list) {                         # remaining segments
+    for my $i (0 .. $#list) {
        my $indent = ($i % 2 == 0) ? 6 : 3;
 
-       if($depth + $indent + length(@list[$i]) < $max ||
-          @list[$i] =~ /^\s*{.*}\s*;{0,1}\s*$/) {
-          $out .= dprint($depth + $indent,"%s",@list[$i]);
-       } else {
+       if($i % 2 == 1) {
+          if($i == $#list) {                        # default test condition
+             $out .= dprint($depth+3,"DEFAULT,"); 
+             $out .= dprint($depth+6,"%s",@list[$i]);
+          } else {                                          # test condition
+             $out .= dprint($depth+3,"%s",@list[$i]);
+          }
+       } elsif($depth + $indent + length(@list[$i]) > $max ||     # long cmd
+               @list[$i] =~ /^\s*{.*}\s*;{0,1}\s*$/) {
           $out .= pretty($depth+6,@list[$i]);
+       } else {                                                  # short cmd
+          $out .= dprint($depth + 6,"%s",@list[$i]);
        }
     }
+
     return $out;
 }
 

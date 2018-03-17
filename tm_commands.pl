@@ -3461,6 +3461,7 @@ sub list_attr
             } else {
                $$hash{atr_value}="\n".pretty(3,single_line($$hash{atr_value}));
             }
+            $$hash{atr_value} =~ s/\n+$//;
          }
       }
 

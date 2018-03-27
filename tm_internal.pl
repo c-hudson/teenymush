@@ -28,10 +28,12 @@ sub glob2re {
 
     return undef if $pat eq undef;
     $pat =~ s{(\W)}{
-        $1 eq '?' ? '(.)' :
+        $1 eq '?' ? '(.)' : 
         $1 eq '*' ? '(*PRUNE)(.*?)' :
         '\\' . $1
     }eg;
+
+    $pat =~ s/\\\(.\)/?/g;
 
 #    return "(?mnsx:\\A$pat\\z)";
     return "(?msx:\\A$pat\\z)";
@@ -72,6 +74,7 @@ sub err
 {
    my ($self,$prog,$fmt,@args) = @_;
 
+   printf("### ERROR: '$fmt'\n",@args);
    necho(self => $self,
          prog => $prog,
          source => [ $fmt,@args ],
@@ -598,8 +601,21 @@ sub echo_socket
             printf($s "%s",$msg);
          }
       }
-   } else {
-      echo_output_to_puppet_owner($$obj{obj_id},$prog, $msg);
+   } elsif(hasflag($obj,"PUPPET") && !hasflag($obj,"PLAYER")) {
+      my $owner = owner($obj);
+      if(defined @connected_user{$$owner{obj_id}}) {
+         my $list = @connected_user{$$owner{obj_id}};
+
+         for my $socket (keys %$list) {
+            my $s = $$list{$socket};
+   
+            if(@{@connected{$s}}{type} eq "WEBSOCKET") {
+                ws_echo($s,name($obj) . "> " .$msg);
+            } else {
+               printf($s "%s> %s",name($obj),$msg);
+            }
+         }
+      }
    }
 }
 
@@ -631,16 +647,16 @@ sub necho
       }
    }
 
-   for my $type ("room", "room2") {                       # handle room echos
+   for my $type ("room", "room2","all_room","all_room2") {  # handle room echos
       if(defined $arg{$type}) {
          my $array = $arg{$type};
          my $target = obj(shift(@$array));
          my $fmt = shift(@$array);
          my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
+         $target = loc($target) if(!hasflag($target,"ROOM"));
 
-         for my $obj ( lcon(loc($target)), lcon($target) ) {
-
-            if($$self{obj_id} != $$obj{obj_id}) {
+         for my $obj ( lcon($target) ) {
+            if($$self{obj_id} != $$obj{obj_id} || $type =~ /^all_/) {
                echo_socket($obj,
                            @arg{prog},
                            "%s%s",
@@ -650,7 +666,6 @@ sub necho
             }
          }
          handle_listener($arg{self},$arg{prog},$target,$fmt,@$array);
-
       }
    }
  
@@ -679,11 +694,6 @@ sub necho
             next;
       }
 
-#      if(!defined @arg{hint} ||
-#         (@arg{hint} eq "ECHO_ROOM" && loc($target) != loc(owner($target)))) {
-#         echo_output_to_puppet_owner($target,$arg{prog},$msg,$arg{debug});
-#      }
-
       if(defined @{$arg{self}}{loggedin} && !@{$arg{self}}{loggedin}) {
          my $self = $arg{self};
          my $s = @{$connected{$$self{sock}}}{sock};
@@ -705,52 +715,6 @@ sub necho
                      nospoof(@arg{self},@arg{prog},$$target{obj_id}),
                      $msg
                     );
-      }
-   }
-}
-
-sub echo_output_to_puppet_owner
-{
-   my ($self,$prog,$msg,$debug) = (obj(shift),obj(shift),shift,shift);
-   $msg =~ s/\n*$//;
-
-   if(hasflag($self,"PUPPET")) {                      # forward if puppet
-      my $obj_loc = loc($self);
-
-      for my $player (@{sql($db,
-                            "select sck_socket, " .
-                            "       obj2.obj_id, " .
-                            "       obj2.obj_name, " .
-                            "       c.con_source_id " .
-                            "  from socket sck, " .
-                            "       object obj1, " .
-                            "       object obj2, " .
-                            "       content c " .
-                            " where sck.obj_id = obj1.obj_owner ".
-                            "   and obj1.obj_id = ? ".
-                            "   and obj1.obj_owner = obj2.obj_id ".
-                            "   and c.obj_id = obj2.obj_id ".
-                            "   and sck_type = 1 ",
-                            $$self{obj_id}
-                     )}) {
-         my $sock = @{@connected{$$player{sck_socket}}}{sock};
-
-         if($obj_loc != $$player{con_source_id}) {
-            if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
-                ws_echo($sock,
-                        nospoof($self,$prog,$player) .
-                        name($self) .
-                        "> " .
-                        $msg
-                       );
-            } else {
-               printf($sock "%s%s> %s\n",
-                      nospoof($self,$prog,$player),
-                      name($self),
-                      $msg
-                     );
-            }
-         }
       }
    }
 }
@@ -2245,13 +2209,15 @@ sub lastsite
 {
    my $target = obj(shift);
 
+   printf("FOO: '%s'\n",$$target{obj_id});
    return one_val($db,
                   "SELECT skh_hostname value " .
-                  "  from socket_history skh1 " .
-                  " where obj_id = ? " .
-                  "   and skh_id = (select max(skh_id) " .
-                  "                   from socket_history skh2 " .
-                  "                  where skh1.obj_id = skh2.obj_id )",
+                  "  from socket_history skh " .
+                  "     join (select max(skh_id) skh_id  ".
+                  "             from socket_history  ".
+                  "            where obj_id = ?  ".
+                  "          ) max ".
+                  "       on skh.skh_id = max.skh_id",
                   $$target{obj_id}
                  );
 }
@@ -2262,11 +2228,12 @@ sub firstsite
 
    return one_val($db,
                   "SELECT skh_hostname value " .
-                  "  from socket_history skh1 " .
-                  " where obj_id = ? " .
-                  "   and skh_id = (select min(skh_id) " .
-                  "                   from socket_history skh2 " .
-                  "                  where skh1.obj_id = skh2.obj_id )",
+                  "  from socket_history skh " .
+                  "     join (select min(skh_id) skh_id  ".
+                  "             from socket_history  ".
+                  "            where obj_id = ?  ".
+                  "          ) min".
+                  "       on skh.skh_id = min.skh_id",
                   $$target{obj_id}
                  );
 }

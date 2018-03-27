@@ -172,10 +172,11 @@ sub mushrun
 
     # copy over command(s)
     my $stack=@{$arg{prog}}{stack};
-    if($arg{source}) {
+    if($arg{source} || $arg{hint} eq "WEB") {
+       $arg{cmd} =~ s/^\s+|\s+$//g;
        unshift(@$stack,{ runas  => $arg{runas},
                          cmd    => $arg{cmd}, 
-                         source => 1,
+                         source => ($arg{hint} eq "WEB") ? 0 : 1,
                          multi  => ($multi eq undef) ? 0 : 1
                        }
               );
@@ -485,10 +486,7 @@ sub spin_run
       if($match ne undef) {                                     # found match
          return run_internal($hash,$match,$command,$prog,$arg);
       } else {                                                     # no match
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "Huh? (Type \"help\" for help.)" ]
-              );
+         return &{@{$$hash{"huh"}}{fun}}($$command{runas},$prog,$$command{cmd});
       }
    }
    return 1;

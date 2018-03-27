@@ -12,6 +12,7 @@ use Text::Wrap;
 $Text::Wrap::huge = 'overflow';
 my $max = 78;
 my %info;
+my $count;
 
 sub code
 {
@@ -85,7 +86,7 @@ sub fmt_balanced_split
                $buf = undef;
             } elsif($type <= 2 && $ch eq ")") {                   # func end
                push(@stack,$buf);
-               $last = $i+1;
+               $last = $i;
                $i = $size;
                $buf = undef;
                last;                                      # jump out of loop
@@ -127,6 +128,7 @@ sub dprint
     my $txt = sprintf($fmt,@args);
 
     if($depth + length($txt) < $max) {                # short, copy it as is.
+#        $out .= sprintf("%s%s [%s]\n"," " x $depth,$txt,code());
         $out .= sprintf("%s%s\n"," " x $depth,$txt);
                                          # Text enclosed in {}, split apart?
     } elsif($txt =~ /^\s*{\s*(.+?)}\s*([;,]{0,1})\s*$/s) {
@@ -137,7 +139,7 @@ sub dprint
         $out .= sprintf("%s}%s\n"," " x $depth,$ending);
     } else {                                    # generic text, wrapping it
        # $out .= sprintf("%s%s\n"," " x $depth,$txt);
-       $out .= wrap(" " x $depth," " x $depth,$txt) . "\n";
+       $out .= wrap(" " x $depth," " x ($depth+3),$txt) . "\n";
     }
     return $out;
 }
@@ -259,7 +261,7 @@ sub fmt_amper
          $out .= dprint($depth,"$cmd$txt");
       } elsif($val =~ /^\s*\[.*\]\s*(;{0,1})\s*$/) {
          $out .= dprint($depth,"&$atr $obj=");
-         $out .= function_print($depth,$val);
+         $out .= function_print($depth+3,$val);
       } else {
          $out .= dprint($depth,"%s",$cmd . $txt);
       }       
@@ -301,9 +303,9 @@ sub function_print_segment
    # skipped over parts. 
    #
    # FYI This comparison is slighytly wrong, but close
-   if(length("$left$function($arguments)$right") - length(@array[0]) < $max) {
+   if($depth + length("$left$function($arguments)$right") - length(@array[0]) < $max) {
       if($mright ne undef) {                 # does the function end right?
-         if(@array[0] =~ /^\s*$mright/) {
+         if(@array[0] =~ /^\s*\)$mright/) {
             @array[0] = $';                                          # yes
          } else {
             return (undef, undef, 1);                   # no, umatched "]"
@@ -323,20 +325,21 @@ sub function_print_segment
 
    $out .= dprint($depth,"%s","$left$function( " . @array[1]);
 
+   my $ident = length("$left$function( ") + $depth;
    for my $i (2 .. $#array) {                      # show function arguments
-      $out .= noret(function_print($depth+$len-4,@array[$i])) ."\n";
+      $out .= noret(function_print($ident,"@array[$i]")) . "\n";
    }
 
    $out .= dprint($depth,"%s",")$right");                    # show ending )
 
    if($mright ne undef) {
-      if(@array[0] =~ /^\s*$mright/) {
+      if(@array[0] =~ /^\s*\)$mright/) {
           return ($out,$',0);
       } else {
           return (undef,undef,2);
       }
-   } elsif(@array[0] =~ /^\s*$/ || @array[0] =~ /\s*(,)/) {
-      return ($out,@array[0].$1,0);
+   } elsif(@array[0] =~ /\s*\)\s*(,)/) {
+      return ($out,"$1$'",0);
    } else {
       return (undef,undef,3);
    }
@@ -356,7 +359,7 @@ sub function_print
    }
 
    while($txt =~ /^(\s*)([a-zA-Z_]+)\(/s) {
-      my ($fmt,$left,$err) = function_print_segment($depth+3,
+      my ($fmt,$left,$err) = function_print_segment($depth,
                                                  '',
                                                  $2,
                                                  $',
@@ -378,7 +381,7 @@ sub function_print
       my ($esc,$before,$after,$unmod) = ($1,$`,$',$2);
 
       if(length($esc) % 2 == 0) {
-          my ($fmt,$left,$err) = function_print_segment($depth+3,
+          my ($fmt,$left,$err) = function_print_segment($depth,
                                                      '[',
                                                      $unmod,
                                                      $after,
@@ -386,7 +389,7 @@ sub function_print
                                                      1
                                                     );
           if($err) {
-             $out .= "[$unmod(";
+             $out .= $before ."[$unmod(";
              $txt = $after;
           } else {
              $out .= $fmt;
@@ -398,7 +401,12 @@ sub function_print
       }
    }
 
-   return $out . $txt;
+   if($txt ne undef) {
+      $out =~  s/\n$//;
+      return $out . "$txt\n";
+   } else {
+      return $out . "$txt";
+   }
 
 #   } elsif($txt =~ /^\s*\[([a-zA-Z0-9_]+)\((.*)\)(\s*)\]\s*(;{0,1})\s*$/) {
 #      $out .= function_print_segment($depth+3,'[',$1,"$2)$3$4",']',1);
@@ -467,6 +475,9 @@ sub pretty
 # my $code='&list me=[u(fnd,%0,%1,after(first(v(who)),|))];@select 0=[match(v(who),%#|*)],{@pemit %#=Tao: Sorry, Your not playing right now.},[match(first(v(who)),%#|*)],{@pemit %#=Tao: Sorry, its [name(before(first(v(who)),|))] turn right now.},[u(isval,%0,%1,.)],{@pemit %#=Tao: That is not a valid move, try again.},[words(v(list))],{@pemit %#=Tao: Sorry, that move does not result in a capture.},{&who me=[rest(v(who))] [first(v(who))];@dolist [first(%0)]|[first(%1)] [v(list)] END=@select ##=END,{@pemit %#=[u(board,{%n played [first(%0)],[first(%1)]})];@pemit [before(first(v(who)),|)]=[u(board,{%n played [first(%0)],[first(%1)]})]},{&c[before(##,|)] me=[replace(v(c[before(##,|)]),after(##,|),after(rest(v(who)),|),|)]}}';
 # my $code='[setq(0,iter(u(num,3),[u(ck,2,%2,add(%0,##),add(%1,##))][u(ck,3,%2,add(%0,##),%1)][u(ck,4,%2,add(%0,##),add(%1,-##))][u(ck,5,%2,%0,add(%1,-##))][u(ck,6,%2,add(%0,-##),add(%1,-##))][u(ck,7,%2,add(%0,-##),%1)][u(ck,8,%2,add(%0,-##),add(%1,##))]))]';
 # my $code='@switch [t(match(get(#5/hangout_list),%1))][match(bus cab bike motorcycle car walk boomtube,%0)]=0*,@pemit %#=Double-check the DB Number. That does not seem to be a viable option.,11,{@tel %#=%1;@wait 1=@remit [loc(%#)]=A bus pulls up to the local stop. %N steps out.},12,{@tel %#=%1;@wait 1=@remit [loc(%#)]=A big yellow taxi arrives. A figure inside pays the tab%, then steps out and is revealed to be %N.},13,{@tel %#=%1;@wait 1=@remit [loc(%#)]=%N arrives in the area%, pedaling %p bicycle.},14,{@tel %#=%1;@wait 1=@remit [loc(%#)]=%N pulls up on %p motorcycle%, kicking the stand and stepping off.},15,{@tel %#=%1;@wait 1=@remit [loc(%#)]=%N pulls up in %p car%, parking and then getting out.},16,{@tel %#=%1;@wait 1=@remit %N walks down the street in this direction.=<an emit>},17,{@tel %#=%1;@wait 1=@remit [loc(%#)]=A boomtube opens%, creating a spiraling rift in the air. After a moment%, %N steps out.},@pemit %#=That method of travel does not seem to exist.';
+#my $code ='&won me=[switch(1,u(fnd,%0,add(1,strlen(v(c[first(%0)]))),after(rest(v(who)),|)),%#)]';
+#my $code = '[setq(1,)][setq(2,)][setq(3,)][setq(4,)][setq(5,)][setq(6,)][setq(7,)][setq(8,)][setq(9,)][setq(0,)]';
 # 
 # 
-# printf("%s\n",pretty(0,$code));
+# printf("%s\n",pretty(11,$code));
+# printf("%s\n",function_print(3,$code));

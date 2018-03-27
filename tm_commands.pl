@@ -1477,6 +1477,7 @@ sub mush_split2
 
 sub cmd_switch
 {
+#    printf("SWITCH: '%s'\n",@_[2]);
     my ($self,$prog,@list) = (shift,shift,balanced_split(shift,',',3));
     my %last;
 
@@ -1487,8 +1488,7 @@ sub cmd_switch
 
     while($#list >= 0) {
        if($#list >= 1) {
-          my ($txt,$cmd) = (evaluate($self,$prog,shift(@list)),
-                            evaluate($self,$prog,shift(@list)));
+          my ($txt,$cmd) = (evaluate($self,$prog,shift(@list)),shift(@list));
 #          $txt =~ s/\*/\(.*\)/g;
           $txt =~ s/^\s+|\s+$//g;
           $first =~ s/\//#/g;
@@ -1554,7 +1554,6 @@ sub cmd_telnet
 {
    my ($self,$prog,$txt) = @_;
    my $pending = 1;
-#   return 0;
 
    return err($self,$prog,"PErmission Denied.") if(!hasflag($self,"WIZARD"));
 
@@ -1792,7 +1791,8 @@ sub cmd_force
                prog   => $prog,
                runas  => $target,
                source => 0,
-               cmd    => evaluate($self,$prog,$'),
+#               cmd    => evaluate($self,$prog,$'),
+               cmd    => $',
                hint   => "INTERNAL"
               );
    } else {
@@ -2024,6 +2024,7 @@ sub cmd_destroy
 
    my $name = name($target);
    my $objname = obj_name($self,$target);
+   my $loc = loc($target);
 
    if(!destroy_object($target)) {
       necho(self   => $self,
@@ -2031,11 +2032,11 @@ sub cmd_destroy
             source  => [ "Internal error, object not destroyed." ],
            );
    } else {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "%s was destroyed.",$objname ],
-            room   => [ $target, "%s was destroyed.",$name  ],
-            room2  => [ $target, "%s has left.",$name ]
+      necho(self      => $self,
+            prog      => $prog,
+            source    => [ "%s was destroyed.",$objname ],
+            room      => [ $loc, "%s was destroyed.",$name  ],
+            all_room  => [ $loc, "%s has left.",$name ]
            );
    }
 }
@@ -2086,7 +2087,7 @@ sub cmd_think
 {
    my ($self,$prog,$txt) = @_;
 
-   my $start = Time::HiRes::gettimeofday();
+   printf("   : '%s'\n",code());
    necho(self   => $self,
          prog   => $prog,
          source => [ "%s", evaluate($self,$prog,$txt) ],
@@ -2648,7 +2649,7 @@ sub cmd_teleport
    
    necho(self   => $self,
          prog   => $prog,
-         room   => [ $target, "%s has left.",name($target) ]
+         all_room   => [ $target, "%s has left.",name($target) ]
         );
 
    move($self,$prog,$target,$location) ||
@@ -2656,7 +2657,7 @@ sub cmd_teleport
 
    necho(self   => $self,
          prog   => $prog,
-         room   => [ $target, "%s has arrived.",name($target) ]
+         all_room   => [ $target, "%s has arrived.",name($target) ]
         );
 
    mushrun(self   => $self,
@@ -3455,7 +3456,7 @@ sub list_attr
             $$hash{atr_value} !~ /\n/ &&
             $$hash{atr_value} =~ /^\s*([\$|\[|^|!|@])/) {
             if($1 eq "[") {
-               $$hash{atr_value}=function_print(0,
+               $$hash{atr_value}=function_print(3,
                                                 single_line($$hash{atr_value})
                                                );
             } else {
@@ -3546,7 +3547,7 @@ sub cmd_ex
                "You see nothing special."
               );
 
-   my $owner = fetch(($$target{obj_owner} == -1) ? 0 : $$target{obj_owner});
+   my $owner = owner($target);
    $out .= "\nOwner: " . obj_name($self,$owner,$perm) . 
            "  Key: " . nvl(lock_uncompile($self,
                                           $prog,
@@ -3627,23 +3628,25 @@ sub cmd_ex
       }
    }
 
-   for my $hash (@{sql($db,"  SELECT obj_name, obj.obj_id " .
-                           "    FROM content con, object obj, " . 
-                           "         flag flg, flag_definition fde " .
-                           "   WHERE con.obj_id = obj.obj_id " .
-                           "     AND flg.obj_id = obj.obj_id " . 
-                           "     AND fde.fde_flag_id = flg.fde_flag_id " .
-                           "     AND con_source_id = ?  " .
-                           "     AND atr_id is null " .
-                           "     and fde_type = 1 " .
-                           "     AND fde.fde_name = 'EXIT' " .
-                           "ORDER BY con_created_date",
-                           $$target{obj_id}
-                      )}) {
-      push(@exit,obj_name($self,$hash));
-   }
-   if($#exit >= 0) {
-      $out .= "\nExits:\n" . join("\n",@exit);
+   if(hasflag($target,"ROOM")) {
+      for my $hash (@{sql($db,"  SELECT obj_name, obj.obj_id " .
+                              "    FROM content con, object obj, " . 
+                              "         flag flg, flag_definition fde " .
+                              "   WHERE con.obj_id = obj.obj_id " .
+                              "     AND flg.obj_id = obj.obj_id " . 
+                              "     AND fde.fde_flag_id = flg.fde_flag_id " .
+                              "     AND con_source_id = ?  " .
+                              "     AND atr_id is null " .
+                              "     and fde_type = 1 " .
+                              "     AND fde.fde_name = 'EXIT' " .
+                              "ORDER BY con_created_date",
+                              $$target{obj_id}
+                         )}) {
+         push(@exit,obj_name($self,$hash));
+      }
+      if($#exit >= 0) {
+         $out .= "\nExits:\n" . join("\n",@exit);
+      }
    }
 
    if($perm && (hasflag($target,"PLAYER") || hasflag($target,"OBJECT"))) {

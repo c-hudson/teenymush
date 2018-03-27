@@ -1355,13 +1355,13 @@ sub fun_input
           $$prog{pending} = 1;
        }
        my $data = shift(@{$$input{buffer}});             # return buffered data
-       $data =~ s/\\/\\\\/g;
-       $data =~ s/\//\\\//g;
-       $data =~ s/’/\\\'/g;
-       $data =~ s/―/\\\-/g;
-       $data =~ s/`/\\`/g;
-       $data =~ s/‘/\\`/g;
-       $data =~ s/‚/\\,/g;
+#       $data =~ s/\\/\\\\/g;
+#       $data =~ s/\//\\\//g;
+       $data =~ s/’/'/g;
+       $data =~ s/―/-/g;
+       $data =~ s/`/`/g;
+       $data =~ s/‘/`/g;
+       $data =~ s/‚/,/g;
        $data =~ s/⚡/`/g;
        $data =~ s/↑ /N /g;
        $data =~ s/↓ /S /g;

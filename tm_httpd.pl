@@ -181,7 +181,8 @@ sub http_process_line
                                cmd    => $msg,
                                hint   => "WEB",
                                sock   => $s,
-                               output => []
+                               output => [],
+                               nosplit => 1,
                               );
          }
       }

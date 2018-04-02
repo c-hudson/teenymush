@@ -175,6 +175,30 @@ CREATE TABLE `help` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
+-- Table structure for table `io`
+--
+
+DROP TABLE IF EXISTS `io`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `io` (
+  `io_id` int(11) NOT NULL AUTO_INCREMENT,
+  `io_timestamp` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `io_type` int(11) NOT NULL,
+  `io_data` varchar(64000) DEFAULT NULL,
+  `io_src_loc` int(11) DEFAULT NULL,
+  `io_src_obj_id` int(11) NOT NULL,
+  `io_dst_obj_id` int(11) DEFAULT NULL,
+  `io_dst_loc` int(11) DEFAULT NULL,
+  PRIMARY KEY (`io_id`),
+  KEY `io_idx01` (`io_src_obj_id`),
+  KEY `io_idx02` (`io_dst_obj_id`),
+  CONSTRAINT `io_ibfk_1` FOREIGN KEY (`io_src_obj_id`) REFERENCES `object` (`obj_id`),
+  CONSTRAINT `io_ibfk_2` FOREIGN KEY (`io_dst_obj_id`) REFERENCES `object` (`obj_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
 -- Table structure for table `log`
 --
 
@@ -211,24 +235,6 @@ CREATE TABLE `object` (
   `obj_money` int(11) DEFAULT NULL,
   PRIMARY KEY (`obj_id`),
   KEY `owner_idx1` (`obj_owner`)
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Table structure for table `output`
---
-
-DROP TABLE IF EXISTS `output`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `output` (
-  `out_id` int(11) NOT NULL AUTO_INCREMENT,
-  `out_timestamp` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `out_text` varchar(64000) DEFAULT NULL,
-  `out_source` int(11) DEFAULT NULL,
-  `out_destination` int(11) DEFAULT NULL,
-  `out_location` int(11) DEFAULT NULL,
-  PRIMARY KEY (`out_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -321,4 +327,4 @@ CREATE TABLE `valid_option` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2018-03-27  2:00:01
+-- Dump completed on 2018-04-02 12:31:16

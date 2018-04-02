@@ -39,6 +39,58 @@ sub glob2re {
     return "(?msx:\\A$pat\\z)";
 }
 
+sub io
+{
+   my ($self,$type,$data) = @_;
+
+   my $tmp = $$db{rows};
+   sql("insert into io" .
+       "(" .
+       "   io_type, ".
+       "   io_data, " .
+       "   io_src_obj_id, ".
+       "   io_src_loc ".
+       ") values ( ".
+       "   ?, " .
+       "   ?, " .
+       "   ?, " .
+       "   ? " .
+       ")",
+       $type,
+       $data,
+       $$self{obj_id},
+       loc($self)
+      );
+   $$db{rows} = $tmp;
+   my_commit;
+}
+
+#
+# the mush program has finished, so clean up any telnet connections.
+#
+sub close_telnet
+{
+   my $prog = shift;
+
+   if(!defined $$prog{telnet_sock}) {
+      return;
+   } elsif(!defined @connected{$$prog{telnet_sock}}) {
+      return;
+   } elsif(hasflag(@{@connected{$$prog{telnet_sock}}}{obj_id},
+                   "SOCKET_PUPPET"
+                  )
+          ) {
+         return;
+   } else {
+      my $hash = @connected{$$prog{telnet_sock}};
+      # delete any pending input
+      printf("Closed orphaned mush telnet socket to %s:%s\n",
+          $$hash{hostname},$$hash{port});
+      server_disconnect($$prog{telnet_sock});
+      delete @$prog{telnet_sock};
+   }
+}
+
 sub validate_switches
 {
    my ($self,$prog,$switch,@switches) = @_;
@@ -74,7 +126,6 @@ sub err
 {
    my ($self,$prog,$fmt,@args) = @_;
 
-   printf("### ERROR: '$fmt'\n",@args);
    necho(self => $self,
          prog => $prog,
          source => [ $fmt,@args ],
@@ -82,7 +133,8 @@ sub err
 
    my_rollback;
 
-   return sprintf($fmt,@args);
+   return 0;
+#   return sprintf($fmt,@args);
    # insert log entry? 
 }
 
@@ -562,23 +614,47 @@ sub log_output
                          # so we'll revert it after the below sql() call.
 
    sql($db,                                     #store output in output table
-       "insert into output" .
+       "insert into io" .
        "(" .
-       "   out_text, " .
-       "   out_source, ".
-       "   out_location, ".
-       "   out_destination ".
+       "   io_data, " .
+       "   io_type, ".
+       "   io_src_obj_id, ".
+       "   io_src_loc, ".
+       "   io_dst_obj_id, ".
+       "   io_dst_loc ".
        ") values ( ".
        "   ?, " .
        "   ?, " .
        "   ?, " .
+       "   ?," .
+       "   ?, " .
        "   ? " .
        ")",
        substr($txt,0,63999),
+       2,
        $$src{obj_id},
-       $loc,
-       $$dst{obj_id}
+       loc($src),
+       $$dst{obj_id},
+       loc($dst),
       );
+#    sql($db,                                     #store output in output table
+#        "insert into output" .
+#        "(" .
+#        "   out_text, " .
+#        "   out_source, ".
+#        "   out_location, ".
+#        "   out_destination ".
+#        ") values ( ".
+#        "   ?, " .
+#        "   ?, " .
+#        "   ?, " .
+#        "   ? " .
+#        ")",
+#        substr($txt,0,63999),
+#        $$src{obj_id},
+#        $loc,
+#        $$dst{obj_id}
+#       );
    $$db{rows} = $tmp;
    my_commit;
 }
@@ -2209,7 +2285,6 @@ sub lastsite
 {
    my $target = obj(shift);
 
-   printf("FOO: '%s'\n",$$target{obj_id});
    return one_val($db,
                   "SELECT skh_hostname value " .
                   "  from socket_history skh " .

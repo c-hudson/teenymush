@@ -292,6 +292,7 @@ sub cmd_find
 sub cmd_perl
 {
    my ($self,$prog,$txt) = @_;
+   return;
 
    if(hasflag($self,"WIZARD")) {
       eval ( $txt );  
@@ -1089,6 +1090,8 @@ sub cmd_while
         if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/s) {
            ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
            $$cmd{while_cmd} = [ balanced_split($2,";",3) ];
+           $$cmd{while_good} = 0;
+           $$cmd{while_bad} = 0;
         } else {
            return err($self,$prog,"usage: while (<expression>) { commands }");
         }
@@ -1105,11 +1108,17 @@ sub cmd_while
        printf("#*****# while exceeded maxium loop of 1000, stopped\n");
        return err($self,$prog,"while exceeded maxium loop of 1000, stopped");
     } elsif(test($self,$prog,$$cmd{while_test})) {
+       if(${$$prog{var}}{input} eq "#-1 No data found") {
+          $$cmd{while_bad}++;
+       } else {
+          $$cmd{while_good}++;
+       }
+#       printf("INPUT VAR: '%s'\n",${$$prog{var}}{input});
 
 #       signal_still_running($prog);
 
        my $commands = $$cmd{while_cmd};
-       for my $i (0 .. $#$commands) {
+       for my $i (reverse 0 .. $#$commands) {
           mushrun(self   => $self,
                   prog   => $prog,
                   runas  => $self,
@@ -1119,6 +1128,9 @@ sub cmd_while
                  );
        }
        return "RUNNING";
+    } else {
+#       printf("###[%s] Stats: Good = '%s' Bad = '%s' [$$cmd{while_count}]\n",$$prog{cycles},$$cmd{while_good},
+#          $$cmd{while_bad});
     }
 }
 
@@ -1494,7 +1506,7 @@ sub cmd_switch
           $first =~ s/\//#/g;
 
  
-          if(match_glob(lc($txt),lc($first))) {
+          if(match_glob(lc(trim($txt)),lc(trim($first)))) {
              return mushrun(self   => $self,
                             prog   => $prog,
                             runas  => $self,
@@ -1552,7 +1564,8 @@ sub cmd_newpassword
 
 sub cmd_telnet
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift);
+   my $txt = evaluate($self,$prog,shift);
    my $pending = 1;
 
    return err($self,$prog,"PErmission Denied.") if(!hasflag($self,"WIZARD"));
@@ -1562,54 +1575,39 @@ sub cmd_telnet
 
    if(!$input && !$puppet) {
       return err($self,$prog,"Permission DENIED.");
-   } elsif($txt =~ /^\s*([^ ]+)\s*=\s*([^:]+)\s*:\s*(\d+)\s*$/ ||
-           $txt =~ /^\s*([^ ]+)\s*=\s*([^:]+)\s* \s*(\d+)\s*$/) {
-      my $count = one_val("select count(*) value " .
-                          "  from socket " .
-                          " where lower(sck_tag) = lower( ? )",
-                          $1);
-      if($count != 0) {
-         return necho(self   => $self,
-                      prog   => $prog,
-                      source => [ "Telnet socket '%s' already exists", $1 ],
-                     );
-      }
-      my $addr = inet_aton($2) ||
-         return err($self,$prog,"Invalid hostname '%s' specified.",$2);
+   } elsif(defined $$prog{telnet_sock}) {
+      return err($self,$prog,"A telnet connection is already open");
+   } elsif($txt =~ /^\s*([^:]+)\s*[:| ]\s*(\d+)\s*$/) {
+      my $addr = inet_aton($1) ||
+         return err($self,$prog,"Invalid hostname '%s' specified.",$1);
       my $sock = IO::Socket::INET->new(Proto=>'tcp',blocking=>0) ||
-         return necho(self   => $self,
-                      prog   => $prog,
-                      source => [ "Could not create socket." ],
-                     );
+         return err($self,$prog,"Could not create socket.");
       $sock->blocking(0);
-      my $sockaddr = sockaddr_in($3, $addr) ||
-         return necho(self   => $self,
-                      prog   => $prog,
-                      source => [ "Could not create socket." ],
-                     );
+      my $sockaddr = sockaddr_in($2, $addr) ||
+         return err($self,$prog,"Could not resolve hostname");
       $sock->connect($sockaddr) or                     # start connect to host
          $! == EWOULDBLOCK or $! == EINPROGRESS or         # and check status
-         return necho(self   => $self,
-                      prog   => $prog,
-                      source => [ "Could not open connection." ],
-                     );
+         return err($self,$prog,"Could not open connection.");
       () = IO::Select->new($sock)->can_write(.2)     # see if socket is pending
           or $pending = 2;
       defined($sock->blocking(1)) ||
          return err($self,$prog,"Could not open a nonblocking connection");
 
+      $$prog{telnet_sock} = $sock;
+
       @connected{$sock} = {
          obj_id    => $$self{obj_id},
          sock      => $sock,
          raw       => 1,
-         socket    => uc($1),
-         hostname  => $2,
-         port      => $3, 
+         hostname  => $1,
+         port      => $2, 
          loggedin  => 0,
          opened    => time(),
          enactor   => $enactor,
          pending   => $pending,
+         prog      => $prog,
       };
+
       if($puppet) {
          @{@connected{$sock}}{raw} = 1;
       } elsif($input) {
@@ -1636,53 +1634,44 @@ sub cmd_telnet
                $$self{obj_id},
                2,
                $sock,
-               uc($1),
-               $2,
-               $3
+               "NONE",
+               $1,
+               $2
          );
         my_commit;
       @info{io} = {} if(!defined @info{io});
-      @{@info{io}}{uc($1)} = {};                     # clear previous buffer
-      @{@{@info{io}}{uc($1)}}{buffer} = [];                      # if exists
-#      delete @{@info{io}}{uc($1)};
+
+      @info{io}->{$sock} = {};
+      @info{io}->{$sock}->{buffer} = [];
 
       necho(self   => $self,
             prog   => $prog,
-            source => [ "Connection started to: %s:%s\n",$2,$3 ],
+            source => [ "Connection started to: %s:%s\n",$1,$2 ],
             debug  => 1,
            );
+      
+      return 1;
    } else {
       necho(self   => $self,
             prog   => $prog,
             source => [ "usage: \@telnet <id>=<hostname>:<port> {$txt}" ],
            );
+      return 0;
    }
 }
 
 sub cmd_send
 {
-    my ($self,$prog,$txt) = @_;
+    my ($self,$prog,$txt) = (obj(shift),shift);
+    my $txt = evaluate($self,$prog,shift);
 
     if(!hasflag($self,"WIZARD")) {
        return err($self,$prog,"Permission Denied.");
-    } elsif($txt =~ /^\s*([^ ]+)\s*=/) {
-       my $sock = get_socket($1);
-
-       if($sock eq undef) {
-          printf("# UNKNOWN SOCKET\n");
-          necho(self   => $self,
-                prog   => $prog,
-                source => [ "Unknown socket '%s' requested",$1 ],
-               );
-       } else {
-          my $txt = evaluate($self,$prog,$');
-          printf($sock "%s\r\n",evaluate($self,$prog,$'));
-       }
+    } elsif(!defined $$prog{telnet_sock}) {
+       return err($self,$prog,"Telnet connection needs to be opened first");
     } else {
-       necho(self   => $self,
-             prog   => $prog,
-             source => [ "Usage: \@send <socket>=<data>" ],
-            );
+       my $sock = $$prog{telnet_sock};
+       printf($sock "%s\r\n",evaluate($self,$prog,$txt));
     }
 }
 
@@ -2087,7 +2076,6 @@ sub cmd_think
 {
    my ($self,$prog,$txt) = @_;
 
-   printf("   : '%s'\n",code());
    necho(self   => $self,
          prog   => $prog,
          source => [ "%s", evaluate($self,$prog,$txt) ],
@@ -4046,7 +4034,6 @@ sub who
    } else {
       $hasperm = 0;
    }
-
 
    # query the database for connected user, location, and socket
    # details.

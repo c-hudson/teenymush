@@ -306,3 +306,9 @@ Example:                |  Output
 @dolist a b c = say ##  |  You say, "a"
                         |  You say, "b"
                         |  You say, "c"
+& @find
+command:
+
+   @find
+
+Lists all the objects that you own.

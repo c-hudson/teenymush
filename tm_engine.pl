@@ -172,7 +172,8 @@ sub mushrun
 
     # copy over command(s)
     my $stack=@{$arg{prog}}{stack};
-    if($arg{source} || $arg{hint} eq "WEB") {
+    if($arg{source} || defined $arg{nosplit} || $arg{hint} eq "WEB") {
+       delete @arg{nosplit};
        $arg{cmd} =~ s/^\s+|\s+$//g;
        unshift(@$stack,{ runas  => $arg{runas},
                          cmd    => $arg{cmd}, 
@@ -288,6 +289,7 @@ sub spin
          @info{program} = @$thread[0];
 
          my $sc = $$program{calls};
+         $$program{cycles}++;
          for(my $i=0;$#$command >= 0 && $$program{calls} - $sc <= 100;$i++) {
             my $cmd = @$command[0];
 
@@ -314,9 +316,16 @@ sub spin
             }
             $$program{stack} = $tmp;                  # unhide original stack
 
-            next if $result eq "RUNNING";            # command still running,
-                                                        # don't remove it and 
-                                                        # move to next thread
+
+            # input() returned that there was no data. In a loop, the process
+            # probably will waste time checking for more no data. Because of
+            # this, we skip to the next program and hope there will be data
+            # later.
+            if($result eq "RUNNING" && defined $$program{idle}) {
+               delete @$program{idle};                # don't remove it and 
+               last;
+            }
+            
 
             $$program{calls}++;
             $count++;
@@ -341,6 +350,7 @@ sub spin
                   http_reply($$prog{sock},"No data returned");
                }
             }
+            close_telnet($prog);
             delete @{@info{engine}}{$pid};
 #            printf("# $pid Total calls: %s\n",$$prog{calls});
          }
@@ -417,6 +427,7 @@ sub run_internal
                       ]
            );
    }
+   
    return &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,trim($arg),\%switch);
 }
 
@@ -486,7 +497,7 @@ sub spin_run
       if($match ne undef) {                                     # found match
          return run_internal($hash,$match,$command,$prog,$arg);
       } else {                                                     # no match
-         return &{@{$$hash{"huh"}}{fun}}($$command{runas},$prog,$$command{cmd});
+         return &{@{@command{"huh"}}{fun}}($$command{runas},$prog,$$command{cmd});
       }
    }
    return 1;

@@ -94,8 +94,37 @@ my %fun =
    lexits    => sub { return &fun_lexits(@_);                           },
    home      => sub { return &fun_home(@_);                             },
    rand      => sub { return &fun_rand(@_);                             },
+   telnet_open => sub { return &fun_telnet(@_);                           },
    decode_entities => sub { return &fun_de(@_);                         },
 );
+
+#
+# lowercase the provided string(s)
+#
+sub fun_ucstr
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+   my $result;
+
+   for my $i (0 .. $#_) {
+      @_[$i] = uc(@_[$i]);
+   }
+   return join(',',@_);
+}
+sub fun_telnet
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+   my $txt = evaluate($self,$prog,shift);
+
+   if(!defined $$prog{telnet_sock} ||
+      $txt =~ /^#-1 Connection Closed$/i ||
+      $txt =~ /^#-1 Unknown Socket /) {
+      return 0;
+   } else {
+      return 1;
+   }
+}
+
 
 sub fun_rand
 {
@@ -300,7 +329,7 @@ sub fun_run
    }
 
    if($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCK") {
-      if(defined $$prog{from} && $$prog{fun} eq "ATTR") {
+      if(defined $$prog{from} && $$prog{from} eq "ATTR") {
          $hash = \%command;
       } else {
          $hash = \%none;
@@ -487,19 +516,6 @@ sub fun_home
    return "#-1 NOT FOUND" if($target eq undef);
 
    return "#" . home($target);
-}
-
-#
-# lowercase the provided string
-#
-sub fun_ucstr
-{
-   my ($self,$prog) = (shift,shift);
-
-    good_args($#_,1) ||
-      return "#-1 FUNCTION (UCSTR) EXPECTS 1 ARGUMENT ($#_)";
-
-    return uc(shift);
 }
 
 #
@@ -1327,34 +1343,30 @@ sub get_socket
 # 
 sub fun_input
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog) = (obj(shift),shift);
+   my $txt = evaluate($self,$prog,shift);
 
-    if($txt =~ /^\s*([^ ]+)\s*$/) {                           # strip spaces
-       $txt = $1;
-    } else {
-       return "#-1 Usage: [input(<socket>)]";
+   
+    if(!defined $$prog{telnet_sock}) {
+       return "#-1 Connection Closed";
+    } elsif(!defined $$prog{socket_buffer}) {
+       $$prog{idle} = 1;                                    # hint to queue
+       return "#-1 No data found";
     }
 
-    if(!defined @info{io} || !defined @{@info{io}}{uc($1)}) {    # is socket
-       return "#-1 Unknown socket $txt";                           # defined
-    }
-
-    my $input = @{@info{io}}{uc($1)};                      # shortcut 2 data
+    my $input = $$prog{socket_buffer};
 
     # check if there is any buffered data and return it.
     # if not, the socket could have closed
-    if(!defined $$input{buffer} || $#{$$input{buffer}} == -1) {
-       if(get_socket($1) ne undef) {
+    if($#$input == -1) { 
+       if(defined @connected{$$prog{telnet_sock}}) {
+          $$prog{idle} = 1;                                 # hint to queue
           return "#-1 No data found";                  # wait for more data?
        } else {
           return "#-1 Connection closed";                    # socket closed
        }
     } else {
-       if($#{$$input{buffer}} > 0) {           # give hint more input pending
-          my $cmd = $$prog{cmd_last};
-          $$prog{pending} = 1;
-       }
-       my $data = shift(@{$$input{buffer}});             # return buffered data
+       my $data = shift(@$input);                # return buffered data
 #       $data =~ s/\\/\\\\/g;
 #       $data =~ s/\//\\\//g;
        $data =~ s/’/'/g;

@@ -99,18 +99,12 @@ sub lookup_command
 
 sub add_telnet_data
 {
-   my($data,$txt) = @_;
+   my($sock,$txt) = @_;
 
-   @info{io} = {} if(!defined @info{io});
-   my $io = @info{io};
+   my $prog = $$sock{prog};
 
-   if(!defined $$io{$$data{socket}}) {
-      $$io{$$data{socket}} = {
-         obj_id => $$data{obj_id},
-         buffer => []
-      };
-   }
-   my $stack = @{$$io{$$data{socket}}}{buffer};
+   $$prog{socket_buffer} = [] if(!defined $$prog{socket_buffer});
+   my $stack = $$prog{socket_buffer};
    push(@$stack,$txt);
 }
 
@@ -157,6 +151,7 @@ sub server_process_line
                &{@honey{$cmd}}($arg);                            # invoke cmd
             } elsif(loggedin($hash) || hasflag($hash,"OBJECT")) {
                add_last_info($input);                                   #logit
+               io($user,1,$input);
                return mushrun(self   => $user,
                               runas  => $user,
                               source => 1,

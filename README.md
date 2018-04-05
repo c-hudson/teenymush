@@ -21,8 +21,11 @@ modification of the internal server code.
 
    2. Download source from github:
 
+
+```
       Example: git clone https://github.com/c-hudson/teenymush.git
                cd teenymush
+```
 
    3. Run the 'tm' script, answer prompts for username, password, and
       database name. Answer yes to loading default database, unless you

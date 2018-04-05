@@ -32,6 +32,7 @@ modification of the internal server code.
 
 
 # Setup
+
 Setup handled in the netmush.conf on TinyMUSH is handled by setting
 attributes on object #0. This allows configuration of the server
 to be done without shell access. Here are the attributes that are

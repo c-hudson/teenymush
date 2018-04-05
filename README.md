@@ -10,14 +10,14 @@ modification of the internal server code.
    1. Create a mysql database that you can log into
  
       Example:
-`
+```
          mysql -p -u root
          mysql> create database teenymush
          mysql> grant all privileges on teenymush.* to $USER@'%'
                    identified by 'password';
          Replace $USER with your db user name, and password with your
          prefered password.
-`
+```
 
    2. Download source from github:
 
@@ -31,13 +31,13 @@ modification of the internal server code.
    4. Login as god with a password of portrzebie
 
 
-Setup
-~~~~~
+# Setup
 Setup handled in the netmush.conf on TinyMUSH is handled by setting
 attributes on object #0. This allows configuration of the server
 to be done without shell access. Here are the attributes that are
 currently supported:
 
+```
 conf.login              |  Login screen
 conf.logoff             |  Log off message
 conf.motd               |  Message of the day
@@ -58,5 +58,6 @@ conf.paycheck           |  How much money does a player get per day on connect
 conf.linkcost           |  Cost of link
 conf.digcost            |  Cost of room
 conf.createcost         |  Cost of object
+```
 
 see http://teenymush.blogspot.in/ for more details.

@@ -20,11 +20,16 @@ Installation
          Replace $USER with your db user name, and password with your
          prefered password.
 
-   2. Run the 'tm' script, answer prompts for username, password, and
+   2. Download source from github:
+
+      Example: git clone https://github.com/c-hudson/teenymush.git
+               cd teenymush
+
+   3. Run the 'tm' script, answer prompts for username, password, and
       database name. Answer yes to loading default database, unless you
       have a database backup named tm_backup.sql.
 
-   3. Login as god with a password of portrzebie
+   4. Login as god with a password of portrzebie
 
 
 Setup

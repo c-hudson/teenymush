@@ -406,16 +406,12 @@ sub server_start
 
    my $count = 0;
 
-   if(@info{port} !~ /^\s*\d+\s*$/) {
-      printf("Invalid Port of '%s' defined in tm_config.dat\n",@info{port}); 
-      exit();
-   }  else {
-      printf("TeenyMUSH listening on port @info{port}\n");
-      $listener = IO::Socket::INET->new(LocalPort => @info{port},
-                                        Listen    => 1,
-                                        Reuse     => 1
-                                       );
-   }
+   @info{port} = 4201 if(@info{port} !~ /^\s*\d+\s*$/);
+   printf("TeenyMUSH listening on port @info{port}\n");
+   $listener = IO::Socket::INET->new(LocalPort => @info{port},
+                                     Listen    => 1,
+                                     Reuse     => 1
+                                    );
  
    if(@info{"conf.httpd"} ne undef) {
       if(@info{"conf.httpd"} =~ /^\s*(\d+)\s*$/) {

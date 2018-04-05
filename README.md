@@ -13,6 +13,7 @@ modification of the internal server code.
          mysql -p -u root
          mysql> create database teenymush
          mysql> grant all privileges on teenymush.* to $USER@'%'
+
                    identified by 'password';
 
          Replace $USER with your db user name, and password with your

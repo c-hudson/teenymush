@@ -982,11 +982,13 @@ sub cmd_halt
    for my $pid (keys %$engine) {                          # look at each pid
       #  peek to see who created the process [ick]
       my $creator = @{@{@{@$engine{$pid}}[0]}{created_by}}{obj_id};
+      my $program = @{@{@$engine{$pid}}[0]};
 
       # cache owner of object
       @owner{$obj} = @{owner($creator)}{obj_id} if(!defined @owner{$creator});
 
       if(@owner{$obj} == $obj) {                  # are the owners the same?
+         close_telnet($$program{telnet_socket});
          delete @$engine{$pid};
          necho(self => $self,
                prog => $prog,
@@ -1089,48 +1091,25 @@ sub cmd_while
         $first = 1;
         if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/s) {
            ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
-           $$cmd{while_cmd} = [ balanced_split($2,";",3) ];
-           $$cmd{while_good} = 0;
-           $$cmd{while_bad} = 0;
+           $$cmd{while_cmd} = $2;
         } else {
            return err($self,$prog,"usage: while (<expression>) { commands }");
         }
     }
     $$cmd{while_count}++;
 
-#    printf("WHILE: '%s' -> '%s' -> '%s'\n",
-#           $$cmd{while_test},
-#           evaluate($self,$prog,$$cmd{while_test}),
-#           test($$cmd{while_test})
-#          );
-
     if($$cmd{while_count} >= 1000) {
        printf("#*****# while exceeded maxium loop of 1000, stopped\n");
        return err($self,$prog,"while exceeded maxium loop of 1000, stopped");
     } elsif(test($self,$prog,$$cmd{while_test})) {
-       if(${$$prog{var}}{input} eq "#-1 No data found") {
-          $$cmd{while_bad}++;
-       } else {
-          $$cmd{while_good}++;
-       }
-#       printf("INPUT VAR: '%s'\n",${$$prog{var}}{input});
-
-#       signal_still_running($prog);
-
-       my $commands = $$cmd{while_cmd};
-       for my $i (reverse 0 .. $#$commands) {
-          mushrun(self   => $self,
-                  prog   => $prog,
-                  runas  => $self,
-                  source => 0,
-                  cmd    => $$commands[$i],
-                  child  => 1
-                 );
-       }
+       mushrun(self   => $self,
+               prog   => $prog,
+               runas  => $self,
+               source => 0,
+               cmd    => $$cmd{while_cmd},
+               child  => 1
+              );
        return "RUNNING";
-    } else {
-#       printf("###[%s] Stats: Good = '%s' Bad = '%s' [$$cmd{while_count}]\n",$$prog{cycles},$$cmd{while_good},
-#          $$cmd{while_bad});
     }
 }
 
@@ -1178,10 +1157,8 @@ sub cmd_dolist
 
    if(!defined $$cmd{dolist_list}) {                       # initalize list
        my ($first,$second) = max_args(2,"=",balanced_split($txt,"=",3));
-
-       $$cmd{dolist_cmd}   = [ balanced_split($second,";",3) ];
+       $$cmd{dolist_cmd}   = $second;
        $$cmd{dolist_list}  = [ split(' ',evaluate($self,$prog,$first)) ];
-
        $$cmd{dolist_count} = 0;
    }
    $$cmd{dolist_count}++;
@@ -1193,22 +1170,18 @@ sub cmd_dolist
       return;                                                 # already done
    }
 
-   my $list = $$cmd{dolist_cmd};                              # make shortcuts
    my $item = shift(@{$$cmd{dolist_list}});
-
-   for my $i (0 .. $#$list) {              # push commands into the q
-      my $new = $$list[$i];
-      $new =~ s/\#\#/$item/g;
-      mushrun(self   => $self,
-              prog   => $prog,
-              runas  => $self,
-              source => 0,
-              cmd    => $new,
-              child  => 1,
-             );
-   }
-
-   return "RUNNING" if($#{$$cmd{dolist_list}} >= 0);
+   my $cmds = $$cmd{dolist_cmd};
+   $cmds =~ s/\#\#/$item/g;
+   mushrun(self   => $self,
+           prog   => $prog,
+           runas  => $self,
+           source => 0,
+           cmd    => $cmds,
+           child  => 1,
+          );
+  
+   return ($#{$$cmd{dolist_list}} >= 0) ? "RUNNING" : "DONE"; 
 }
 
 sub good_password
@@ -2047,25 +2020,29 @@ sub cmd_toad
       return err($self,$prog,"Only Players can be \@toaded");
    }
 
+   my $obj_name = obj_name($self,$target);
+   my $name = name($target);
+
+   cmd_boot($self,$prog,name($$target{obj_id}));
+
    if(!destroy_object($target)) {
       necho(self   => $self,
             prog   => $prog,
-            source => [ "Internal error, %s was not \@toaded.",
-                        obj_name($self,$target)
+            source => [ "Internal error, %s was not \@toaded.",$obj_name
                       ]
            );
    } elsif(loc($target) ne loc($self)) {
       necho(self   => $self,
             prog   => $prog,
-            source => [ "%s was \@toaded.",obj_name($self,$target) ],
-            room   => [ $target, "%s was \@toaded.",name($target) ],
-            room2  => [ $target, "%s has left.",name($target) ]
+            source => [ "%s was \@toaded.",$obj_name ],
+            room   => [ $target, "%s was \@toaded.",$name ],
+            room2  => [ $target, "%s has left.",$name ]
            );
    } else {
       necho(self   => $self,
             prog   => $prog,
-            room   => [ $target, "%s was \@toaded.",name($target) ],
-            room2  => [ $target, "%s has left.",name($target) ]
+            room   => [ $target, "%s was \@toaded.",$name ],
+            room2  => [ $target, "%s has left.",$name ]
            );
    }
 }
@@ -2853,7 +2830,7 @@ sub cmd_pcreate
       } else {
          $$user{obj_id} = create_object($self,$prog,$1,$2,"PLAYER");
          $$user{obj_name} = $1;
-         cmd_connect($prog,$self,$txt);
+         cmd_connect($self,$prog,$txt);
       }
    } else {
       err($user,$prog,"Invalid create command, try: create <user> <password>");

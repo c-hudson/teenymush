@@ -276,6 +276,8 @@ sub server_handle_sockets
                   server_disconnect(@{@connected{$new}}{sock});
                } elsif($$hash{site_restriction} == 69) {
                   printf($new "%s",getfile("honey.txt"));
+               } elsif(!defined @info{"conf.login"}) {
+                  printf($new "Welcome to %s\r\n",@info{"version"});
                } else {
                   printf($new "%s\r\n",@info{"conf.login"});    #  show login
                }
@@ -326,6 +328,10 @@ sub server_disconnect
       my $hash = @connected{$id};
       my $prog = prog($hash,$hash);
       my $type = @{@connected{$id}}{type};
+
+      if(defined $$hash{prog} && defined @{$$hash{prog}}{telnet_sock}) {
+         delete @{$$hash{prog}}{telnet_sock};
+      }
 
       if(defined $$hash{raw} && $$hash{raw} > 0) {             # MUSH Socket
          if($$hash{buf} !~ /^\s*$/) {

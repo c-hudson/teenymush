@@ -467,12 +467,12 @@ sub fun_setinter
    my ($self,$prog) = (shift,shift);
    my (%list, %out);
 
-   for my $i (split(/,/,@_[0])) {
+   for my $i (split(/ /,@_[0])) {
        $i =~ s/^\s+|\s+$//g;
        @list{$i} = 1;
    }
 
-   for my $i (split(/,/,@_[1])) {
+   for my $i (split(/ /,@_[1])) {
       $i =~ s/^\s+|\s+$//g;
       @out{$i} = 1 if(defined @list{$i});
   }

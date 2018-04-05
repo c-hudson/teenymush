@@ -123,11 +123,159 @@ sub load_all_code
    return join(', ',@file);                           # return succ/fail list
 }
 
+sub read_config
+{
+   my $count=0;
+   for my $line (split(/\n/,getfile("tm_config.dat"))) {
+      $line =~ s/\r|\n//g;
+      if($line =~/^\s*#/ || $line =~ /^\s*$/) {
+         # comment or blank line, ignore
+      } elsif($line =~ /^\s*([^ =]+)\s*=\s*(.*?)\s*$/) {
+         if($1 eq "user" || $1 eq "pass" || $1 eq "database" || $1 eq "host") {
+            @$db{$1} = $2;
+         } else {
+            @info{$1} = $2;
+         }
+      } else {
+         printf("Invalid data in tm_config.dat:\n") if($count == 0);
+         printf("    '%s'\n",$line);
+         $count++;
+      }
+   }
+}
+
+
+#
+# prompt
+#    prompt the user for input
+#
+sub prompt
+{
+   my $txt = shift;
+   my $result;
+
+   $| = 1;                                        # set input to unbuffered
+
+   while($result eq undef) {
+      printf("%s ",$txt);                                     # show prompt
+      $result = <STDIN>;                         # grab one line from stdin
+      $result =~ s/^\s+|\s+$//g;
+      $result =~ s/\n|\r//g;                 # strip leading spaces/returns
+   }
+   return $result;
+}
+
+#
+# get_credentials
+#    Get the database credentials if needed.
+#
+sub get_credentials
+{
+   my ($file,%save);
+
+   if($$db{user} =~ /^\s*$/) {
+      $$db{user} = prompt("Enter database user: ");
+      @save{user} = $$db{user};
+   }
+   if($$db{pass} =~ /^\s*$/) {
+      $$db{pass} = prompt("Enter database password: ");
+      @save{pass} = $$db{pass};
+   }
+   if($$db{database} =~ /^\s*$/) {
+      $$db{database} = prompt("Enter database name: ");
+      @save{database} = $$db{database};
+   }
+   if($$db{host} =~ /^\s*$/) {
+      $$db{host} = prompt("Enter database host: ");
+      @save{host} = $$db{host};
+   }
+
+   return if scalar keys %save == -1;
+  
+   open($file,">> tm_config.dat") ||
+     die("Could not append to tm_config.dat");
+
+   for my $key (keys %save) {
+      printf($file "%s=%s\n",$key,@save{$key});
+   }
+   close($file);
+}
+
+#
+# load_new_db
+#    Check to see if there has been a database loaded, if not
+#    prompt to load the default database
+#
+sub load_new_db
+{
+   my $result;
+
+   return if(one_val("select count(*) value ".
+                     "  from information_schema.tables  " .
+                     " where table_name = 'object' " .
+                     "   and table_schema = database()"
+                    ) != 0);
+
+   printf("##############################################################\n");
+   printf("##                                                          ##\n");
+   printf("##                  Empty database found                    ##\n");
+   printf("##                                                          ##\n");
+   printf("##############################################################\n");
+   @info{no_db_found} = 1;
+
+   printf("\nDatabase: %s@%s on %s\n\n",$$db{user},$$db{database},$$db{host});
+   while($result ne "y" && $result ne "yes") {
+       $result = prompt("No database found, load default database [yes/no]?");
+
+       if($result eq "n" || $result eq "no") {
+          return;
+       }
+   }
+   printf("Default database creation log: tm_db_create.log");
+   system("mysql -u $$db{user} -p$$db{pass} $$db{database} " .
+          "< base_structure.sql >> tm_db_create.log");
+   system("mysql -u $$db{user} -p$$db{pass} $$db{database} " .
+          " < base_objects.sql >> tm_db_create.log");
+   system("mysql -u $$db{user} -p$$db{pass} $$db{database} " .
+          " < base_inserts.sql >> tm_db_create.log");
+   delete @info{no_db_found};
+}
+
+sub load_db_backup
+{
+   my $result;
+
+   return if(!defined @info{no_db_found} || @ARGV[0] eq "--restore");
+
+   if(!-e "tm_backup.sql") {
+      printf("\nLoading backup requires backup stored as tm_backup.sql\n\n");
+      printf("tm_backup.sql file not found, aborting.\n");
+      exit();
+   }
+
+   while($result ne "y" && $result ne "yes") {
+       $result = prompt("Load database backup from tm_backup.sql [yes/no]? ");
+
+       if($result eq "n" || $result eq "no") {
+          exit();
+          return;
+       }
+   }
+   system("mysql -u $$db{user} -p$$db{pass} $$db{database} < " .
+          "tm_backup.sql >> tm_db_load.log");
+}
+
 @info{version} = "TeenyMUSH 0.9";
+read_config();
+get_credentials();
 
 printf("Loading: tm_mysql.pl\n");
 load_code_in_file("tm_mysql.pl");                       # only call of main
-load_all_code(1);                                # initial load of code
+load_all_code(1);                                    # initial load of code
+
+load_new_db();                                           # optional db load
+load_db_backup();
+
 printf("Loading: tm_main.pl\n");
 load_code_in_file("tm_main.pl");                       # only call of main
 main::server_start();

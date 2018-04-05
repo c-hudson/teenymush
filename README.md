@@ -9,15 +9,28 @@ modification of the internal server code.
 
 Installation
 ~~~~~~~~~~~~
-Run the create.sh to create the mysql peices and the tm_config.dat.
-This will create a god character with a password of portrzebie, and an
-initial room. Then run the "tm" perl script.
+   1. Create a mysql database that you can log into
+ 
+      Example:
+         mysql -p -u root
+         mysql> create database teenymush
+         mysql> grant all privileges on teenymush.* to $USER@'%'
+                   identified by 'password';
+
+         Replace $USER with your db user name, and password with your
+         prefered password.
+
+   2. Run the 'tm' script, answer prompts for username, password, and
+      database name. Answer yes to loading default database, unless you
+      have a database backup named tm_backup.sql.
+
+   3. Login as god with a password of portrzebie
 
 
 Setup
 ~~~~~
-Setup handled in the netmush.conf on TinyMUSH is going to be handled
-by setting attributes on object #0. This allows configuration of the server
+Setup handled in the netmush.conf on TinyMUSH is handled by setting
+attributes on object #0. This allows configuration of the server
 to be done without shell access. Here are the attributes that are
 currently supported:
 

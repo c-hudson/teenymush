@@ -172,36 +172,35 @@ sub mushrun
 
     # copy over command(s)
     my $stack=@{$arg{prog}}{stack};
-    if($arg{source} || defined $arg{nosplit} || $arg{hint} eq "WEB") {
-       delete @arg{nosplit};
-       $arg{cmd} =~ s/^\s+|\s+$//g;
+
+    if((defined @arg{source} && $arg{source}) || $arg{hint} eq "WEB") {
+       $arg{cmd} =~ s/^\s+|\s+$//g;        # no split & add to front of list
        unshift(@$stack,{ runas  => $arg{runas},
                          cmd    => $arg{cmd}, 
                          source => ($arg{hint} eq "WEB") ? 0 : 1,
                          multi  => ($multi eq undef) ? 0 : 1
                        }
               );
-    } else {
-       for my $i ( balanced_split($arg{cmd},';',3,1) ) {
-          $i =~ s/^\s+|\s+$//g;
-          if($i ne undef) {
-             if(defined $arg{child} && $arg{child}) {
-                unshift(@$stack,{runas  => $arg{runas},
-                                 cmd    => $i,
-                                 source => 0,
-                                 multi  => ($multi eq undef) ? 0 : 1
-                                }
-                       );
-             } else {
-                push(@$stack,{runas  => $arg{runas},
-                              cmd    => $i, 
-                              source => 0,
-                              multi  => ($multi eq undef) ? 0 : 1
-                             }
-                    );
-             }
-          }
+    } elsif(defined $arg{child} && $arg{child}) {    # add to front of list
+       for my $i ( reverse balanced_split($arg{cmd},";",3,1) ) {
+          $i  =~ s/^\s+|\s+$//g;
+          unshift(@$stack,{runas  => $arg{runas},
+                           cmd    => $i,
+                           source => 0,
+                           multi  => ($multi eq undef) ? 0 : 1
+                          }
+                 );
        }
+   } else {                                             # add to end of list
+       for my $i ( balanced_split($arg{cmd},";",3,1) ) {
+          $i  =~ s/^\s+|\s+$//g;
+          push(@$stack,{runas  => $arg{runas},
+                           cmd    => $i,
+                           source => 0,
+                           multi  => ($multi eq undef) ? 0 : 1
+                          }
+                 );
+        }
     }
 
     if(defined $arg{wild}) {

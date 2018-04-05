@@ -378,6 +378,7 @@ sub atr_case
                         "   and fde_name = 'CASE' ".
                         "   and fde_type = 2 ".
                         "   and atr_name = ? " . 
+                        "   and atr.atr_id = flg.atr_id " .
                         "   and atr.obj_id = ? ",
                         $atr,
                         $$obj{obj_id}
@@ -421,8 +422,8 @@ sub handle_listener
    my $msg = sprintf($txt,@args);
    for my $obj (lcon(loc($self))) {
 
-      # don't listen to one self
-      next if $$obj{obj_id} eq $$self{obj_id};
+      # don't listen to one self, or doesn't have listener flag
+      next if($$obj{obj_id} eq $$self{obj_id} || !hasflag($obj,"LISTENER"));
 
       for my $hash (latr_regexp($obj,2)) {
          if(atr_case($obj,$$hash{atr_name})) {
@@ -882,7 +883,7 @@ sub name
                         " where obj_id = ? ",
                         $$target{obj_id}
                        );
-      $val = "[<UNKNOWN>]" if($val eq undef) ;
+      return "[<UNKNOWN>]" if($val eq undef);
       set_cache($target,"obj_name",$val);
    }
    return cache($target,"obj_name");
@@ -1382,7 +1383,8 @@ sub set_flag
           if($flag =~ /^\s*(PUPPET|LISTENER)\s*$/i) {
              necho(self => $self,
                    prog => $prog,
-                   room => [$obj,"%s is no longer listening.",$$obj{obj_name} ]
+                   all_room => [$obj,"%s is no longer listening.",
+                      $$obj{obj_name} ]
                   );
           }
           return "Flag Removed.";
@@ -1394,7 +1396,7 @@ sub set_flag
           if($flag =~ /^\s*(PUPPET|LISTENER)\s*$/i) {
              necho(self => $self,
                    prog => $prog,
-                   room => [$obj,"%s is now listening.", $$obj{obj_name} ]
+                   all_room => [$obj,"%s is now listening.", $$obj{obj_name} ]
                   );
           }
           sql($db,
@@ -1629,7 +1631,7 @@ sub destroy_object
    my $loc = loc($obj);
 
    sql("delete " .
-       "  from content ".
+       "  from object ".
        " where obj_id = ?",
        $$obj{obj_id}
       );
@@ -1638,7 +1640,6 @@ sub destroy_object
       my_rollback;
       return 0;
    }  else {
-
       delete $cache{$$obj{obj_id}};
       set_cache($loc,"lcon");
       set_cache($loc,"con_source_id");

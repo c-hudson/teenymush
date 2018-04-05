@@ -192,9 +192,7 @@ CREATE TABLE `io` (
   `io_dst_loc` int(11) DEFAULT NULL,
   PRIMARY KEY (`io_id`),
   KEY `io_idx01` (`io_src_obj_id`),
-  KEY `io_idx02` (`io_dst_obj_id`),
-  CONSTRAINT `io_ibfk_1` FOREIGN KEY (`io_src_obj_id`) REFERENCES `object` (`obj_id`),
-  CONSTRAINT `io_ibfk_2` FOREIGN KEY (`io_dst_obj_id`) REFERENCES `object` (`obj_id`)
+  KEY `io_idx02` (`io_dst_obj_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -327,4 +325,4 @@ CREATE TABLE `valid_option` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2018-04-02 12:31:16
+-- Dump completed on 2018-04-05  2:00:02

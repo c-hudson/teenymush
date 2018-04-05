@@ -10,11 +10,13 @@ modification of the internal server code.
    1. Create a mysql database that you can log into
  
       Example:
+```
          mysql -p -u root
          mysql> create database teenymush
          mysql> grant all privileges on teenymush.* to $USER@'%'
 
                    identified by 'password';
+```
 
          Replace $USER with your db user name, and password with your
          prefered password.

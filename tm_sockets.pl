@@ -82,7 +82,7 @@ sub lookup_command
             }
          }
       }
-      if($match ne undef) {                                  # found match
+      if($match ne undef && lc($cmd) ne "q") {                # found match
          return ($match,trim($txt));
       } elsif($$user{site_restriction} == 69) {
          return ('huh',trim($txt));

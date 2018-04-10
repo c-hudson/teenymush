@@ -97,6 +97,13 @@ sub fmt_balanced_split
             $buf .= $ch;
          }
       }
+      if($i +1 >= $size && $#depth != -1) {   # parse error, start unrolling
+         my $hash = pop(@depth);
+         $i = $$hash{i};
+         delete @stack[$$hash{stack} .. $#stack];
+         $last = $$hash{last};
+         $buf = $$hash{buf};
+      }
    }
 
    if($type == 3) {
@@ -221,7 +228,7 @@ sub fmt_switch
                       substr(noret(function_print($len-3,trim($first))),$len)
                      );
     } else {                                                  # single lined
-       $out .= dprint($depth,"%s %s",$cmd,trim($first));
+       $out .= dprint($depth,"%s %s",$cmd,trim($first),code());
     }
 
 
@@ -448,6 +455,8 @@ sub pretty
     for my $txt ( fmt_balanced_split($txt,';',3,1) ) {
        my ($cmd,$arg) = split_command($txt);
        if(defined @fmt_cmd{$cmd}) {
+          $out =~ s/\s+$//g;
+          $out .= "\n" if $out ne undef;
           $out .= &{@fmt_cmd{$cmd}}($depth,$cmd,$arg);
           $out =~ s/\n+$//g if($depth==3);
        } elsif(defined @fmt_cmd{lc($cmd)}) {

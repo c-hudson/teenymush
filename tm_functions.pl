@@ -94,7 +94,9 @@ my %fun =
    lexits    => sub { return &fun_lexits(@_);                           },
    home      => sub { return &fun_home(@_);                             },
    rand      => sub { return &fun_rand(@_);                             },
-   telnet_open => sub { return &fun_telnet(@_);                           },
+   reverse   => sub { return &fun_reverse(@_);                          },
+   revwords  => sub { return &fun_revwords(@_);                         },
+   telnet_open => sub { return &fun_telnet(@_);                         },
    decode_entities => sub { return &fun_de(@_);                         },
 );
 
@@ -111,6 +113,21 @@ sub fun_ucstr
    }
    return join(',',@_);
 }
+
+sub fun_reverse
+{
+   my ($self,$prog,$txt) = @_;
+
+   return reverse $txt;
+}
+
+sub fun_revwords
+{
+   my ($self,$prog,$txt) = @_;
+
+   return join(' ',reverse split(/\s+/,$txt));
+}
+
 sub fun_telnet
 {
    my ($self,$prog,$txt) = (obj(shift),shift);
@@ -1235,30 +1252,33 @@ sub fun_remove
 
 sub fun_ljust
 {
-   my ($self,$prog) = (shift,shift);
+   my ($self,$prog,$txt,$size,$fill) = @_;
 
-   if(@_[1] =~ /^\s*$/) {
-      return @_[0];
-   } elsif(@_[1] !~ /^\s*(\d+)\s*$/) {
+   $fill = " " if($fill =~ /^$/);
+
+   if($size =~ /^\s*$/) {
+      return $txt;
+   } elsif($size !~ /^\s*(\d+)\s*$/) {
       return "#-1 Ljust expects a numeric value for the second argument";
    } else {
-      return sprintf("%-*s",@_[1],@_[0]);
+      return ($fill x ($size - length(substr($txt,0,$size)))) .
+             substr($txt,0,$size);
    }
 }
 
 sub fun_rjust
 {
-   my ($self,$prog) = (shift,shift);
+   my ($self,$prog,$txt,$size,$fill) = @_;
 
-   my ($text,$size) = @_;
+   $fill = " " if($fill =~ /^$/);
 
    if($size =~ /^\s*$/) {
-      return @_[0];
+      return $txt;
    } elsif($size !~ /^\s*(\d+)\s*$/) {
-      return "#-1 Rjust expects a numeric value for the second argument";
+      return "#-1 rjust expects a numeric value for the second argument";
    } else {
-      $text = substr($text,0,$size);
-      return  $text . (" " x ($size - length($text)));
+      return substr($txt,0,$size) .
+             ($fill x ($size - length(substr($txt,0,$size))));
    }
 }
 
@@ -1565,8 +1585,8 @@ sub fun_lookup
    my ($self,$prog) = (shift,shift);
 
    if(!defined @fun{lc($_[0])}) {
-      printf("undefined function '%s'\n",@_[0]);
-      printf("%s",code("long"));
+#      printf("undefined function '%s'\n",@_[0]);
+#      printf("%s",code("long"));
    }
    return (defined @fun{lc($_[0])}) ? lc($_[0]) : "huh";
 }
@@ -1657,6 +1677,13 @@ sub balanced_split
             $buf .= $ch;
          }
       }
+      if($i +1 >= $size && $#depth != -1) {   # parse error, start unrolling
+         my $hash = pop(@depth);
+         $i = $$hash{i};
+         delete @stack[$$hash{stack} .. $#stack];
+         $last = $$hash{last};
+         $buf = $$hash{buf};
+      }
    }
 
    if($type == 3) {
@@ -1701,14 +1728,16 @@ sub evaluate
    #
    if($txt =~ /^\s*([a-zA-Z_]+)\((.*)\)\s*$/s) {
       my $fun = fun_lookup($self,$prog,$1,$txt);
-      my $result = parse_function($self,$prog,$fun,"$2)",2);
-      if($result ne undef) {
-         shift(@$result);
-         printf("undefined function: '%s'\n",$fun) if($fun eq "huh");
-         my $r=&{@fun{$fun}}($self,$prog,@$result);
-         script($fun,join(',',@$result),$r);
+      if($fun ne "huh") {                   # not a function, do not evaluate
+         my $result = parse_function($self,$prog,$fun,"$2)",2);
+         if($result ne undef) {
+            shift(@$result);
+            printf("undefined function: '%s'\n",$fun) if($fun eq "huh");
+            my $r=&{@fun{$fun}}($self,$prog,@$result);
+            script($fun,join(',',@$result),$r);
 
-         return $r;
+            return $r;
+         }
       }
    }
 

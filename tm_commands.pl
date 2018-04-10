@@ -330,7 +330,9 @@ sub cmd_sex
 {
     my ($self,$prog,$txt) = @_;
 
-    if($txt =~ /=/) {
+    if(hasflag($self,"GUEST")) {
+      return err($self,$prog,"Permission Denied.");
+    } elsif($txt =~ /=/) {
        cmd_set($self,$prog,"$`/sex=" . trim($'));
     } else {
       necho(self   => $self,
@@ -1205,7 +1207,9 @@ sub cmd_password
 {
    my ($self,$prog,$txt) = @_;
 
-   if(!hasflag($self,"PLAYER")) {
+   if(hasflag($self,"GUEST")) {
+      return err($self,$prog,"Permission Denied.");
+   } elsif(!hasflag($self,"PLAYER")) {
       necho(self   => $self,
             prog   => $prog,
             source => [ "Non-players do not need passwords." ],
@@ -1462,7 +1466,6 @@ sub mush_split2
 
 sub cmd_switch
 {
-#    printf("SWITCH: '%s'\n",@_[2]);
     my ($self,$prog,@list) = (shift,shift,balanced_split(shift,',',3));
     my %last;
 
@@ -2101,6 +2104,9 @@ sub cmd_drop
 {
    my ($self,$prog,$txt) = @_;
 
+   if(hasflag($self,"GUEST")) {
+      return err($self,$prog,"Permission Denied.");
+   }
    my $target = locate_object($self,$prog,$txt,"CONTENT") ||
       return err($self,$prog,"I don't see that here.");
 
@@ -2176,6 +2182,10 @@ sub cmd_leave
 sub cmd_take
 {
    my ($self,$prog,$txt) = @_;
+ 
+   if(hasflag($self,"GUEST")) {
+      return err($self,$prog,"Permission Denied.");
+   }
 
    my $target = locate_object($self,$prog,$txt,"LOCAL") ||
       return err($self,$prog,"I don't see that here.");
@@ -2233,7 +2243,9 @@ sub cmd_name
 {
    my ($self,$prog,$txt) = @_;
 
-   if($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*$/) {
+   if(hasflag($self,"GUEST")) {
+      return err($self,$prog,"Permission Denied.");
+   } elsif($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*$/) {
       my $target = locate_object($self,$prog,$1,"LOCAL") ||
          return err($self,$prog,"I don't see that here.");
       my $name = trim($2);
@@ -2267,7 +2279,7 @@ sub cmd_name
          necho(self   => $self,
                prog   => $prog,
                source => [ "Set." ],
-               room   => [ $target, "%s is now known by %s\n",$1,$2 ]
+               room   => [ $target, "%s is now known by %s\n",$name,$2 ]
               );
 
          $$target{obj_name} = $name;
@@ -2962,8 +2974,9 @@ sub cmd_dig
    my ($self,$prog,$txt) = @_;
    my ($loc,$room_name,$room,$in,$out,$cost);
      
-  
-   if($txt =~ /^\s*([^\=]+)\s*=\s*([^,]+)\s*,\s*(.+?)\s*$/ ||
+   if(hasflag($self,"GUEST")) {
+      return err($self,$prog,"Permission Denied."); 
+   } elsif($txt =~ /^\s*([^\=]+)\s*=\s*([^,]+)\s*,\s*(.+?)\s*$/ ||
       $txt =~ /^\s*([^=]+)\s*=\s*([^,]+)\s*$/ ||
       $txt =~ /^\s*([^=]+)\s*$/) {
       ($room_name,$in,$out) = ($1,$2,$3);
@@ -3315,7 +3328,9 @@ sub cmd_describe
 {
    my ($self,$prog,$txt) = @_;
 
-   if($txt =~ /^\s*([^ \/]+?)\s*=\s*(.*?)\s*$/) {
+   if(hasflag($self,"GUEST")) {
+      return err($self,$prog,"Permission Denied.");
+   } elsif($txt =~ /^\s*([^ \/]+?)\s*=\s*(.*?)\s*$/) {
       cmd_set($self,$prog,trim($1) . "/DESCRIPTION=" . $2);
    } else {
       err($self,$prog,"syntax: \@describe <object> = <Text of Description>");
@@ -3329,7 +3344,9 @@ sub cmd_set
    my ($self,$prog,$txt) = @_;
    my ($target,$attr,$value,$flag);
 
-   if($txt =~ /^\s*([^ =]+?)\s*\/\s*([^ =]+?)\s*=(.*)$/s) { # attribute
+    if(hasflag($self,"GUEST")) {
+      return err($self,$prog,"Permission Denied.");
+    } elsif($txt =~ /^\s*([^ =]+?)\s*\/\s*([^ =]+?)\s*=(.*)$/s) { # attribute
       if(@{$$prog{cmd}}{source} == 1) {                          # user input
          ($target,$attr) = ($1,$2);
       } else {                                               # non-user input

@@ -175,12 +175,22 @@ sub mushrun
 
     if((defined @arg{source} && $arg{source}) || $arg{hint} eq "WEB") {
        $arg{cmd} =~ s/^\s+|\s+$//g;        # no split & add to front of list
-       unshift(@$stack,{ runas  => $arg{runas},
-                         cmd    => $arg{cmd}, 
-                         source => ($arg{hint} eq "WEB") ? 0 : 1,
-                         multi  => ($multi eq undef) ? 0 : 1
-                       }
-              );
+#       unshift(@$stack,{ runas  => $arg{runas},
+#                         cmd    => $arg{cmd}, 
+#                         source => ($arg{hint} eq "WEB") ? 0 : 1,
+#                         multi  => ($multi eq undef) ? 0 : 1
+#                       }
+#              );
+
+       my %last;
+       my $result = spin_run(\%last,
+                             $arg{prog},
+                             { runas  => $arg{runas},
+                               cmd    => $arg{cmd}, 
+                               source => ($arg{hint} eq "WEB") ? 0 : 1,
+                               multi  => ($multi eq undef) ? 0 : 1
+                             }
+                            );   # run cmd
     } elsif(defined $arg{child} && $arg{child}) {    # add to front of list
        for my $i ( reverse balanced_split($arg{cmd},";",3,1) ) {
           $i  =~ s/^\s+|\s+$//g;
@@ -409,7 +419,7 @@ sub run_internal
 #   if($type) {
 #      printf("RUN: '%s%s'\n",$cmd,$arg);
 #   } else {
-#      printf("RUN: '%s %s'\n",$cmd,$arg);
+#      printf("RUN: '%s %s (%s)'\n",$$hash{$cmd},$arg,code());
 #   }
 #   printf("RUN(%s->%s): '%s%s'\n",@{$$prog{created_by}}{obj_id},@{$$command{runas}}{obj_id},$cmd,$arg);
 
@@ -493,7 +503,7 @@ sub spin_run
          }
       }
 
-      if($match ne undef) {                                     # found match
+      if($match ne undef && lc($cmd) ne "q") {                  # found match
          return run_internal($hash,$match,$command,$prog,$arg);
       } else {                                                     # no match
          return &{@{@command{"huh"}}{fun}}($$command{runas},$prog,$$command{cmd});

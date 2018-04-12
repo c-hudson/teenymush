@@ -224,7 +224,7 @@ CREATE TABLE `object` (
   `obj_name` varchar(50) NOT NULL,
   `obj_password` varchar(41) DEFAULT NULL,
   `obj_owner` int(11) NOT NULL,
-  `obj_created_by` varchar(50) NOT NULL,
+  `obj_created_by` varchar(255) DEFAULT NULL,
   `obj_created_date` datetime NOT NULL,
   `obj_last_updated_by` varchar(50) DEFAULT NULL,
   `obj_last_updated_date` datetime DEFAULT NULL,
@@ -325,4 +325,4 @@ CREATE TABLE `valid_option` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2018-04-10 10:25:03
+-- Dump completed on 2018-04-12  2:00:01

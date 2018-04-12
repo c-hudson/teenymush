@@ -186,6 +186,8 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_clean(@_);}                   };
 @command{"give"}=      { help => "Give money or objects",
                          fun  => sub { cmd_give(@_);}                    };
+@command{"\@squish"} = { help => "Squish",
+                         fun  => sub { cmd_squish(@_);}                  };
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@version"}= { fun  => sub { cmd_version(@_); },
@@ -208,6 +210,7 @@ delete @honey{keys %honey};
 @command{"\@split"}  = { fun  => sub { cmd_split(@_); }                  };
 @command{"\@websocket"}= { fun  => sub { cmd_websocket(@_); }          };
 @command{"\@find"}   = { fun  => sub { cmd_find(@_); }          };
+@command{"\@sqldump"}= { fun  => sub { db_sql_dump(@_); } };
 
  
 # ------------------------------------------------------------------------#
@@ -1464,6 +1467,39 @@ sub mush_split2
    return @list;
 }
 
+sub cmd_squish
+{
+   my ($self,$prog,$txt) = @_;
+   my ($obj,$atr,$out);
+
+   if($txt =~ /[\/,]/) {
+      ($obj,$atr) = ($`,$');
+   } else {
+      return err($self,$prog,"usage: \@squish <object>/<attribute");
+   }
+
+   my $target = locate_object($self,$prog,evaluate($self,$prog,$obj),"LOCAL");
+
+   if($target eq undef ) {
+      return err($self,$prog,"Unknown object '$obj'");
+      return "#-1 Unknown object";
+   } elsif(!controls($self,$target)) {
+      return "#-1 Permission Denied $$self{obj_id} -> $$target{obj_id}";
+   }
+
+   for my $line (split(/\n/,get($target,$atr))) {
+      $line =~ s/^\s+//;
+      $out .= $line;
+   }
+
+   set($self,$prog,$target,$atr,$out);
+
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ "%s",$out ],
+        );
+}
+
 sub cmd_switch
 {
     my ($self,$prog,@list) = (shift,shift,balanced_split(shift,',',3));
@@ -1475,13 +1511,16 @@ sub cmd_switch
     unshift(@list,$second);
 
     while($#list >= 0) {
+       # ignore default place holder used for readability
+       if($#list == 1 && @list[0] =~ /^\s*DEFAULT\s*$/) {
+          shift(@list);
+       }
        if($#list >= 1) {
           my ($txt,$cmd) = (evaluate($self,$prog,shift(@list)),shift(@list));
 #          $txt =~ s/\*/\(.*\)/g;
           $txt =~ s/^\s+|\s+$//g;
           $first =~ s/\//#/g;
 
- 
           if(match_glob(lc(trim($txt)),lc(trim($first)))) {
              return mushrun(self   => $self,
                             prog   => $prog,

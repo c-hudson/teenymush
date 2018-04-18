@@ -23,6 +23,34 @@ my %days = (
    mon => 1, tue => 2, wed => 3, thu => 4, fri => 5, sat => 6, sun => 7,
 );
 
+sub generic_action
+{
+   my ($self,$prog,$action,$src) = @_;
+
+   if((my $atr = get($self,"$action")) ne undef) {
+         necho(self => $self,
+               prog => $prog,
+               room => [ $src, "%s %s", name($self), $atr  ],
+         );
+   }
+
+   if((my $atr = get($self,"A$action")) ne undef) {
+      mushrun(self   => $self,
+              runas  => $self,
+              cmd    => $atr,
+              source => 0,
+              from   => "ATTR",
+             );
+   }
+
+   if((my $atr = get($self,"o$action")) ne undef) {
+         necho(self => $self,
+               prog => $prog,
+               room => [ $self, "%s %s", name($self), $atr  ],
+         );
+   }
+}
+
 #
 # glob2re
 #    Convert a global pattern into a regular expression
@@ -733,24 +761,14 @@ sub connected_user
 
 sub loggedin
 {
-   my $target = shift;
+   my $target = obj(shift);
 
-   if(ref($target) eq "HASH") {
-      if(defined $$target{sock} && 
-         defined @connected{$$target{sock}} &&
-         defined @{@connected{$$target{sock}}}{loggedin}) {
-         return  @{@connected{$$target{sock}}}{loggedin};
-      } else {
-         my $result = one_val($db,
-                              "select count(*) value frOM socket " .
-                              " where obj_id = ? ",
-                              $$target{obj_id}
-                             );
-         return ($result > 0) ? 1 : 0;
-      }
+  
+   if(defined @connected_user{$$target{obj_id}}) {
+      return 1;
    } else {
       return 0;
-   }
+   } 
 }
 
 sub valid_dbref 
@@ -875,7 +893,6 @@ sub locate_object
             return undef;
          }
       } elsif($indirect ne undef) {
-#         $$hash{obj_name} =~ /(^|;)\s*$name([^;]*)\s*(;|$)/i)) {
          if(length($$indirect{obj_name}) > length($$hash{obj_name})) {
             $indirect = $hash;
          }

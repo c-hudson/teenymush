@@ -133,8 +133,7 @@ sub fun_telnet
    my ($self,$prog,$txt) = (obj(shift),shift);
    my $txt = evaluate($self,$prog,shift);
 
-   if(!defined $$prog{telnet_sock} ||
-      $txt =~ /^#-1 Connection Closed$/i ||
+   if($txt =~ /^#-1 Connection Closed$/i ||
       $txt =~ /^#-1 Unknown Socket /) {
       return 0;
    } else {
@@ -190,17 +189,8 @@ sub fun_lexits
    my $target = locate_object($self,$prog,$txt);
    return "#-1 NOT FOUND" if($target eq undef);
 
-   for my $rec (@{sql("select con.obj_id " .
-                      "  from content con, " .
-                      "       flag flg, " .
-                      "       flag_definition fde " .
-                      " where con.obj_id = flg.obj_id " .
-                      "   and flg.fde_flag_id = fde.fde_flag_id " .
-                      "   and fde_name = 'EXIT' ".
-                      "   and con.con_source_id = ?",
-                      $$target{obj_id}
-               )}) {
-       push(@result,"#" . $$rec{obj_id});
+   for my $exit (lexits($target)) {
+      push(@result,"#" . $$exit{obj_id});
    }
    return join(' ',@result);
 }
@@ -502,16 +492,17 @@ sub fun_lwho
    my ($self,$prog) = (shift,shift);
    my @who;
 
-   for my $key (@{sql($db,
-                    "select obj_id " .
-                    "  from socket sck " .
-                    " where sck_type = 1 ",
-                   )}
-               ) {
-      push(@who,"#" . $$key{obj_id});
+   for my $key (keys %connected) {
+      my $hash = @connected{$key};
+      if($$hash{raw} != 0||!defined $$hash{obj_id}||$$hash{obj_id} eq undef) {
+         next;
+      }
+      push(@who,"#" . @{@connected{$key}}{obj_id});
    }
    return join(' ',@who);
 }
+
+
 sub fun_lcstr
 {
    my ($self,$prog) = (shift,shift);
@@ -602,20 +593,11 @@ sub fun_hasflag
    good_args($#_,2) ||
       return "#-1 FUNCTION (HASFLAG) EXPECTS 2 ARGUMENTS";
 
-   return 0 if($_[1] =~ /^s*(nospoof|haven|dark|royal|royalty)\s*$/i);
-
-   my $target = locate_object($self,$prog,$_[0]);
- 
-   return "#-1 Unknown Object" if($target eq undef);
-
-   my $result = one_val("select count(*) value " . 
-                        "  from flag_definition ".
-                        " where fde_name = ?",
-                        $_[1]);
-   return "#-1 Invalid Flag" if($result eq undef or $result == 0);
-
-   
-   return hasflag($target,$_[1]);
+   if((my $target = locate_object($self,$prog,$_[0])) ne undef) {
+      return hasflag($target,$_[1]);
+   } else {
+      return "#-1 Unknown Object";
+   }
 }
 
 sub fun_gt
@@ -1074,19 +1056,21 @@ sub fun_type
    good_args($#_,1) ||
       return "#-1 FUNCTION (TYPE) EXPECTS 1 ARGUMENT";
 
-   my $obj = locate_object($self,$prog,$_[0]);
-
-   return one_val("select fde_name value " . 
-                     "  from object obj, " .
-                     "       flag flg,  " .
-                     "       flag_definition fde " .
-                     " where obj.obj_id = flg.obj_id " .
-                     "   and flg.fde_flag_id = fde.fde_flag_id " .
-                     "   and fde.fde_name in " .
-                     "          ('PLAYER','OBJECT','ROOM','EXIT') ".
-                     "   and obj.obj_id = ?",
-                     $$obj{obj_id}
-                    );
+   if((my $target= locate_object($self,$prog,$_[0])) ne undef) {
+      if(hasflag($target,"PLAYER")) {
+         return "PLAYER";
+      } elsif(hasflag($target,"OBJECT")) {
+         return "OBJECT";
+      } elsif(hasflag($target,"EXIT")) {
+         return "EXIT";
+      } elsif(hasflag($target,"ROOM")) {
+         return "ROOM";
+      } else {
+         return "TYPELESS";
+      }
+   } else {
+      return "#-1 Unknown Object";
+   }
 }
 
 sub fun_u
@@ -1139,7 +1123,7 @@ sub fun_get
 
    if($target eq undef ) {
       return "#-1 Unknown object";
-   } elsif(!controls($self,$target)) {
+   } elsif(!controls($self,$target) && !hasflag($target,"VISUAL")) {
       return "#-1 Permission Denied $$self{obj_id} -> $$target{obj_id}";
    } 
 
@@ -1250,22 +1234,6 @@ sub fun_remove
    return join($delim,@result);
 }
 
-sub fun_ljust
-{
-   my ($self,$prog,$txt,$size,$fill) = @_;
-
-   $fill = " " if($fill =~ /^$/);
-
-   if($size =~ /^\s*$/) {
-      return $txt;
-   } elsif($size !~ /^\s*(\d+)\s*$/) {
-      return "#-1 Ljust expects a numeric value for the second argument";
-   } else {
-      return ($fill x ($size - length(substr($txt,0,$size)))) .
-             substr($txt,0,$size);
-   }
-}
-
 sub fun_rjust
 {
    my ($self,$prog,$txt,$size,$fill) = @_;
@@ -1276,6 +1244,22 @@ sub fun_rjust
       return $txt;
    } elsif($size !~ /^\s*(\d+)\s*$/) {
       return "#-1 rjust expects a numeric value for the second argument";
+   } else {
+      return ($fill x ($size - length(substr($txt,0,$size)))) .
+             substr($txt,0,$size);
+   }
+}
+
+sub fun_ljust
+{
+   my ($self,$prog,$txt,$size,$fill) = @_;
+
+   $fill = " " if($fill =~ /^$/);
+
+   if($size =~ /^\s*$/) {
+      return $txt;
+   } elsif($size !~ /^\s*(\d+)\s*$/) {
+      return "#-1 ljust expects a numeric value for the second argument";
    } else {
       return substr($txt,0,$size) .
              ($fill x ($size - length(substr($txt,0,$size))));
@@ -1367,9 +1351,9 @@ sub fun_input
    my $txt = evaluate($self,$prog,shift);
 
    
-    if(!defined $$prog{telnet_sock}) {
+    if(!defined $$prog{telnet_sock} && !defined $$prog{socket_buffer}) {
        return "#-1 Connection Closed";
-    } elsif(!defined $$prog{socket_buffer}) {
+    } elsif(defined $$prog{telnet_sock} && !defined $$prog{socket_buffer}) {
        $$prog{idle} = 1;                                    # hint to queue
        return "#-1 No data found";
     }
@@ -1430,7 +1414,7 @@ sub fun_space
     } elsif($#_ != 1 && $#_ != 2) {
        return "#-1 Space expects 0 or 1 numeric value but found " . ($#_ +1);
     } elsif($count !~ /^\s*\d+\s*/) {
-       return "#-1 Space expects a numeric value";
+       return undef;
     }
     return " " x $count ;
 }
@@ -1522,6 +1506,10 @@ sub fun_lattr
 
    my $target = locate_object($self,$prog,$obj,"LOCAL");
    return "#-1 Unknown object" if $target eq undef;  # oops, can't find object
+
+   if(!controls($self,$obj) && !hasflag($target,"VISUAL")) {
+      return err($self,$prog,"#-1 Permission Denied.");
+   }
 
    for my $attr (@{sql($db,                     # query db for attribute names
                        "  select atr_name " .

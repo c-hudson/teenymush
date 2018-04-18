@@ -288,7 +288,7 @@ sub spin
        };
 
 #      ualarm(800_000);                                # die at 8 milliseconds
-#      ualarm(1_200_000);                                # die at 8 milliseconds
+      ualarm(2_000_000);                                # die at 8 milliseconds
 
 #      printf("PIDS: '%s'\n",join(',',keys %{@info{engine}}));
       for my $pid (sort { $a cmp $b } keys %{@info{engine}}) {
@@ -365,7 +365,7 @@ sub spin
          }
       }
    };
-#   ualarm(0);                                                 # cancel alarm
+   ualarm(0);                                                  # cancel alarm
 #   printf("Count: $count\n");
 #   printf("Spin: finish -> $count\n");
    printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count > 1;

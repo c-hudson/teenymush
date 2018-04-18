@@ -176,7 +176,7 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_boot(@_);}                    };
 @command{"\@halt"}   = { help => "Stops all your running programs.",
                          fun  => sub { cmd_halt(@_);}                    };
-@command{"\@sex"}    = { help => "Sets the generder for an object.",
+@command{"\@sex"}    = { help => "Sets the gender for an object.",
                          fun  => sub { cmd_sex(@_);}                     };
 @command{"\@read"}   = { help => "Reads various data for the MUSH",
                          fun  => sub { cmd_read(@_);}                    };
@@ -984,10 +984,11 @@ sub cmd_halt
    my %owner;                                            # cache owner calls
    my $obj = @{owner($self)}{obj_id};
 
+   printf("--[ halt start ]------\n");
    for my $pid (keys %$engine) {                          # look at each pid
       #  peek to see who created the process [ick]
       my $creator = @{@{@{@$engine{$pid}}[0]}{created_by}}{obj_id};
-      my $program = @{@{@$engine{$pid}}[0]};
+      my $program = @{@$engine{$pid}}[0];
 
       # cache owner of object
       @owner{$obj} = @{owner($creator)}{obj_id} if(!defined @owner{$creator});
@@ -1001,6 +1002,7 @@ sub cmd_halt
               );
       }
    }
+   printf("--[ halt end   ]------\n");
 }
          
 
@@ -2569,6 +2571,7 @@ sub cmd_go
    my ($exit ,$dest);
 
    $txt =~ s/^\s+|\s+$//g;
+   my $loc = loc($self);
 
    if($txt =~ /^\s*home\s*$/i) {
       necho(self   => $self,
@@ -2611,6 +2614,8 @@ sub cmd_go
    # move it, move it, move it. I like to move it, move it.
    move($self,$prog,$self,$dest) ||
       return err($self,$prog,"Internal error, unable to go that direction");
+
+   generic_action($self,$prog,"MOVE",$loc);
 
    # provide some visual feed back to the player
    necho(self   => $self,

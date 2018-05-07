@@ -161,7 +161,7 @@ sub mushrun
       if($arg{cmd} =~ /^\s*$/) {                                # attr is done
          @arg{cmd} = "&$$multi{attr} $$multi{object}=" . join("\r\n",@$stack);
          delete @{$connected{@{$arg{self}}{sock}}}{inattr};
-      } elsif($arg{cmd} eq ".") {                                # blank line
+      } elsif($arg{cmd} =~  /^\s*.\s*$/) {                       # blank line
          push(@$stack,"");
          return;
       } else {                                          # another line of atr
@@ -288,7 +288,7 @@ sub spin
        };
 
 #      ualarm(800_000);                                # die at 8 milliseconds
-      ualarm(2_000_000);                                # die at 8 milliseconds
+#      ualarm(2_000_000);                                # die at 8 milliseconds
 
 #      printf("PIDS: '%s'\n",join(',',keys %{@info{engine}}));
       for my $pid (sort { $a cmp $b } keys %{@info{engine}}) {
@@ -315,7 +315,9 @@ sub spin
             $$program{stack} = [];                          # and add new one
             my $stack = $$program{stack};
 
+            ualarm(3_000_000);                        # die at 8 milliseconds
             my $result = spin_run(\%last,$program,$cmd,$command);   # run cmd
+            ualarm(0);
 
             shift(@$command) if($result ne "RUNNING");
 
@@ -343,7 +345,6 @@ sub spin
             if(Time::HiRes::gettimeofday() - $start >= 1) {
                 printf("   Time slice ran long, exiting correctly [%d cmds]\n",
                        $count);
-                ualarm(0);
                return;
             }
          }
@@ -365,7 +366,6 @@ sub spin
          }
       }
    };
-   ualarm(0);                                                  # cancel alarm
 #   printf("Count: $count\n");
 #   printf("Spin: finish -> $count\n");
    printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count > 1;

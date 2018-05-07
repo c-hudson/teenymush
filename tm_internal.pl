@@ -650,9 +650,10 @@ sub necho
          # this might crash if the websocket dies, the evals should
          # probably be removed once this is more stable. With that in mind,
          # currently crash will be treated as a disconnect.
-         if(@{@connected{$s}}{type} eq "WEBSOCKET") {
+         if(defined @connected{$s} &&
+            @{@connected{$s}}{type} eq "WEBSOCKET") {
              ws_echo($s,$msg);
-         } else {
+         } elsif(defined @connected{$s}) {
             printf($s "%s",$msg);
          }
       } else {
@@ -934,48 +935,6 @@ sub locate_exit
       return undef;
    } else {
       return $partial;
-   }
-}
-
-sub locate_exit_old
-{
-   my ($name,$type) = @_;
-   my @partial;
-
-   if($name =~ /^\s*#(\d+)\s*$/) {
-      return fetch($1);
-   } elsif($name =~ /^\s*home\s*/i) {
-      return fetch(3);
-   }
-
-   for my $hash (@{sql($db,
-                      "select obj.*, con1.* " .
-                      "  from object obj, flag flg, flag_definition fde, ".
-                      "       content con1, content con2 " .
-                      " where obj.obj_id = flg.obj_id " .
-                      "   and flg.fde_flag_id = fde.fde_flag_id " .
-                      "   and con1.obj_id = obj.obj_id ".
-                      "   and con1.con_source_id = con2.con_source_id " .
-                      "   and fde.fde_name = 'EXIT' " .
-                      "   and atr_id is null " .
-                      "   and fde_type = 1 " .
-                      "   and con2.obj_id = ? ",
-                      $$user{obj_id}
-                   )}) { 
-
-      for my $item (split(';',$$hash{obj_name})) {       # exits have multiple 
-         if(lc($item) eq lc($name)) {                     # ; seperated names
-            return $hash;                                  # found exact match
-         } elsif(substr(lc($item),0,length($name)) eq lc($name)) {
-            push(@partial,$hash);                              # partial match
-         }
-      }
-   }
-
-   if($#partial != 0 || $type eq "EXACT") {            # if too many matches, 
-      return undef;                                     # or need exact match
-   } else {                                          
-      return $partial[0];                            # single partial is good
    }
 }
 
@@ -1453,7 +1412,7 @@ sub give_money
 
 sub set
 {
-   my ($self,$prog,$obj,$attribute,$value,$quiet,$type)=
+   my ($self,$prog,$obj,$attribute,$value,$quiet)=
       ($_[0],$_[1],obj($_[2]),$_[3],$_[4],$_[5]);
    my ($pat,$first,$type);
 
@@ -1548,7 +1507,7 @@ sub set
 
 sub get
 {
-   my ($obj,$attribute) = (obj($_[0]),$_[1]);
+   my ($obj,$attribute,$flag) = (obj($_[0]),$_[1],$_[2]);
    my $hash;
 
    $attribute = "description" if(lc($attribute) eq "desc");
@@ -1562,8 +1521,8 @@ sub get
                           $$obj{obj_id},
                           $attribute
                          ))) {
-      if($$hash{atr_pattern} ne undef) {     # rebuild full attribute value
-         my $type;
+      if($$hash{atr_pattern} ne undef && !$flag) {
+         my $type;                            # rebuild full attribute value
          if($$hash{atr_pattern_type} == 1) {
             $type = "\$";
          } elsif($$hash{atr_pattern_type} == 2) {

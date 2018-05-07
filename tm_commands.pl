@@ -487,7 +487,7 @@ sub cmd_offline_huh { my $sock = $$user{sock};
                       if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
                          ws_echo($sock,@info{"conf.login"});
                       } else {
-                         printf($sock "%s",@info{"conf.login"});
+                         printf($sock "%s\r\n",@info{"conf.login"});
                       }
                     };
 sub cmd_version
@@ -3480,7 +3480,8 @@ sub list_attr
       if(!defined $$switch{raw}) {
          if(length($$hash{atr_value}) > 78 &&
             $$hash{atr_value} !~ /\n/ &&
-            $$hash{atr_value} =~ /^\s*([\$|\[|^|!|@])/) {
+            ($$hash{atr_pattern} ne undef ||
+            $$hash{atr_value} =~ /^\s*([\$|\[|^|!|@])/)) {
             if($1 eq "[") {
                $$hash{atr_value}=function_print(3,
                                                 single_line($$hash{atr_value})

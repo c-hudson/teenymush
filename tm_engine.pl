@@ -320,6 +320,7 @@ sub spin
             ualarm(0);
 
             shift(@$command) if($result ne "RUNNING");
+            printf("RESULT: '%s'\n",$result);
 
             my $stack = $$program{stack};            # copy back new commands
             while($#$stack >= 0) {
@@ -437,6 +438,9 @@ sub run_internal
            );
    }
    
+   my $result = &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,trim($arg),\%switch);
+#   printf("internal_run: '$result' [$cmd] %s\n",code());
+   return $result;
    return &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,trim($arg),\%switch);
 }
 

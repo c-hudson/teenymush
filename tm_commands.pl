@@ -1170,6 +1170,11 @@ sub cmd_dolist
    }
    $$cmd{dolist_count}++;
 
+   my $array = $$cmd{dolist_list};
+   for my $i (0 .. $#$array) {
+      printf("do %s -> %s\n",$i,$$array[$i]);
+   }
+
 
    if($$cmd{dolist_count} > 500) {                  # force users to be nice
       return err($self,$prog,"dolist execeeded maxium count of 500, stopping");
@@ -1188,6 +1193,7 @@ sub cmd_dolist
            child  => 1,
           );
   
+   printf("Returning: '%s'\n",($#{$$cmd{dolist_list}} >= 0) ? "RUNNING" : "DONE"); 
    return ($#{$$cmd{dolist_list}} >= 0) ? "RUNNING" : "DONE"; 
 }
 

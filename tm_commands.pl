@@ -817,19 +817,19 @@ sub cmd_var
 
     $$prog{var} = {} if !defined $$prog{var};
     if($txt =~ /^\s*([^ ]+)\+\+\s*$/) {
-       @{$$prog{var}}{$1}++;
+       @{$$prog{var}}{evaluate($self,$prog,$1)}++;
 #       necho(self   => $self,
 #             prog   => $prog,
 #             source => [ "Set." ],
 #            );
     } elsif($txt =~ /^\s*([^ ]+)\-\-\s*$/) {
-       @{$$prog{var}}{$1}--;
+       @{$$prog{var}}{evaluate($self,$prog,$1)}--;
 #       necho(self   => $self,
 #             prog   => $prog,
 #             source => [ "Set." ],
 #            );
     } elsif($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
-       @{$$prog{var}}{$1} = evaluate($self,$prog,$2); 
+       @{$$prog{var}}{evaluate($self,$prog,$1)} = evaluate($self,$prog,$2);
 #       necho(self   => $self,
 #             prog   => $prog,
 #             source => [ "Set. $1 = @{$$prog{var}}{$1}" ],
@@ -840,8 +840,7 @@ sub cmd_var
              source => [ "usage: \@var <variable> = <variables>" ],
             );
     }
-}
-
+} 
 sub cmd_boot
 {
    my ($self,$prog,$txt,$switch) = @_;
@@ -2103,10 +2102,14 @@ sub cmd_think
 {
    my ($self,$prog,$txt) = @_;
 
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "%s", evaluate($self,$prog,$txt) ],
-        );
+   my $txt = evaluate($self,$prog,$txt);
+
+   if($txt !~ /^\s*$/) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s", evaluate($self,$prog,$txt) ],
+           );
+   }
 }
 
 sub cmd_pemit

@@ -40,9 +40,9 @@ sub sql
 
    delete @$con{rows};
 
-#   if($sql !~ /^insert into output/) {
-#      printf("SQL: '%s'\n",$sql);
-##      printf("     '%s'\n",code("short"));
+#   if($sql !~ /^insert into io/) {
+#     printf("SQL: '%s' -> '%s'\n",$sql,code());
+#      printf("     '%s'\n",code("short"));
 #   }
 
    #

@@ -320,7 +320,7 @@ sub spin
             ualarm(0);
 
             shift(@$command) if($result ne "RUNNING");
-            printf("RESULT: '%s'\n",$result);
+#            printf("RESULT: '%s'\n",$result);
 
             my $stack = $$program{stack};            # copy back new commands
             while($#$stack >= 0) {

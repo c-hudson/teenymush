@@ -777,10 +777,12 @@ sub valid_dbref
    my $id = obj(shift);
    $$id{obj_id} =~ s/#//g;
 
-   return one_val("select if(count(*) = 0,0,1) value " . 
-                  "  from object " . 
-                  " where obj_id = ?",
-                  $$id{obj_id}) || return 0;
+   # owner will return undef on non-existant objects & its cached
+   if(owner($id) eq undef) {
+      return 0;
+   } else {
+      return 1;
+   }
 }
 
 sub owner_id
@@ -849,7 +851,11 @@ sub locate_object
    my ($where, @what,$exact,$indirect);
 
    if($name =~ /^\s*#(\d+)\s*$/) {                                  # dbref
-      return fetch($1);
+      if(owner(obj($1)) ne undef) {            # check owner, its cached
+         return obj($1);
+       } else {
+         return undef;
+       }
    } elsif($name =~ /^\s*%#\s*$/) {
       return $$prog{created_by};
    } elsif($name =~ /^\s*me\s*$/) {                                # myself

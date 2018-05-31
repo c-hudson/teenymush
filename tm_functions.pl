@@ -78,6 +78,7 @@ my %fun =
    lt        => sub { return &fun_lt(@_);                               },
    lte       => sub { return &fun_lte(@_);                              },
    or        => sub { return &fun_or(@_);                               },
+   owner     => sub { return &fun_owner(@_);                            },
    and       => sub { return &fun_and(@_);                              },
    hasflag   => sub { return &fun_hasflag(@_);                          },
    squish    => sub { return &fun_squish(@_);                           },
@@ -1031,6 +1032,18 @@ sub fun_num
    } else {
       return "#$$result{obj_id}";
    }
+}
+
+sub fun_owner
+{
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (OWNER) EXPECTS 1 ARGUMENT";
+
+   my $owner = owner(obj(shift));
+
+   return ($owner eq undef) ? "#-1" : ("#" . $$owner{obj_id});
 }
 
 sub fun_name

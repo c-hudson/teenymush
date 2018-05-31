@@ -298,16 +298,17 @@ sub owner
    my $owner;
 
    if(!incache($$object{obj_id},"OWNER")) {
-      if(hasflag($$object{obj_id},"PLAYER")) {
-         $owner = $$object{obj_id};
+      $owner = one_val("select obj_owner value" .
+                       "  from object" .
+                       " where obj_id = ?",
+                       $$object{obj_id}
+                      );
+
+      if($owner ne undef) {
+         set_cache($$object{obj_id},"OWNER",$owner);
       } else {
-         $owner = one_val("select obj_owner value" .
-                          "  from object" .
-                          " where obj_id = ?",
-                          $$object{obj_id}
-                         );
+         return undef;
       }
-      set_cache($$object{obj_id},"OWNER",$owner);
    }
    return obj(cache($$object{obj_id},"OWNER"));
 }
@@ -321,9 +322,10 @@ sub hasflag
    my ($target,$flag) = (obj($_[0]),$_[1]);
    my $val;
 
-
    if($flag eq "CONNECTED") {                  # not in db, no need to cache
       return (defined @connected_user{$$target{obj_id}}) ? 1 : 0;
+   } elsif(!valid_dbref($target)) {
+      return 0;
    } elsif(!incache($target,"FLAG_$flag")) {
       if($flag eq "WIZARD") {
          my $owner = owner_id($target);

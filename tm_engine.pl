@@ -175,22 +175,22 @@ sub mushrun
 
     if((defined @arg{source} && $arg{source}) || $arg{hint} eq "WEB") {
        $arg{cmd} =~ s/^\s+|\s+$//g;        # no split & add to front of list
-#       unshift(@$stack,{ runas  => $arg{runas},
-#                         cmd    => $arg{cmd}, 
-#                         source => ($arg{hint} eq "WEB") ? 0 : 1,
-#                         multi  => ($multi eq undef) ? 0 : 1
-#                       }
-#              );
+       unshift(@$stack,{ runas  => $arg{runas},
+                         cmd    => $arg{cmd}, 
+                         source => ($arg{hint} eq "WEB") ? 0 : 1,
+                         multi  => ($multi eq undef) ? 0 : 1
+                       }
+              );
 
-       my %last;
-       my $result = spin_run(\%last,
-                             $arg{prog},
-                             { runas  => $arg{runas},
-                               cmd    => $arg{cmd}, 
-                               source => ($arg{hint} eq "WEB") ? 0 : 1,
-                               multi  => ($multi eq undef) ? 0 : 1
-                             }
-                            );   # run cmd
+#       my %last;
+#       my $result = spin_run(\%last,
+#                             $arg{prog},
+#                             { runas  => $arg{runas},
+#                               cmd    => $arg{cmd}, 
+#                               source => ($arg{hint} eq "WEB") ? 0 : 1,
+#                               multi  => ($multi eq undef) ? 0 : 1
+#                             }
+#                            );   # run cmd
     } elsif(defined $arg{child} && $arg{child}) {    # add to front of list
        for my $i ( reverse balanced_split($arg{cmd},";",3,1) ) {
           $i  =~ s/^\s+|\s+$//g;
@@ -288,7 +288,7 @@ sub spin
        };
 
 #      ualarm(800_000);                                # die at 8 milliseconds
-#      ualarm(2_000_000);                                # die at 8 milliseconds
+       ualarm(15_000_000);                              # die at 8 milliseconds
 
 #      printf("PIDS: '%s'\n",join(',',keys %{@info{engine}}));
       for my $pid (sort { $a cmp $b } keys %{@info{engine}}) {
@@ -320,7 +320,6 @@ sub spin
             ualarm(0);
 
             shift(@$command) if($result ne "RUNNING");
-#            printf("RESULT: '%s'\n",$result);
 
             my $stack = $$program{stack};            # copy back new commands
             while($#$stack >= 0) {
@@ -412,9 +411,11 @@ sub run_internal
    return if($$hash{cmd} =~ /^CODE\(.*\)$/);
 
    $$prog{cmd} = $command;
-   while($arg =~ /^\/([^ =]+)( |$)/) {                  # find switches
-      @switch{lc($1)} = 1;
-      $arg = $';
+   if(length($cmd) ne 1) {
+      while($arg =~ /^\/([^ =]+)( |$)/) {                  # find switches
+         @switch{lc($1)} = 1;
+         $arg = $';
+      }
    }
 
 #   if($type) {
@@ -439,7 +440,6 @@ sub run_internal
    }
    
    my $result = &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,trim($arg),\%switch);
-#   printf("internal_run: '$result' [$cmd] %s\n",code());
    return $result;
    return &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,trim($arg),\%switch);
 }
@@ -482,13 +482,13 @@ sub spin_run
       substr($cmd,1,1) eq " " ||
       length($cmd) == 1
      )) {
-      run_internal($hash,substr($cmd,0,1),
-                   $command,
-                   $prog,
-                   substr(trim($$command{cmd}),1),
-                   \%switch,
-                   1
-                  );
+      return run_internal($hash,substr($cmd,0,1),
+                          $command,
+                          $prog,
+                          substr($$command{cmd},1),
+                          \%switch,
+                          1
+                         );
    } elsif(locate_exit($self,$$command{cmd})) {        # handle exit as command
       return &{@{$$hash{"go"}}{fun}}($$command{runas},$prog,$$command{cmd});
    } elsif(mush_command($self,$prog,$$command{runas},$$command{cmd})) {

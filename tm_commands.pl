@@ -1146,26 +1146,63 @@ sub out
    }
 }
 
+sub verify_switches
+{
+   my ($self,$prog,$switch,@switches) = @_;
+   my %hash;
+
+   for my $item (@switches) {
+      @hash{lc($item)} = 1;
+   }
+
+   for my $key (keys %$switch) {
+      if(!defined @hash{lc($key)}) {
+         err($self,$prog,"Unrecognized switch '$key' found");
+         return 0;
+      }
+   }
+   return 1;
+}
+
+
 #
 # cmd_dolist
 #    Loop though a list running specified commands.
 #
 sub cmd_dolist
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = @_;
    my $cmd = $$prog{cmd_last};
-   my %last;
+   my ($delim, %last);
+
+   verify_switches($self,$prog,$switch,"delimit") || return;
+
+   if(defined $$switch{delimit}) {
+      if($txt =~ /^\s*([^ ]+)\s*/) {
+         $txt = $';
+         $delim = $1;
+      } else {
+         return err($self,$prog,"Could not determine delimiter");
+      }
+   } else {
+      $delim = " ";
+   }
+   printf("DELIM: '%s'\n",$delim);
 
    if(defined $$prog{nomushrun}) {
       out($prog,"#-1 \@DOLIST is not a valid command to use in RUN function");
       return;
    }
 
+#safe_split($txt,($delim eq undef) ? " " : $delim))
    if(!defined $$cmd{dolist_list}) {                       # initalize list
        my ($first,$second) = max_args(2,"=",balanced_split($txt,"=",3));
        $$cmd{dolist_cmd}   = $second;
-       $$cmd{dolist_list}  = [ split(' ',evaluate($self,$prog,$first)) ];
+#       $$cmd{dolist_list}  = [ split(' ',evaluate($self,$prog,$first)) ];
+       $$cmd{dolist_list}  = [ safe_split($first,$delim) ];
        $$cmd{dolist_count} = 0;
+       printf("FIRST: '%s'\n",$first);
+       printf("SECOND: '%s'\n",$second);
    }
    $$cmd{dolist_count}++;
 
@@ -1192,7 +1229,7 @@ sub cmd_dolist
            child  => 1,
           );
   
-   printf("Returning: '%s'\n",($#{$$cmd{dolist_list}} >= 0) ? "RUNNING" : "DONE"); 
+#   printf("Returning: '%s'\n",($#{$$cmd{dolist_list}} >= 0) ? "RUNNING" : "DONE"); 
    return ($#{$$cmd{dolist_list}} >= 0) ? "RUNNING" : "DONE"; 
 }
 
@@ -1299,6 +1336,7 @@ sub cmd_sleep
    }
 
    if($$cmd{sleep} >= time()) {
+       $$prog{idle} = 1;
        return "RUNNING";
    }
 
@@ -1686,6 +1724,8 @@ sub cmd_send
 {
     my ($self,$prog,$txt) = (obj(shift),shift);
     my $txt = evaluate($self,$prog,shift);
+    my $switch = shift;
+    $txt =~ s/\r|\n//g;
 
     if(!hasflag($self,"WIZARD")) {
        return err($self,$prog,"Permission Denied.");
@@ -1693,7 +1733,16 @@ sub cmd_send
        return err($self,$prog,"Telnet connection needs to be opened first");
     } else {
        my $sock = $$prog{telnet_sock};
-       printf($sock "%s\r\n",evaluate($self,$prog,$txt));
+
+       if(defined $$switch{lf}) {
+          printf($sock "%s\n",$txt);
+       } elsif(defined $$switch{cr}) {
+          printf($sock "%s\r",$txt);
+       } elsif(defined $$switch{crlf}) {
+          printf($sock "%s\r\n",$txt);
+       } else {
+          printf($sock "%s\r\n",$txt);
+       }
     }
 }
 
@@ -2107,7 +2156,7 @@ sub cmd_think
    if($txt !~ /^\s*$/) {
       necho(self   => $self,
             prog   => $prog,
-            source => [ "%s", evaluate($self,$prog,$txt) ],
+            source => [ "%s", $txt ],
            );
    }
 }

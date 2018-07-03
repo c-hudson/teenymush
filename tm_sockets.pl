@@ -262,7 +262,10 @@ sub server_handle_sockets
                             raw      => 0,
                             start    => time(),
                             port     => get_free_port(),
-                            type     => "MUSH"
+                            type     => "MUSH",
+                            last     => { time => time(),
+                                          cmd => "connect"
+                                        }
                           };
                add_site_restriction($hash);
                @connected{$new} = $hash;

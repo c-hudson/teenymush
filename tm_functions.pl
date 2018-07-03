@@ -6,6 +6,8 @@ use Carp;
 use Text::Glob qw( match_glob glob_to_regex );
 use Scalar::Util qw(looks_like_number);
 use Math::BigInt;
+use POSIX;
+use Compress::Zlib;
 
 #
 # define which function's arguements should not be evaluated before
@@ -15,6 +17,7 @@ use Math::BigInt;
 my %exclude = 
 (
    iter      => { 2 => 1 },
+   parse     => { 2 => 1 },
    setq      => { 2 => 1 },
    switch    => { all => 1 },
 #   u         => { 2 => 1, 3 => 1, 4 => 1, 5 => 1, 6 => 1, 7 => 1, 8 => 1,
@@ -28,14 +31,18 @@ my %fun =
    space     => sub { return &fun_space(@_);                            },
    repeat    => sub { return &fun_repeat(@_);                           },
    time      => sub { return &fun_time(@_);                             },
+   timezone  => sub { return &fun_timezone(@_);                         },
    flags     => sub { return &fun_flags(@_);                            },
    quota     => sub { return &fun_quota_left(@_);                       },
    sql       => sub { return &fun_sql(@_);                              },
    input     => sub { return &fun_input(@_);                            },
    has_input => sub { return &fun_has_input(@_);                        },
    strlen    => sub { return &fun_strlen(@_);                           },
+   right     => sub { return &fun_right(@_);                            },
+   left      => sub { return &fun_left(@_);                             },
    lattr     => sub { return &fun_lattr(@_);                            },
    iter      => sub { return &fun_iter(@_);                             },
+   parse     => sub { return &fun_iter(@_);                             },
    huh       => sub { return "#-1 Undefined function";                  },
    ljust     => sub { return &fun_ljust(@_);                            },
    rjust     => sub { return &fun_rjust(@_);                            },
@@ -67,6 +74,7 @@ my %fun =
    center    => sub { return &fun_center(@_);                           },
    rest      => sub { return &fun_rest(@_);                             },
    first     => sub { return &fun_first(@_);                            },
+   last      => sub { return &fun_last(@_);                             },
    switch    => sub { return &fun_switch(@_);                           },
    words     => sub { return &fun_words(@_);                            },
    eq        => sub { return &fun_eq(@_);                               },
@@ -86,6 +94,7 @@ my %fun =
    lcstr     => sub { return &fun_lcstr(@_);                            },
    ucstr     => sub { return &fun_ucstr(@_);                            },
    setinter  => sub { return &fun_setinter(@_);                         },
+   sort      => sub { return &fun_sort(@_);                             },
    mudname   => sub { return &fun_mudname(@_);                          },
    version   => sub { return &fun_version(@_);                          },
    inuse     => sub { return &inuse_player_name(@_);                    },
@@ -96,10 +105,106 @@ my %fun =
    home      => sub { return &fun_home(@_);                             },
    rand      => sub { return &fun_rand(@_);                             },
    reverse   => sub { return &fun_reverse(@_);                          },
+   base64    => sub { return &fun_base64(@_);                          },
+   compress  => sub { return &fun_compress(@_);                         },
+   uncompress  => sub { return &fun_uncompress(@_);                     },
    revwords  => sub { return &fun_revwords(@_);                         },
+   idle      => sub { return &fun_idle(@_);                             },
+   fold      => sub { return &fun_fold(@_);                             },
    telnet_open => sub { return &fun_telnet(@_);                         },
+   min        => sub { return &fun_min(@_);                             },
    decode_entities => sub { return &fun_de(@_);                         },
 );
+
+
+sub fun_min
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+   my $min;
+
+   good_args($#_,1 .. 100) ||
+     return "#-1 FUNCTION (MIN) EXPECTS 1 AND 100 ARGUMENTS";
+
+   while($#_ >= 0) {
+      if($_[0] !~ /^\s*-{0,1}\d+\s*$/) {           # emulate mush behavior
+         $min = 0 if ($min > 0 || $min eq undef);
+         shift;
+      } elsif($min eq undef || $min > $_[0]) {
+         $min = shift;
+      } else {
+         shift;
+      }
+   }
+   return $min;
+}
+
+sub fun_fold
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+   my ($count,$atr,$last,$zero,$one);
+
+   good_args($#_,2,3,4) ||
+     return "#-1 FUNCTION (FOLD) EXPECTS 2 TO 3 ARGUMENTS $#_";
+   my ($atr,$list,$base,$idelim) = (shift,shift,shift);
+   printf("FOLD: '%s' '%s' '%s' '%s'\n",$atr,$list,$base,$idelim);
+
+   my $prev = get_digit_variables($prog);
+
+   my $atr = fun_get($self,$prog,$atr);
+   return $atr if($atr eq undef || $atr =~ /^#-1 /);
+
+   my (@list) = safe_split(evaluate($self,$prog,$list),$idelim);
+   while($#list >= 0) {
+      if($count eq undef && $base ne undef) {
+         ($zero,$one) = ($base,shift(@list));
+      } elsif($count eq undef) {
+         ($zero,$one) = (shift(@list),shift(@list));
+      } else {
+         ($zero,$one) = ($last,shift(@list));
+      }
+
+      set_digit_variables($self,$prog,$zero,$one);
+      $last  = evaluate($self,$prog,$atr);
+      $count++;
+   }
+
+   set_digit_variables($self,$prog,$prev);
+
+   return $last;
+}
+
+
+sub fun_idle
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+   my $idle;
+
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (IDLE) EXPECTS 1 ARGUMENT";
+
+   my $name = shift;
+
+   my $player = locate_player($name) ||
+     return -2;
+
+   if(!defined @connected_user{$$player{obj_id}}) {
+      return -3;
+   } else {
+      # search all connections
+      for my $con (keys %{@connected_user{$$player{obj_id}}}) {
+         if(defined @{@connected{$con}}{last}) {
+            my $last = @{@connected{$con}}{last};
+
+            # find least idle connection
+            if($idle eq undef || $idle > time() - $$last{time}) {
+                $idle = time() - $$last{time};
+            }
+         }
+      }
+
+      return ($idle eq undef) ? -1 : $idle;
+   }
+}
 
 #
 # lowercase the provided string(s)
@@ -113,6 +218,65 @@ sub fun_ucstr
       @_[$i] = uc(@_[$i]);
    }
    return join(',',@_);
+}
+
+sub fun_sort
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+
+   return join(' ',sort split(" ",shift));
+}
+
+sub fun_base64
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,2) ||
+     return "#-1 FUNCTION (BASE64) EXPECTS 2 ARGUMENT ($#_)";
+
+   my ($type,$txt) = (shift, evaluate($self,$prog,shift));
+
+   if(length($type) == 0) {
+      return "#-1 FIRST ARGUMENT MUST BE Encode OR DECODE";
+   } elsif(lc($type) eq substr("encode",0,length($type))) {
+      my $txt = encode_base64($txt);
+      $txt =~ s/\r|\n//g;
+      return $txt;
+   } elsif(lc($type) eq substr("decode",0,length($type))) {
+      return decode_base64($txt);
+   } else {
+      return "#-1 FIRST ARGUMENT MUST BE ENCODE OR DECODE-",lc($type);
+   }
+}
+
+sub fun_compress
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   hasflag($self,"WIZARD") ||
+     return "#-1 FUNCTION (COMPRESS) EXPECTS 1 WIZARD FLAG";
+   
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (COMPRESS) EXPECTS 1 ARGUMENT";
+
+   my $txt = evaluate($self,$prog,shift);
+
+   return compress($txt);
+}
+
+sub fun_uncompress
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   hasflag($self,"WIZARD") ||
+     return "#-1 FUNCTION (COMPRESS) EXPECTS 1 WIZARD FLAG";
+
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (COMPRESS) EXPECTS 1 ARGUMENT";
+
+   my $txt = valuate($self,$prog,shift);
+
+   return uncompress($txt);
 }
 
 sub fun_reverse
@@ -896,6 +1060,31 @@ sub fun_first
    }
 }
 
+sub fun_last
+{
+   my ($self,$prog) = (shift,shift);
+
+   my ($txt,$delim) = @_;
+   if($#_ != 0 && $#_ != 1) {
+      return "#-1 Function (FIRST) EXPECTS 1 or 2 ARGUMENTS";
+   }
+
+   if($delim eq undef || $delim eq " ") {
+      $txt =~ s/^\s+|\s+$//g;
+      $txt =~ s/\s+/ /g;
+      $delim = " ";
+   }
+   my $loc = rindex(evaluate($self,$prog,$txt),$delim);
+
+   if($loc == -1) {
+      return $txt;
+   } else {
+      my $result = substr($txt,$loc+1);
+      $result =~ s/^\s+//g;
+      return $result;
+   }
+}
+
 sub fun_before
 {
    my ($self,$prog,$txt,$delim) = @_;
@@ -1143,6 +1332,7 @@ sub fun_get
    if(lc($atr) eq "lastsite") {
       return lastsite($target);
    } else {
+      printf("GET: $target,$atr => '%s'\n",get($target,$atr));
       return get($target,$atr);
    }
 }
@@ -1335,6 +1525,39 @@ sub fun_substr
    return substr($txt,$start,$end);
 }
 
+
+sub fun_right
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,2) ||
+     return "#-1 FUNCTION (RIGHT) EXPECTS 2 ARGUMENT";
+
+   my ($txt,$size) = (shift,shift);
+
+   if($size !~ /^\s*\d+\s*/) {
+     return "#-1 FUNCTION (RIGHT) EXPECTS 2 ARGUMENT TO BE NUMERIC";
+   }
+
+   return substr($txt,length($txt) - $size);
+}
+
+sub fun_left
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,2) ||
+     return "#-1 FUNCTION (RIGHT) EXPECTS 2 ARGUMENT";
+
+   my ($txt,$size) = (shift,shift);
+
+   if($size !~ /^\s*\d+\s*/) {
+     return "#-1 FUNCTION (RIGHT) EXPECTS 2 ARGUMENT TO BE NUMERIC";
+   }
+
+   return substr($txt,0,$size);
+}
+
 #
 # get_socket
 #    Return the socket associated for a named mush socket
@@ -1461,7 +1684,20 @@ sub fun_time
     if($#_ != -1 && $#_ != 0) {
        return "#-1 Time expects no arguments but found " . ($#_ +1);
     }
-    return scalar localtime();
+    return scalar localtime(); # . " " . strftime("%Z",localtime());
+}
+
+#
+# fun_timezone
+#
+sub fun_timezone
+{
+   my ($self,$prog) = (shift,shift);
+
+    if($#_ != -1 && $#_ != 0) {
+       return "#-1 Timezone expects no arguments but found " . ($#_ +1);
+    }
+    return scalar strftime("%Z",localtime());
 }
 
 #
@@ -1586,8 +1822,8 @@ sub fun_lookup
    my ($self,$prog) = (shift,shift);
 
    if(!defined @fun{lc($_[0])}) {
-#      printf("undefined function '%s'\n",@_[0]);
-#      printf("%s",code("long"));
+      printf("undefined function '%s'\n",@_[0]);
+      printf("%s",code("long"));
    }
    return (defined @fun{lc($_[0])}) ? lc($_[0]) : "huh";
 }
@@ -1708,11 +1944,11 @@ sub script
 #   if($result =~ /^\s*$/) {
 #      printf("FUN: '%s(%s) returned undef\n",$fun,$args);
 #   }
-   return;
-   if($args !~ /(v|u|get|r)\(/i && $fun !~ /^(v|u|get|r)$/) {
-      printf("think [switch(%s(%s),%s,,{WRONG %s(%s) -> %s})]\n",
-          $fun,$args,$result,$fun,$args,$result);
-   }
+#   return;
+#   if($args !~ /(v|u|get|r)\(/i && $fun !~ /^(v|u|get|r)$/) {
+#      printf("think [switch(%s(%s),%s,,{WRONG %s(%s) -> %s})]\n",
+#          $fun,$args,$result,$fun,$args,$result);
+#   }
 }
 
 #
@@ -1727,7 +1963,7 @@ sub evaluate
    #
    # handle string containing a single non []'ed function
    #
-   if($txt =~ /^\s*([a-zA-Z_]+)\((.*)\)\s*$/s) {
+   if($txt =~ /^\s*([a-zA-Z_0-9]+)\((.*)\)\s*$/s) {
       my $fun = fun_lookup($self,$prog,$1,$txt);
       if($fun ne "huh") {                   # not a function, do not evaluate
          my $result = parse_function($self,$prog,$fun,"$2)",2);
@@ -1735,6 +1971,7 @@ sub evaluate
             shift(@$result);
             printf("undefined function: '%s'\n",$fun) if($fun eq "huh");
             my $r=&{@fun{$fun}}($self,$prog,@$result);
+            
             script($fun,join(',',@$result),$r);
 
             return $r;
@@ -1749,7 +1986,7 @@ sub evaluate
    #
    # pick functions out of string when enclosed in []'s 
    #
-   while($txt =~ /([\\]*)\[([a-zA-Z_]+)\(/s) {
+   while($txt =~ /([\\]*)\[([a-zA-Z_0-9]+)\(/s) {
       my ($esc,$before,$after,$unmod) = ($1,$`,$',$2);
       my $fun = fun_lookup($self,$prog,$unmod,$txt);
       $out .= evaluate_substitutions($self,$prog,$before);

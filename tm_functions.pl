@@ -497,7 +497,7 @@ sub fun_run
    if($txt  =~ /^\s*([^ \/]+)(\s*)/) {        # split cmd from args
       ($cmd,$arg) = (lc($1),$');
    } else {  
-      return;                                                 # only spaces
+      return #-1 No command given to run;                       # only spaces
    }
 
    if($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCK") {
@@ -516,7 +516,11 @@ sub fun_run
 
    if(defined $$hash{$cmd}) {
       var_backup(\%tmp,$prog,output => [], nomushrun => 1);
-      run_internal($hash,$cmd,$command,$prog,$arg);
+      my $result = run_internal($hash,$cmd,$command,$prog,$arg);
+      if($result ne undef) {
+         var_restore($prog,\%tmp);
+         return $result;
+      }
       my $output = join(',',@{$$prog{output}});
       $output =~ s/\n$//g;
       var_restore($prog,\%tmp);
@@ -534,7 +538,12 @@ sub fun_run
       }
       if($match ne undef) {                                     # found match
          var_backup(\%tmp,$prog,output => [], nomushrun => 1);
-         return run_internal($hash,$match,$command,$prog,$arg);
+         my $result = run_internal($hash,$match,$command,$prog,$arg);
+
+         if($result ne undef) {
+            var_restore($prog,\%tmp);
+            return $result;
+         }
          my $output = join(',',$$prog{output});
          $output =~ s/\n$//g;
          var_restore($prog,\%tmp);
@@ -1332,7 +1341,6 @@ sub fun_get
    if(lc($atr) eq "lastsite") {
       return lastsite($target);
    } else {
-      printf("GET: $target,$atr => '%s'\n",get($target,$atr));
       return get($target,$atr);
    }
 }

@@ -50,6 +50,7 @@ sub mush_command
    my ($self,$prog,$runas,$cmd) = @_;
    my $i =  0;
 
+#   printf("RUNNING: '%s'\n",$cmd);
    for my $obj ($self,loc($self),@info{"conf.master"}) {
       $i += run_container_commands($self,$prog,$runas,$obj,$cmd);
    }
@@ -161,7 +162,7 @@ sub mushrun
       if($arg{cmd} =~ /^\s*$/) {                                # attr is done
          @arg{cmd} = "&$$multi{attr} $$multi{object}=" . join("\r\n",@$stack);
          delete @{$connected{@{$arg{self}}{sock}}}{inattr};
-      } elsif($arg{cmd} =~  /^\s*.\s*$/) {                       # blank line
+      } elsif($arg{cmd} =~  /^\s*\.\s*$/) {                       # blank line
          push(@$stack,"");
          return;
       } else {                                          # another line of atr

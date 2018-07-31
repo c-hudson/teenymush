@@ -477,6 +477,7 @@ sub cmd_huh
 {
    my ($self,$prog) = @_;
 
+   printf("HUH: '%s' -> '%s'\n",print_var($prog));
    necho(self   => $self,
          prog   => $prog,
          source => [ "Huh? (Type \"help\" for help.)" ]
@@ -1187,7 +1188,6 @@ sub cmd_dolist
    } else {
       $delim = " ";
    }
-   printf("DELIM: '%s'\n",$delim);
 
    if(defined $$prog{nomushrun}) {
       out($prog,"#-1 \@DOLIST is not a valid command to use in RUN function");
@@ -1199,10 +1199,8 @@ sub cmd_dolist
        my ($first,$second) = max_args(2,"=",balanced_split($txt,"=",3));
        $$cmd{dolist_cmd}   = $second;
 #       $$cmd{dolist_list}  = [ split(' ',evaluate($self,$prog,$first)) ];
-       $$cmd{dolist_list}  = [ safe_split($first,$delim) ];
+       $$cmd{dolist_list} = [safe_split(evaluate($self,$prog,$first),$delim)];
        $$cmd{dolist_count} = 0;
-       printf("FIRST: '%s'\n",$first);
-       printf("SECOND: '%s'\n",$second);
    }
    $$cmd{dolist_count}++;
 
@@ -1219,15 +1217,19 @@ sub cmd_dolist
    }
 
    my $item = shift(@{$$cmd{dolist_list}});
-   my $cmds = $$cmd{dolist_cmd};
-   $cmds =~ s/\#\#/$item/g;
-   mushrun(self   => $self,
-           prog   => $prog,
-           runas  => $self,
-           source => 0,
-           cmd    => $cmds,
-           child  => 1,
-          );
+
+   if($item !~ /^\s*$/) {
+      my $cmds = $$cmd{dolist_cmd};
+      $cmds =~ s/\#\#/$item/g;
+      printf("ITEM: '%s'\n",$item);
+      mushrun(self   => $self,
+              prog   => $prog,
+              runas  => $self,
+              source => 0,
+              cmd    => $cmds,
+              child  => 1,
+             );
+   }
   
 #   printf("Returning: '%s'\n",($#{$$cmd{dolist_list}} >= 0) ? "RUNNING" : "DONE"); 
    return ($#{$$cmd{dolist_list}} >= 0) ? "RUNNING" : "DONE"; 
@@ -1710,6 +1712,10 @@ sub cmd_telnet
             debug  => 1,
            );
       
+         necho(self   => $self,
+                      prog   => $prog,
+                      source => [ 1  ],
+                     );
       return 1;
    } else {
       necho(self   => $self,

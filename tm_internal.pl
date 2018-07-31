@@ -162,6 +162,9 @@ sub err
 {
    my ($self,$prog,$fmt,@args) = @_;
 
+   if($fmt eq "I don't see that here") {
+       printf("DONT\n~~~~~\n%s\n",code("long"));
+   }
    necho(self => $self,
          prog => $prog,
          source => [ $fmt,@args ],
@@ -634,6 +637,7 @@ sub necho
       # output needs to be saved for use by http, websocket, or run()
       if(defined $$prog{output} && 
          (@{$$prog{created_by}}{obj_id} == $$target{obj_id} ||
+          $$self{obj_id} == $$target{obj_id} ||
           $$target{obj_id} == @info{"conf.webuser"} || 
           $$target{obj_id} == @info{"conf.webobject"}
          )

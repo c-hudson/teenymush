@@ -149,7 +149,12 @@ sub http_process_line
          # run the $default mush command as the default webpage.
          $msg = "default" if($msg =~ /^\s*$/);
 
-         printf("   %s\@web [%s]\n",@{@http{$s}}{ip},$msg);
+         my $addr = @{@http{$s}}{hostname};
+         $addr = @{@http{$s}}{ip} if($addr =~ /^\s*$/);
+         $addr = $s->peerhost if($addr =~ /^\s*$/);
+         return http_error($s,"Malformed Request or IP") if($addr =~ /^\s*$/);
+
+         printf("   %s\@web [%s]\n",$addr,$msg);
 
          if($msg !~ /^\s*favicon\.ico\s*$/i) {
             sql(e($db,1),
@@ -165,7 +170,7 @@ sub http_process_line
                 "  ?, ?, now(), now(), 0, ?, ? ".
                 ")",
                 @info{"conf.webuser"},
-                @{@http{$s}}{ip},
+                $addr,
                 substr($msg,0,254),
                 2
                );

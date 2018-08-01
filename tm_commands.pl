@@ -1204,12 +1204,6 @@ sub cmd_dolist
    }
    $$cmd{dolist_count}++;
 
-   my $array = $$cmd{dolist_list};
-   for my $i (0 .. $#$array) {
-      printf("do %s -> %s\n",$i,$$array[$i]);
-   }
-
-
    if($$cmd{dolist_count} > 500) {                  # force users to be nice
       return err($self,$prog,"dolist execeeded maxium count of 500, stopping");
    } elsif($#{$$cmd{dolist_list}} < 0) {
@@ -1221,7 +1215,6 @@ sub cmd_dolist
    if($item !~ /^\s*$/) {
       my $cmds = $$cmd{dolist_cmd};
       $cmds =~ s/\#\#/$item/g;
-      printf("ITEM: '%s'\n",$item);
       mushrun(self   => $self,
               prog   => $prog,
               runas  => $self,
@@ -1642,7 +1635,9 @@ sub cmd_telnet
    } elsif($txt =~ /^\s*([^:]+)\s*[:| ]\s*(\d+)\s*$/) {
       my $addr = inet_aton($1) ||
          return err($self,$prog,"Invalid hostname '%s' specified.",$1);
-      my $sock = IO::Socket::INET->new(Proto=>'tcp',blocking=>0) ||
+      my $sock = IO::Socket::INET->new(Proto=>'tcp',
+                                       blocking=>0,
+                                       Timeout => 30) ||
          return err($self,$prog,"Could not create socket.");
       $sock->blocking(0);
       my $sockaddr = sockaddr_in($2, $addr) ||
@@ -1733,6 +1728,18 @@ sub cmd_send
     my $switch = shift;
     $txt =~ s/\r|\n//g;
 
+
+    # socket has not connected, try again later
+    if(defined $$prog{telnet_sock}) {
+       if(@{@connected{$$prog{telnet_sock}}}{pending} == 2) {
+          printf("### socket: still pending: '%s' -> '%s' [$$prog{calls}]\n",
+             @{@connected{$$prog{telnet_sock}}}{hostname},
+             @{@connected{$$prog{telnet_sock}}}{port});
+          $$prog{idle} = 1;
+          return "RUNNING";
+       }
+    }
+      
     if(!hasflag($self,"WIZARD")) {
        return err($self,$prog,"Permission Denied.");
     } elsif(!defined $$prog{telnet_sock}) {

@@ -288,6 +288,7 @@ sub server_handle_sockets
          } elsif(sysread($s,$buf,1024) <= 0) {          # socket disconnected
             server_disconnect($s);
          } else {                                          # socket has input
+            @{@connected{$s}}{pending} = 1;
             $buf =~ s/\r//g;                                 # remove returns
 #            $buf =~ tr/\x80-\xFF//d;
             $buf =~ s/\e\[[\d;]*[a-zA-Z]//g;

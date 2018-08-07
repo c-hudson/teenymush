@@ -188,8 +188,15 @@ delete @honey{keys %honey};
                          fun  => sub { cmd_give(@_);}                    };
 @command{"\@squish"} = { help => "Squish",
                          fun  => sub { cmd_squish(@_);}                  };
+@command{"\@split"}  = { fun  => sub { cmd_split(@_); }                  };
+@command{"\@websocket"}= { fun  => sub { cmd_websocket(@_); }            };
+@command{"\@find"}   = { fun  => sub { cmd_find(@_); }                   };
+@command{"\@sqldump"}= { fun  => sub { db_sql_dump(@_); }                };
 # --[ aliases ]-----------------------------------------------------------#
 
+@command{"\@poll"}  =  { fun => sub { cmd_doing(@_[0],@_[1],@_[2],
+                                                { header=>1}); },
+                         alias=> 1                                       };
 @command{"\@version"}= { fun  => sub { cmd_version(@_); },
                          alias=> 1                                       };
 @command{e}          = { fun  => sub { cmd_ex(@_); },                       
@@ -207,11 +214,6 @@ delete @honey{keys %honey};
 @command{"l"}        = { fun  => sub { return &cmd_look(@_); },          
                          alias => 1                                      };
 @command{"\@\@"}     = { fun  => sub { return;}                          };
-@command{"\@split"}  = { fun  => sub { cmd_split(@_); }                  };
-@command{"\@websocket"}= { fun  => sub { cmd_websocket(@_); }          };
-@command{"\@find"}   = { fun  => sub { cmd_find(@_); }          };
-@command{"\@sqldump"}= { fun  => sub { db_sql_dump(@_); } };
-
  
 # ------------------------------------------------------------------------#
 
@@ -477,7 +479,7 @@ sub cmd_huh
 {
    my ($self,$prog) = @_;
 
-   printf("HUH: '%s' -> '%s'\n",print_var($prog));
+#   printf("HUH: '%s' -> '%s'\n",print_var($prog));
    necho(self   => $self,
          prog   => $prog,
          source => [ "Huh? (Type \"help\" for help.)" ]
@@ -1721,30 +1723,28 @@ sub cmd_telnet
    }
 }
 
+#
+# send data to a connected @telnet socket. If the socket is pending,
+# the socket will "pause" the @send till it times out or connects.
+#
 sub cmd_send
 {
     my ($self,$prog,$txt) = (obj(shift),shift);
-    my $txt = evaluate($self,$prog,shift);
-    my $switch = shift;
-    $txt =~ s/\r|\n//g;
 
-
-    # socket has not connected, try again later
-    if(defined $$prog{telnet_sock}) {
-       if(@{@connected{$$prog{telnet_sock}}}{pending} == 2) {
-          printf("### socket: still pending: '%s' -> '%s' [$$prog{calls}]\n",
-             @{@connected{$$prog{telnet_sock}}}{hostname},
-             @{@connected{$$prog{telnet_sock}}}{port});
-          $$prog{idle} = 1;
-          return "RUNNING";
-       }
-    }
-      
-    if(!hasflag($self,"WIZARD")) {
+    if(!hasflag($self,"WIZARD")) {                            # wizard only
        return err($self,$prog,"Permission Denied.");
     } elsif(!defined $$prog{telnet_sock}) {
        return err($self,$prog,"Telnet connection needs to be opened first");
+    # socket has not connected, try again later
+    } elsif(defined $$prog{telnet_sock} &&
+            @{@connected{$$prog{telnet_sock}}}{pending} == 2) {
+       $$prog{idle} = 1;                   # socket pending, try again later
+       return "RUNNING";
     } else {
+       my $txt = evaluate($self,$prog,shift);
+       my $switch = shift;
+       $txt =~ s/\r|\n//g;
+
        my $sock = $$prog{telnet_sock};
 
        if(defined $$switch{lf}) {
@@ -3416,13 +3416,37 @@ sub cmd_connect
 #
 sub cmd_doing
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = @_;
 
    if(!defined @connected{$$self{sock}}) {
       necho(self   => $self,
             prog   => $prog,
             source => [ "Permission denied." ]
            );
+   } elsif(defined $$switch{header} && $txt =~ /^\s*$/) {
+      if(!hasflag($self,"WIZARD")) {
+          return necho(self   => $self,
+                       prog   => $prog,
+                       source => [ "Permission denied." ]
+                      );
+      }
+      delete @info{"conf.doing_header"};
+      return necho(self   => $self,
+                   prog   => $prog,
+                   source => [ "Removed." ]
+                  );
+   } elsif(defined $$switch{header}) {
+      if(!hasflag($self,"WIZARD")) {
+          return necho(self   => $self,
+                       prog   => $prog,
+                       source => [ "Permission denied." ]
+                      );
+      }
+      @info{"conf.doing_header"} = $txt;
+      return necho(self   => $self,
+                   prog   => $prog,
+                   source => [ "Set." ]
+                  );
    } elsif($txt =~ /^\s*$/) {
       delete $connected{$$self{sock}}{obj_doing};
       necho(self   => $self,
@@ -4081,7 +4105,9 @@ sub who_old
                       "Idle",$max,"Loc","Port","Hostname");
    } else {
       $out .= sprintf("%-15s%10s%5s  %s\r\n","Player Name","On For","Idle",
-                      "\@doing");
+                      defined @info{"conf.doing_header"} ? 
+                      @info{"conf.doing_header"} : "\@doing"
+                     );
    }
 
    $max = 3 if($max < 3);
@@ -4166,7 +4192,9 @@ sub who
                       "Idle",$max,"Loc","Port","Hostname");
    } else {
       $out .= sprintf("%-15s%10s%5s  %s\r\n","Player Name","On For","Idle",
-                      "\@doing");
+                      defined @info{"conf.doing_header"} ? 
+                      @info{"conf.doing_header"} : "\@doing"
+                     );
    }
 
    $max = 3 if($max < 3);

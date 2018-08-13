@@ -4035,21 +4035,21 @@ sub short_hn
 #
 sub cmd_who
 {
-   my ($self,$prog) = @_;
+   my ($self,$prog,$txt) = @_;
 
    necho(self   => $self,
          prog   => $prog,
-         source => [ "%s", who($self,$prog) ]
+         source => [ "%s", who($self,$prog,$txt) ]
         );
 }
 
 sub cmd_DOING
 {
-   my ($self,$prog) = @_;
+   my ($self,$prog,$txt) = @_;
 
    necho(self   => $self,
          prog   => $prog,
-         source => [ "%s", who($self,$prog,1) ]
+         source => [ "%s", who($self,$prog,$txt,1) ]
         );
 }
 
@@ -4162,8 +4162,8 @@ sub who_old
 
 sub who
 {
-   my ($self,$prog,$flag) = @_;
-   my ($max,@who,$idle,$count,$out,$extra,$hasperm,$name) = (2);
+   my ($self,$prog,$txt,$flag) = @_;
+   my ($max,$online,@who,$idle,$count,$out,$extra,$hasperm,$name) = (2,0);
 
    if(ref($self) eq "HASH") {
       $hasperm = ($flag || !hasflag($self,"WIZARD")) ? 0 : 1;
@@ -4178,11 +4178,17 @@ sub who
       my $hash = @connected{$key};
       next if $$hash{raw} != 0;
 
+      # only list users that start with provided text 
       if($$hash{obj_id} ne undef) {
-         if(length(loc($hash)) > length($max)) {
-            $max = length(loc($hash));
+         if(($txt ne undef && 
+            lc(substr($$hash{obj_name},0,length($txt))) eq lc($txt)) ||
+            $txt eq undef) {
+            if(length(loc($hash)) > length($max)) {
+               $max = length(loc($hash));
+            }
+            push(@who,$hash);
          }
-         push(@who,$hash);
+         $online++;
       }
    }
       
@@ -4240,7 +4246,7 @@ sub who
              $$hash{obj_doing});
       }
    }
-   $out .= sprintf("%d Players logged in\r\n",$#who+1);        # show totals
+   $out .= sprintf("%d Players logged in\r\n",$online);        # show totals
    return $out;
 }
 

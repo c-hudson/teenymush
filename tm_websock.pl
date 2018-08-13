@@ -164,7 +164,6 @@ sub websock_wall
 
    my $hash = $ws->{conns};
 
-   printf("websocket_wall called\n");
    for my $key ( keys %$hash) {
       my $client = $$hash{$key}->{conn};
 
@@ -179,5 +178,4 @@ sub websock_wall
 #         printf("Skipped $client\n");
       }
    }
-   printf("websocket_wall done\n");
 }

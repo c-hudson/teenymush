@@ -222,28 +222,37 @@ sub mushrun
     return @arg{prog};
 }
 
+#
+# it was assumed that variables going into %0 - %9 should be
+# evaluated. This seems to be not true, so evaluation is currently 
+# disabled at this level. The commented code can be removed if it doesn't
+# impact things after testing.
+#
+
 sub set_digit_variables
 {
    my ($self,$prog) = (shift,shift);
+   my $hash;
+
 
    if(ref($_[0]) eq "HASH") {
       my $new = shift;
       for my $i (0 .. 9) {
-         if($self ne undef) {
-            @{$$prog{var}}{$i} = evaluate($self,$prog,$$new{$i});
-         } else {
+#         if($self ne undef) {
+#            @{$$prog{var}}{$i} = evaluate($self,$prog,$$new{$i});
+#         } else {
             @{$$prog{var}}{$i} = $$new{$i};
-         }
+#         }
       }
    } else {
       my @var = @_;
 
       for my $i (0 .. 9 ) {
-         if($self ne undef) {
-            @{$$prog{var}}{$i} = evaluate($self,$prog,$var[$i]);
-         } else {
+#         if($self ne undef) {
+#            @{$$prog{var}}{$i} = evaluate($self,$prog,$var[$i]);
+#         } else {
             @{$$prog{var}}{$i} = $var[$i];
-         }
+#         }
       }
    }
 }

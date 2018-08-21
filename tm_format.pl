@@ -61,7 +61,7 @@ sub fmt_balanced_split
       $ch = substr($txt,$i,1);
 
       if($ch eq "\\") {
-         $buf .= substr($txt,++$i,1);
+         $buf .= substr($txt,$i++,2);
          next;
       } else {
          if($ch eq "(" || $ch eq "{") {                  # start of segment
@@ -240,7 +240,7 @@ sub fmt_switch
 
        if($i % 2 == 1) {
           if($i == $#list) {                        # default test condition
-             $out .= dprint($depth+3,"DEFAULT,"); 
+             $out .= dprint($depth+3,"DEFAULT-" . ($depth+6) . ","); 
              $out .= dprint($depth+6,"%s",@list[$i]);
           } else {                                          # test condition
              $out .= dprint($depth+3,"%s",@list[$i]);
@@ -486,7 +486,10 @@ sub pretty
 # my $code='@switch [t(match(get(#5/hangout_list),%1))][match(bus cab bike motorcycle car walk boomtube,%0)]=0*,@pemit %#=Double-check the DB Number. That does not seem to be a viable option.,11,{@tel %#=%1;@wait 1=@remit [loc(%#)]=A bus pulls up to the local stop. %N steps out.},12,{@tel %#=%1;@wait 1=@remit [loc(%#)]=A big yellow taxi arrives. A figure inside pays the tab%, then steps out and is revealed to be %N.},13,{@tel %#=%1;@wait 1=@remit [loc(%#)]=%N arrives in the area%, pedaling %p bicycle.},14,{@tel %#=%1;@wait 1=@remit [loc(%#)]=%N pulls up on %p motorcycle%, kicking the stand and stepping off.},15,{@tel %#=%1;@wait 1=@remit [loc(%#)]=%N pulls up in %p car%, parking and then getting out.},16,{@tel %#=%1;@wait 1=@remit %N walks down the street in this direction.=<an emit>},17,{@tel %#=%1;@wait 1=@remit [loc(%#)]=A boomtube opens%, creating a spiraling rift in the air. After a moment%, %N steps out.},@pemit %#=That method of travel does not seem to exist.';
 #my $code ='&won me=[switch(1,u(fnd,%0,add(1,strlen(v(c[first(%0)]))),after(rest(v(who)),|)),%#)]';
 #my $code = '[setq(1,)][setq(2,)][setq(3,)][setq(4,)][setq(5,)][setq(6,)][setq(7,)][setq(8,)][setq(9,)][setq(0,)]';
+# my $code = '@switch 0=run(@telnet wttr.in 80),say Weather is temporarly unavailible.,{  @var listen=off;@send GET /@%1?0?T HTTP/1.1;@send Host: wttr.in;@send Connection: close;@send User-Agent: curl/7.52.1;@send Accept: */*;@send ;@while ( telnet_open(%{input}) eq 1 ) {@var input = [input()];@switch on-done-%{input}=on-%{listen}-*,@@ ignore,on-done-*out of queries*,{say Weather Website is down [out of queries];@var listen=done},on-done-ERROR*,{say Unknown Location: %1;@var listen=done},on-done-#-1 *,@@ ignore,on-done-Weather report:*,{@var listen=on;@emit %{input}},%{listen}-done-,@@ ignore,%{listen}-done-*,@emit > [decode_entities(%{input})]}';
+
 # 
 # 
-# printf("%s\n",pretty(11,$code));
+# printf("%s\n",pretty(3,$code));
 # printf("%s\n",function_print(3,$code));
+

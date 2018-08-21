@@ -1730,22 +1730,37 @@ sub cmd_telnet
 sub cmd_send
 {
     my ($self,$prog,$txt) = (obj(shift),shift);
+    my $sock;
 
     if(!hasflag($self,"WIZARD")) {                            # wizard only
        return err($self,$prog,"Permission Denied.");
-    } elsif(!defined $$prog{telnet_sock}) {
-       return err($self,$prog,"Telnet connection needs to be opened first");
+    } elsif(defined hasflag($self,"SOCKET_PUPPET")) {
+       # search for socket if set SOCKET_PUPPET.
+       #    1. only one socket per object allowed 
+       #    2. for convenience sake, a socket "name" isn't required.
+       #       So we search for it.
+       if(defined hasflag($self,"SOCKET_PUPPET")) {
+          for my $key (keys %connected) {
+             if($$self{obj_id} eq @{@connected{$key}}{obj_id} &&
+                defined @{@connected{$key}}{prog}) {
+                $sock = @{@connected{$key}}{sock};
+             }
+          }
+       }
+    } elsif(hasflag($self,"SOCKET_INPUT") && defined $$prog{telnet_sock}) {
+       $sock = $$prog{telnet_socket};
+    }
+
     # socket has not connected, try again later
-    } elsif(defined $$prog{telnet_sock} &&
-            @{@connected{$$prog{telnet_sock}}}{pending} == 2) {
+    if($sock eq undef) {
+       return err($self,$prog,"Telnet connection needs to be opened first");
+    } elsif(@{@connected{$sock}}{pending} == 2) {
        $$prog{idle} = 1;                   # socket pending, try again later
        return "RUNNING";
     } else {
        my $txt = evaluate($self,$prog,shift);
        my $switch = shift;
        $txt =~ s/\r|\n//g;
-
-       my $sock = $$prog{telnet_sock};
 
        if(defined $$switch{lf}) {
           printf($sock "%s\n",$txt);

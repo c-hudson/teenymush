@@ -387,6 +387,7 @@ sub handle_object_listener
    my $msg = sprintf($txt,@args);
    my $count;
 
+   $msg =~ s/(%|\\)/\\$1/g;
    for my $hash (latr_regexp($target,3)) {
       if($msg =~ /$$hash{atr_regexp}/i) {
          mushrun(self   => $target,
@@ -612,22 +613,22 @@ sub necho
                echo_socket($obj,
                            @arg{prog},
                            "%s%s",
-                           nospoof(@arg{self},@arg{prog},$obj),
+                           nospoof($self,$prog,$obj),
                            $msg
                           );
             }
          }
-         handle_listener($arg{self},$arg{prog},$target,$fmt,@$array);
+         handle_listener($self,$prog,$target,$fmt,@$array);
       }
    }
  
-   unshift(@{$arg{source}},$arg{self}) if(defined $arg{source});
+   unshift(@{$arg{source}},$self) if(defined $arg{source});
 
    for my $type ("source", "target") {
       next if !defined $arg{$type};
 
       if(ref($arg{$type}) ne "ARRAY") {
-         return err($arg{self},$arg{prog},"Argument $type is not an array");
+         return err($self,$prog,"Argument $type is not an array");
       }
 
       my ($target,$fmt) = (shift(@{$arg{$type}}), shift(@{$arg{$type}}));
@@ -647,8 +648,8 @@ sub necho
             next;
       }
 
-      if(defined @{$arg{self}}{loggedin} && !@{$arg{self}}{loggedin}) {
-         my $self = $arg{self};
+      if(defined $$self{loggedin} && !$$self{loggedin} &&
+         !defined $$self{port} && !defined $$self{hostname}) {
          my $s = @{$connected{$$self{sock}}}{sock};
 
          # this might crash if the websocket dies, the evals should

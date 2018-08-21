@@ -986,7 +986,7 @@ sub fun_replace
    my $i = 1;
 
    if(!good_args($#_,3,4,5)) {
-      return "#-1 FUNCTION (INDEX) EXPECTS 3, 4 or 5 ARGUMENTS";
+      return "#-1 FUNCTION (REPLACE) EXPECTS 3, 4 or 5 ARGUMENTS";
    }
    $txt =~ s/^\s+|\s+$//g;
    $positions=~ s/^\s+|\s+$//g;
@@ -1205,13 +1205,12 @@ sub fun_edit
 {
    my ($self,$prog) = (shift,shift);
 
-   my ($txt,$from,$to) = @_;
-
    good_args($#_,3) ||
       return "#-1 FUNCTION (EDIT) EXPECTS 3 ARGUMENTS";
 
-   $from = quotemeta($from);
-   $to= quotemeta($to);
+   my $txt = evaluate($self,$prog,shift);
+   my $from = quotemeta(evaluate($self,$prog,shift));
+   my $to= quotemeta(evaluate($self,$prog,shift));
    $txt =~ s/$from/$to/ig;
    return $txt;
 }
@@ -1861,6 +1860,7 @@ sub parse_function
          if(!(defined @exclude{$fun} && (defined @{@exclude{$fun}}{$i} ||
             defined @{@exclude{$fun}}{all}))) {
             @array[$i] = evaluate($self,$prog,@array[$i]);
+#            @array[$i] = @array[$i];
          }
       }
       return \@array;
@@ -1886,7 +1886,8 @@ sub balanced_split
       $ch = substr($txt,$i,1);
 
       if($ch eq "\\") {
-         $buf .= substr($txt,++$i,1);
+#         $buf .= substr($txt,++$i,1);
+         $buf .= substr($txt,$i++,2); # CHANGE
          next;
       } else {
          if($ch eq "(" || $ch eq "{") {                  # start of segment
@@ -2000,6 +2001,7 @@ sub evaluate
       $out .= evaluate_substitutions($self,$prog,$before);
       $out .= "\\" x (length($esc) / 2);
 
+#      printf("FUN: '%s'\n",$txt);
       if(length($esc) % 2 == 0) {
          my $result = parse_function($self,$prog,$fun,$',1);
 
@@ -2010,7 +2012,7 @@ sub evaluate
             $txt = shift(@$result);
             my $r = &{@fun{$fun}}($self,$prog,@$result);
             script($fun,join(',',@$result),$r);
-            $out .= $r;
+            $out .= "$r";
          }
       } else {                                # start of function escaped out
          $out .= "[$unmod(";

@@ -41,8 +41,8 @@ sub sql
    delete @$con{rows};
 
 #   if($sql !~ /^insert into io/) {
-#     printf("SQL: '%s' -> '%s'\n",$sql,code());
-#      printf("     '%s'\n",code("short"));
+#     printf("SQL: '%s' -> '%s'\n",$sql,join(',',@args));
+##      printf("     '%s'\n",code("short"));
 #   }
 
    #

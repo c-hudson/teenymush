@@ -298,7 +298,7 @@ sub spin
        };
 
 #      ualarm(800_000);                                # die at 8 milliseconds
-       ualarm(15_000_000);                              # die at 8 milliseconds
+       ualarm(30_000_000);                              # die at 8 milliseconds
 
 #      printf("PIDS: '%s'\n",join(',',keys %{@info{engine}}));
       for my $pid (sort { $a cmp $b } keys %{@info{engine}}) {
@@ -325,7 +325,7 @@ sub spin
             $$program{stack} = [];                          # and add new one
             my $stack = $$program{stack};
 
-            ualarm(3_000_000);                        # die at 8 milliseconds
+            ualarm(30_000_000);                        # die at 8 milliseconds
             my $result = spin_run(\%last,$program,$cmd,$command);   # run cmd
             ualarm(0);
 

@@ -2372,10 +2372,12 @@ sub cmd_name
 
    if(hasflag($self,"GUEST")) {
       return err($self,$prog,"Permission Denied.");
-   } elsif($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*$/) {
+   } elsif($txt =~ /^\s*([^=]+?)\s*=\s*(.+?)\s*$/) {
       my $target = locate_object($self,$prog,$1,"LOCAL") ||
          return err($self,$prog,"I don't see that here.");
-      my $name = trim($2);
+      my $cname = trim(evaluate($self,$prog,$2));
+      my $name = ansi_remove($cname);
+      my $old = name($target);
 
       controls($self,$target) ||
          return err($self,$prog,"Permission Denied.");
@@ -2393,9 +2395,11 @@ sub cmd_name
 
       sql($db,
           "update object " .
-          "   set obj_name = ? " .
+          "   set obj_name = ?, " .
+          "       obj_cname = ? " .
           " where obj_id = ?",
           $name,
+          $cname,
           $$target{obj_id},
           );
  
@@ -2406,7 +2410,7 @@ sub cmd_name
          necho(self   => $self,
                prog   => $prog,
                source => [ "Set." ],
-               room   => [ $target, "%s is now known by %s\n",$name,$2 ]
+               room   => [ $target, "%s is now known by %s.\n",$old, $cname]
               );
 
          $$target{obj_name} = $name;
@@ -3597,7 +3601,8 @@ sub list_attr
                                                 single_line($$hash{atr_value})
                                                );
             } else {
-               $$hash{atr_value}="\n".pretty(3,single_line($$hash{atr_value}));
+               $$hash{atr_value}="\n" . 
+                                 pretty(3,single_line($$hash{atr_value}));
             }
             $$hash{atr_value} =~ s/\n+$//;
          }
@@ -3854,6 +3859,7 @@ sub cmd_look
           "                      separator '') flags, " .
           "         obj.obj_id," .
           "         min(obj.obj_name) obj_name, " .
+          "         min(obj.obj_cname) obj_cname, " .
           "         min(" .
           "             case " .
           "                when fde_name in ('EXIT','OBJECT','PLAYER') then " .
@@ -3893,6 +3899,10 @@ sub cmd_look
    
           # skip non-connected players
           next if($$hash{obj_type} eq "PLAYER" && $$hash{online} eq "N");
+
+          if($$hash{obj_cname} ne undef) {
+             $$hash{obj_name} = $$hash{obj_cname};
+          }
    
           if($$hash{obj_type} eq "EXIT") {                   # store exits for
              if($$hash{flag} !~ /D/) {                                 # later
@@ -4244,7 +4254,9 @@ sub who
          $name = "<a href=look/$$hash{obj_id}>$name</a>" .
                  (" " x (15 - length($name)));
       } else {
-         $name = sprintf("%-15s", $$hash{obj_name});
+         $name = ansi_substr(name($hash),0,15) . 
+                 "-" x (14 - length($$hash{obj_name}));
+         $name = name($hash) . (" " x (15 - length($$hash{obj_name})));
       }
 
       # show connected user details

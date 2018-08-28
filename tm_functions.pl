@@ -26,6 +26,7 @@ my %exclude =
 
 my %fun = 
 (
+   ansi      => sub { return &fun_ansi(@_);                             },
    substr    => sub { return &fun_substr(@_);                           },
    cat       => sub { return &fun_cat(@_);                              },
    space     => sub { return &fun_space(@_);                            },
@@ -115,6 +116,37 @@ my %fun =
    min        => sub { return &fun_min(@_);                             },
    decode_entities => sub { return &fun_de(@_);                         },
 );
+
+# starting point
+sub fun_ansi
+{
+   my ($self,$prog,$codes,$txt) = (obj(shift),shift,shift,shift);
+   my ($hilite,$pre);
+
+   my %ansi = (
+      x => 30, X => 40,
+      r => 31, R => 41,
+      g => 32, G => 42,
+      y => 33, Y => 43,
+      b => 34, B => 44,
+      m => 35, M => 45,
+      c => 36, C => 46,
+      w => 37, W => 47,
+      u => 4,
+   );
+
+   $txt =~ s/ //g;
+   $hilite = 1 if($codes =~ /h/);
+
+   for my $ch (split(//,$codes)) {
+      if(defined @ansi{$ch} && $hilite) {
+         $pre .= "\e[@ansi{$ch};1m";
+      } elsif(defined @ansi{$ch} && !$hilite) {
+         $pre .= "\e[@ansi{$ch}m";
+      }
+   }
+   return $pre . $txt . "\e[0m";
+}
 
 
 sub fun_min
@@ -1583,6 +1615,15 @@ sub get_socket
    return undef;
 }
 
+sub ordline
+{
+   my $txt = shift;
+
+   for my $i (0 .. length($txt)) {
+      printf("$i : '%s' -> %s\n",substr($txt,$i,1),ord(substr($txt,$i,1)));
+   }
+}
+
 #
 # fun_input
 #    Check to see if there is any input in the specified input buffer
@@ -1626,6 +1667,20 @@ sub fun_input
        $data =~ s/↓ /S /g;
        $data =~ s/↘ /SE /g;
        $data =~ s/→ /E /g;
+       my $ch = chr(226) . chr(134) . chr(152);
+       $data =~ s/$ch/SE/g;
+       my $ch = chr(226) . chr(134) . chr(147);
+       $data =~ s/$ch/S/g;
+       my $ch = chr(226) . chr(134) . chr(145);
+       $data =~ s/$ch/N/g;
+       my $ch = chr(226) . chr(134) . chr(146);
+       $data =~ s/$ch/E/g;
+       my $ch = chr(226) . chr(134) . chr(151);
+       $data =~ s/$ch/NE/g;
+       if($data =~ /mph/) {
+          printf("-D- %s\n",ordline($data));
+       }
+ 
        return $data;
     }
 }

@@ -243,13 +243,20 @@ sub name
    my $target = obj(shift);
 
    if(!incache($target,"obj_name")) {
-      my $val = one_val("select obj_name value ".
-                        "  from object ".
-                        " where obj_id = ? ",
-                        $$target{obj_id}
-                       );
-      return "[<UNKNOWN>]" if($val eq undef);
-      set_cache($target,"obj_name",$val);
+      my $hash = one("select obj_name, obj_cname ".
+                     "  from object ".
+                     " where obj_id = ? ",
+                     $$target{obj_id}
+                    );
+
+      if($$hash{obj_cname} eq undef &&
+         $$hash{obj_name} eq undef) {
+         return "[<UNKNOWN>]";
+      } elsif($$hash{obj_cname} eq undef) {
+         set_cache($target,"obj_name",$$hash{obj_name});
+      } else {
+         set_cache($target,"obj_name",$$hash{obj_cname});
+      }
    }
    return cache($target,"obj_name");
 }

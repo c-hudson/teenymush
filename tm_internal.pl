@@ -550,6 +550,8 @@ sub echo_socket
 
          if(@{@connected{$s}}{type} eq "WEBSOCKET") {
              ws_echo($s,$msg);
+         } elsif(!hasflag($obj,"ANSI")) {
+             printf($s "%s",ansi_remove($msg));
          } else {
             printf($s "%s",$msg);
          }
@@ -564,6 +566,8 @@ sub echo_socket
    
             if(@{@connected{$s}}{type} eq "WEBSOCKET") {
                 ws_echo($s,name($obj) . "> " .$msg);
+            } elsif(!hasflag($obj,"ANSI")) {
+               printf($s "%s> %s",name($obj),ansi_remove($msg));
             } else {
                printf($s "%s> %s",name($obj),$msg);
             }

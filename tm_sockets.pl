@@ -291,18 +291,19 @@ sub server_handle_sockets
             @{@connected{$s}}{pending} = 1;
             $buf =~ s/\r//g;                                 # remove returns
 #            $buf =~ tr/\x80-\xFF//d;
-            $buf =~ s/\e\[[\d;]*[a-zA-Z]//g;
+#            $buf =~ s/\e\[[\d;]*[a-zA-Z]//g;
             @{@connected{$s}}{buf} .= $buf;                     # store input
           
                                                          # breakapart by line
 #            while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
             while(@{@connected{$s}}{buf} =~ /\n/) {
                @{@connected{$s}}{buf} = $';                # store left overs
-#               if(@{@connected{$s}}{raw} > 0) {
-#                  printf("#%s# %s\n",@{@connected{$s}}{raw},$`);
-#               }
-
                server_process_line(@connected{$s},$`);         # process line
+#               if(@{@connected{$s}}{raw} > 0) {
+#                  my $tmp = $`;
+#                  $tmp =~ s/\e\[[\d;]*[a-zA-Z]//g;
+#                  printf("#%s# %s\n",@{@connected{$s}}{raw},$tmp);
+#               }
             }
          }
       }

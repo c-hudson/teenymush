@@ -189,8 +189,12 @@ sub ansi_color
 #
 sub ansi_remove
 {
-   my $txt = ansi_init(shift);
-   return ansi_print($txt,0);
+#   my $txt = ansi_init(shift);
+#   return ansi_print($txt,0);
+
+   my $txt = shift;
+   $txt =~ s/\e\[[\d;]*[a-zA-Z]//g;
+   return $txt;
 }
 
 # open(FILE,"iweb") ||

@@ -79,6 +79,8 @@ sub io
 {
    my ($self,$type,$data) = @_;
 
+   return if($$self{obj_id} eq undef);
+
    my $tmp = $$db{rows};
    sql("insert into io" .
        "(" .
@@ -484,6 +486,8 @@ sub log_output
 {
    my ($src,$dst,$loc,$txt) = (obj(shift),obj(shift),shift,shift);
 
+   return if($$src{obj_id} eq undef);
+
    $txt =~ s/([\r\n]+)$//g;
 
    my $tmp = $$db{rows}; # its easy to try to necho() data before testing
@@ -548,7 +552,9 @@ sub echo_socket
       for my $socket (keys %$list) {
          my $s = $$list{$socket};
 
-         if(@{@connected{$s}}{type} eq "WEBSOCKET") {
+         if(@{@connected{$s}}{type} eq "WEBSOCKET" && !hasflag($obj,"ANSI")) {
+             ws_echo($s,ansi_remove($msg));
+         } elsif(@{@connected{$s}}{type} eq "WEBSOCKET") {
              ws_echo($s,$msg);
          } elsif(!hasflag($obj,"ANSI")) {
              printf($s "%s",ansi_remove($msg));
@@ -564,8 +570,10 @@ sub echo_socket
          for my $socket (keys %$list) {
             my $s = $$list{$socket};
    
-            if(@{@connected{$s}}{type} eq "WEBSOCKET") {
+            if(@{@connected{$s}}{type} eq "WEBSOCKET" && hasflag($obj,"ANSI")) {
                 ws_echo($s,name($obj) . "> " .$msg);
+            } elsif(@{@connected{$s}}{type} eq "WEBSOCKET") {
+                ws_echo($s,name($obj) . "> " . ansi_remove($msg));
             } elsif(!hasflag($obj,"ANSI")) {
                printf($s "%s> %s",name($obj),ansi_remove($msg));
             } else {

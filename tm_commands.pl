@@ -1481,9 +1481,9 @@ sub get_segment2
 {
    my ($txt,$delim) = @_;
 
-    if($txt =~ /^\s*"(.+?)(?<!(?<!\\)\\)"($delim|$)/s ||
-       $txt =~ /^\s*{(.+?)(?<!(?<!\\)\\)}($delim|$)/s ||
-       $txt =~ /^(.+?)($delim|$)/s) {
+    if($txt =~ /^\s*"(.*?)(?<!(?<!\\)\\)"($delim|$)/s ||
+       $txt =~ /^\s*{(.*?)(?<!(?<!\\)\\)}($delim|$)/s ||
+       $txt =~ /^(.*?)($delim|$)/s) {
        return ($1,$');
     } else {
        return ($txt,undef);
@@ -1544,11 +1544,12 @@ sub cmd_squish
 
 sub cmd_switch
 {
+   
     my ($self,$prog,@list) = (shift,shift,balanced_split(shift,',',3));
     my %last;
 
     my ($first,$second) = (get_segment2(shift(@list),"="));
-    $first = evaluate($self,$prog,$first);
+    $first = ansi_remove(evaluate($self,$prog,$first));
     $first =~ s/[\r\n]//g;
     unshift(@list,$second);
 
@@ -1559,11 +1560,10 @@ sub cmd_switch
        }
        if($#list >= 1) {
           my ($txt,$cmd) = (evaluate($self,$prog,shift(@list)),shift(@list));
-#          $txt =~ s/\*/\(.*\)/g;
           $txt =~ s/^\s+|\s+$//g;
-          $first =~ s/\//#/g;
+          my $pat = glob2re($txt);
 
-          if(match_glob(lc(trim($txt)),lc(trim($first)))) {
+          if($first =~ /$pat/) {
              return mushrun(self   => $self,
                             prog   => $prog,
                             runas  => $self,
@@ -1573,6 +1573,7 @@ sub cmd_switch
           }
        } else {
           @list[0] = $1 if(@list[0] =~ /^\s*{(.*)}\s*$/);
+          @list[0] =~ s/\r|\n//g;
           return mushrun(self   => $self,
                          prog   => $prog,
                          runas  => $self,
@@ -1879,8 +1880,8 @@ sub cmd_force
                prog   => $prog,
                runas  => $target,
                source => 0,
-#               cmd    => evaluate($self,$prog,$'),
-               cmd    => $',
+               cmd    => evaluate($self,$prog,$'),
+#               cmd    => $',
                hint   => "INTERNAL"
               );
    } else {
@@ -3621,10 +3622,18 @@ sub list_attr
       }
 
       if($$hash{atr_flag} eq undef) {
-         push(@result,sprintf("%s: %s",$$hash{atr_name},$$hash{atr_value}));
+         push(@result,sprintf("%s: %s",
+                              color("h",$$hash{atr_name}),
+                              $$hash{atr_value}
+                             )
+             );
       } else {
-         push(@result,sprintf("%s[%s]: %s",@$hash{atr_name},$$hash{atr_flag},
-             $$hash{atr_value}));
+         push(@result,sprintf("%s[%s]: %s",
+                              color("h",@$hash{atr_name}),
+                              $$hash{atr_flag},
+                              $$hash{atr_value}
+                             )
+             );
       }
       if(uc($$hash{atr_name}) eq uc($atr)) {
          return @result[$#result];
@@ -3679,9 +3688,11 @@ sub cmd_ex
    if($flags =~ /(PLAYER|OBJECT|ROOM|EXIT)/) {
       my $rest = trim($` . $');
       $rest =~ s/\s{2,99}/ /g;
-      $out .= "\nType: $1  Flags: " . $rest;
+      $out .= "\n" . color("h","Type") . ": $1  " . 
+              color("h","Flags") . ": " . $rest;
    } else {
-      $out .= "\nType: *UNKNOWN*  Flags: " . $flags;
+      $out .= "\n" . color("h","Type") . ": *UNKNOWN*  " . 
+              color("h","Flags") . ": " . $flags;
    }
 
    $out .= "\n" . 
@@ -3690,20 +3701,21 @@ sub cmd_ex
               );
 
    my $owner = owner($target);
-   $out .= "\nOwner: " . obj_name($self,$owner,$perm) . 
-           "  Key: " . nvl(lock_uncompile($self,
+   $out .= "\n" . color("h","Owner") . ": " . obj_name($self,$owner,$perm) . 
+           "  " . color("h","Key") . " : " . nvl(lock_uncompile($self,
                                           $prog,
                                           get($target,"LOCK_DEFAULT")
                                          ),
                            "*UNLOCKED*"
                           ) .
-           "  " . ucfirst(@info{"conf.money_name_plural"}).": ". money($target);
+           "  " . color("h",ucfirst(@info{"conf.money_name_plural"})) .
+           ": ". money($target);
 
-   $out .= "\nCreated: $$target{obj_created_date}";
+   $out .= "\n" . color("h","Created") . " : $$target{obj_created_date}";
    if(hasflag($target,"PLAYER")) {
       if($perm) {
-         $out .= "\nFirstsite: $$target{obj_created_by}\n" .
-                 "Lastsite: " . lastsite($$target{obj_id});
+         $out .= "\n".color("h","Firstsite").": $$target{obj_created_by}\n" .
+                 color("h","Lastsite") . ": " . lastsite($$target{obj_id});
       }
       my $last = one_val($db,
                          "select ifnull(max(skh_end_time), " .
@@ -3717,7 +3729,7 @@ sub cmd_ex
       if($last eq undef) {
          $out .= "\nLast: N/A";
       } else {
-         $out .= "\nLast: ". $last;
+         $out .= "\n" . color("h","Last") . ": ". $last;
       }
    }
 
@@ -3746,7 +3758,7 @@ sub cmd_ex
    }
 
    if($#content > -1) {
-      $out .= "\nContents:\n" . join("\n",@content);
+      $out .= "\n" . color("h","Contents") . ":\n" . join("\n",@content);
    }
 
    my $con = one("select * " . 
@@ -3792,8 +3804,10 @@ sub cmd_ex
    }
 
    if($perm && (hasflag($target,"PLAYER") || hasflag($target,"OBJECT"))) {
-      $out .= "\nHome: " . obj_name($self,fetch($$target{obj_home}),$perm) .
-              "\nLocation: " . obj_name($self,$$con{con_source_id},$perm);
+      $out .= "\n" . color("h","Home") . ": " . 
+              obj_name($self,fetch($$target{obj_home}),$perm) .
+              "\n" . color("h","Location") . ": " . 
+              obj_name($self,$$con{con_source_id},$perm);
    }
    necho(self   => $self,
          prog   => $prog,
@@ -3918,7 +3932,7 @@ sub cmd_look
              }
           } elsif($$hash{obj_type} =~ /^(PLAYER|OBJECT)$/ && 
                  $$hash{flags} !~ /D/){
-             $out .= "\nContents:" if(++$flag == 1);
+             $out .= "\n" . color("h","Contents") . ":" if(++$flag == 1);
 
              if($$hash{obj_owner} == $owner || $perm) {
                  $name = "$$hash{obj_name}(#$$hash{obj_id}$$hash{flags})";
@@ -3933,7 +3947,8 @@ sub cmd_look
           }
       }
    }
-   $out .= "\nExits:\n" . join("  ",@exit) if($#exit >= 0);  # add any exits
+   $out .= "\n" . color("h","Exits") . ":\n" . 
+            join("  ",@exit) if($#exit >= 0);  # add any exits
 
    necho(self   => $self,
          prog   => $prog,
@@ -4078,113 +4093,6 @@ sub cmd_DOING
         );
 }
 
-sub who_old
-{
-   my ($self,$prog,$flag) = @_;
-   my ($max,@who,$idle,$count,$out,$extra,$hasperm,$name) = (2);
-
-   if(ref($self) eq "HASH") {
-      $hasperm = ($flag || !hasflag($self,"WIZARD")) ? 0 : 1;
-   } else {
-      $hasperm = 0;
-   }
-
-
-   # query the database for connected user, location, and socket
-   # details.
-   for my $key (keys %connected) {
-      my $hash = @connected{$key};
-
-      if(!defined $$hash{connect_time} && $$hash{raw} == 0) {
-         push(@who,{ obj_name      => "[Connecting]",
-                     sck_socket    => $$hash{sock},
-                     start_time    => $$hash{start},
-                     sck_hostname  => $$hash{hostname},
-                     port          => $$hash{port} . "-foo",
-                     con_source_id =>  " - ",
-                   });
-      }
-   }
-   for my $key (@{sql($db,
-                    "select obj.*, " .
-                    "       sck_start_time start_time, " .
-                    "       sck_hostname, " .
-                    "       sck_socket, " .
-                    "       concat('#',con_source_id) con_source_id " .
-                    "  from socket sck, object obj, content con " .
-                    " where sck_type = 1 " .
-                    "   and sck.obj_id = obj.obj_id " .
-                    "   and con.obj_id = obj.obj_id " .
-                    " order by sck_start_time desc"
-                   )}
-               ) {
-      if(length($$key{con_source_id}) > length($max)) {
-         $max = length($$key{con_source_id});
-      }
-      push(@who,$key);
-   }
-      
-   # show headers for normal / wiz who 
-   if($hasperm) {
-      $out .= sprintf("%-15s%10s%5s %-*s %-4s %s\r\n","Player Name","On For",
-                      "Idle",$max,"Loc","Port","Hostname");
-   } else {
-      $out .= sprintf("%-15s%10s%5s  %s\r\n","Player Name","On For","Idle",
-                      defined @info{"conf.doing_header"} ? 
-                      @info{"conf.doing_header"} : "\@doing"
-                     );
-   }
-
-   $max = 3 if($max < 3);
-
-   # generate detail for every connected user
-   for my $hash (@who) {
-      # determine idle details
-      my $extra_data = @connected{$$hash{sck_socket}};
-
-#      next if($$extra_data{site_restriction} == 69);
-
-      if(defined $$extra_data{last}) {
-         $idle = date_split(time() - @{$$extra_data{last}}{time});
-      } else {
-         $idle = { max_abr => 's' , max_val => 0 };
-      }
-
-      # determine connect time details
-      
-      my $online = date_split(time() - fuzzy($$hash{start_time}));
-      if($$online{max_abr} =~ /^(M|w|d)$/) {
-         $extra = sprintf("%4s",$$online{max_val} . $$online{max_abr});
-      } else {
-         $extra = "    ";
-      } 
- 
-      if($$prog{hint} eq "WEB") {
-         $name = name($hash);
-         $name = "<a href=look/$$hash{obj_id}>$name</a>" .
-                 (" " x (15 - length($name)));
-      } else {
-         $name = sprintf("%-15s", $$hash{obj_name});
-      }
-
-      # show connected user details
-      if($hasperm) {
-         $out .= sprintf("%s%4s %02d:%02d %4s %-*s %-4s %s%s\r\n",
-             $name,$extra,$$online{h},$$online{m},$$idle{max_val} .
-             $$idle{max_abr},$max,$$hash{con_source_id},$$extra_data{port},
-             short_hn($$hash{sck_hostname}),
-             ($$extra_data{site_restriction} == 69) ? " [HoneyPoted]" : ""
-            );
-      } elsif($$extra_data{site_restriction} != 69) {
-         $out .= sprintf("%s%4s %02d:%02d %4s  %s\r\n",$name,$extra,
-             $$online{h},$$online{m},$$idle{max_val} . $$idle{max_abr},
-             $$extra_data{obj_doing});
-      }
-   }
-   $out .= sprintf("%d Players logged in\r\n",$#who+1);        # show totals
-   return $out;
-}
-
 sub who
 {
    my ($self,$prog,$txt,$flag) = @_;
@@ -4252,7 +4160,7 @@ sub who
       if($$prog{hint} eq "WEB") {
          $name = name($hash);
          $name = "<a href=look/$$hash{obj_id}>$name</a>" .
-                 (" " x (15 - length($name)));
+                 (" " x (15 - ansi_length($name)));
       } else {
          $name = ansi_substr(name($hash),0,15) . 
                  "-" x (14 - length($$hash{obj_name}));

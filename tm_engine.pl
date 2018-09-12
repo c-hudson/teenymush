@@ -362,7 +362,7 @@ sub spin
             my $prog = shift(@$thread);
             if($$prog{hint} eq "WEBSOCKET") {
                my $msg = join("",@{@$prog{output}});
-               $prog->{sock}->send_utf8($msg);
+               $prog->{sock}->send_utf8(ansi_remove($msg));
            } elsif($$prog{hint} eq "WEB") {
                if(defined $$prog{output}) {
                   http_reply($$prog{sock},join("",@{@$prog{output}}));

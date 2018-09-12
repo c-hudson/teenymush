@@ -206,6 +206,7 @@ DROP TABLE IF EXISTS `object`;
 CREATE TABLE `object` (
   `obj_id` int(11) NOT NULL AUTO_INCREMENT,
   `obj_name` varchar(50) NOT NULL,
+  `obj_cname` varchar(100) DEFAULT NULL,
   `obj_password` varchar(41) DEFAULT NULL,
   `obj_owner` int(11) NOT NULL,
   `obj_created_by` varchar(255) DEFAULT NULL,
@@ -309,4 +310,4 @@ CREATE TABLE `valid_option` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2018-08-28  2:00:01
+-- Dump completed on 2018-09-12  2:00:01

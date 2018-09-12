@@ -27,6 +27,7 @@ my %exclude =
 my %fun = 
 (
    ansi      => sub { return &fun_ansi(@_);                             },
+   ansi_debug=> sub { return &ansi_debug($_[2]);                        },
    substr    => sub { return &fun_substr(@_);                           },
    cat       => sub { return &fun_cat(@_);                              },
    space     => sub { return &fun_space(@_);                            },
@@ -132,11 +133,12 @@ sub fun_ansi
       m => 35, M => 45,
       c => 36, C => 46,
       w => 37, W => 47,
-      u => 4,
+      u => 4,  i => 7,
+      h => 1
    );
 
    $txt =~ s/ //g;
-   $hilite = 1 if($codes =~ /h/);
+#   $hilite = 1 if($codes =~ /h/);
 
    for my $ch (split(//,$codes)) {
       if(defined @ansi{$ch} && $hilite) {
@@ -178,7 +180,6 @@ sub fun_fold
    good_args($#_,2,3,4) ||
      return "#-1 FUNCTION (FOLD) EXPECTS 2 TO 3 ARGUMENTS $#_";
    my ($atr,$list,$base,$idelim) = (shift,shift,shift);
-   printf("FOLD: '%s' '%s' '%s' '%s'\n",$atr,$list,$base,$idelim);
 
    my $prev = get_digit_variables($prog);
 
@@ -246,10 +247,12 @@ sub fun_ucstr
    my ($self,$prog,$txt) = (obj(shift),shift);
    my $result;
 
-   for my $i (0 .. $#_) {
-      @_[$i] = uc(@_[$i]);
+   my $str = ansi_init(join(',',@_));
+   for my $i (0 .. $#{$$str{ch}}) {
+      @{$$str{ch}}[$i] = uc(@{$$str{ch}}[$i]);
    }
-   return join(',',@_);
+
+   return ansi_string($str,1);
 }
 
 sub fun_sort
@@ -716,7 +719,13 @@ sub fun_lcstr
    good_args($#_,1) ||
      return "#-1 FUNCTION (LCSTR) EXPECTS 1 ARGUMENT ($#_)";
 
-    return lc(shift);
+   my $str = ansi_init(join(',',@_));
+
+   for my $i (0 .. $#{$$str{ch}}) {
+      @{$$str{ch}}[$i] = lc(@{$$str{ch}}[$i]);
+   }
+
+   return ansi_string($str,1);
 }
 
 sub fun_home
@@ -860,7 +869,7 @@ sub fun_isnum
    good_args($#_,1) ||
       return "#-1 FUNCTION (ISNUM) EXPECTS 1 ARGUMENT";
 
-   return looks_like_number($_[0]) ? 1 : 0;
+   return looks_like_number(ansi_remove($_[0])) ? 1 : 0;
 }
 
 sub fun_lnum
@@ -905,14 +914,17 @@ sub fun_words
    good_args($#_,1,2) ||
       return "#-1 FUNCTION (WORDS) EXPECTS 1 OR 2 ARGUMENTS";
 
-   return scalar(safe_split($txt,($delim eq undef) ? " " : $delim));
+   return scalar(safe_split(ansi_remove($txt),
+                            ($delim eq undef) ? " " : $delim
+                           )
+                );
 }
 
 sub fun_match
 {
    my ($self,$prog) = (shift,shift);
 
-   my ($txt,$pat,$delim) = @_;
+   my ($txt,$pat,$delim) = ($_[0],ansi_remove($_[1]),$_);
    my $count = 1;
 
    good_args($#_,1,2,3) ||
@@ -920,7 +932,7 @@ sub fun_match
 
    $delim = " " if $delim eq undef; 
 
-   for my $word (safe_split($txt,$delim)) {
+   for my $word (safe_split(ansi_remove($txt),$delim)) {
       return $count if(match_glob(lc($pat),lc($word)));
       $count++;
    }
@@ -940,23 +952,29 @@ sub fun_center
    } elsif($size eq 0) { 
       return "#-1 SECOND ARGUMENT MUST NOT BE ZERO";
    }
-   $txt = substr($txt,0,$size);
-   return sprintf("%-*s",$size,(" " x (($size - length($txt))/2)).$txt);
+
+   $txt = ansi_substr($txt,0,$size);
+
+   my $len = ansi_length($txt);
+
+   my $lpad = " " x (($size - $len) / 2);
+
+   my $rpad = " " x ($size - length($lpad) - $len);
+   
+   return $lpad . $txt . $rpad;
 }
 
 sub fun_switch
 {
    my ($self,$prog) = (shift,shift);
 
-   my $first = evaluate($self,$prog,shift);
+   my $first = ansi_remove(evaluate($self,$prog,shift));
 
    while($#_ >= 0) {
       if($#_ >= 1) {
-         my $txt = evaluate($self,$prog,shift);
-         $txt =~ s/\*/\(.*\)/g;
-         $txt =~ s/^\s+|\s+$//g;
-
-         if($first =~ /^\s*$txt\s*$/i) {
+         my $txt = ansi_remove(evaluate($self,$prog,shift));
+         my $pat = glob2re($txt);
+         if($first =~ /$pat/) {
             return evaluate($self,$prog,@_[0]);
          } else {
             shift;
@@ -1233,19 +1251,59 @@ sub fun_de
    decode_entities(@_[0]);
 }
 
+sub lord
+{
+   my $txt = shift;
+   $txt =~ s/\e/<ESC>/g;
+   return $txt;
+}
+
 sub fun_edit
 {
    my ($self,$prog) = (shift,shift);
+   my ($start,$out);
 
    good_args($#_,3) ||
       return "#-1 FUNCTION (EDIT) EXPECTS 3 ARGUMENTS";
 
-   my $txt = evaluate($self,$prog,shift);
-   my $from = quotemeta(evaluate($self,$prog,shift));
-   my $to= quotemeta(evaluate($self,$prog,shift));
-   $txt =~ s/$from/$to/ig;
-   return $txt;
+   my $txt  = ansi_init(evaluate($self,$prog,shift));
+   my $from = ansi_remove(evaluate($self,$prog,shift));
+   my $to   = evaluate($self,$prog,shift);
+   my $size = ansi_length($from);
+
+   for(my $i = 0;$i <= $#{$$txt{ch}};$i++) {
+      if(ansi_substr($txt,$i,$size) eq $from) {
+#         printf("MAT: '%s' -> '%s'  *MATCH*\n",ansi_substr($txt,$i,$size),$from);
+         if($start ne undef or $i != $start) {
+            $out .= ansi_substr($txt,$start,$i - $start);
+         }
+         $out .= $to;
+         $i += $size;
+         $start = $i;
+      } else {
+#         printf("MAT: '%s' -> '%s' [%s -> %s]\n",ansi_substr($txt,$i,$size),$from,lord(ansi_substr($txt,$i,$size)),lord($from));
+      }
+   }
+
+   if($start ne undef or $start >= $#{$$txt{ch}}) {       # add left over chars
+      $out .= ansi_substr($txt,$start,$#{$$txt{ch}} - $start + 1);
+   }
+   return $out;
 }
+
+# sub fun_edit
+# {
+#    my ($self,$prog) = (shift,shift);
+# 
+#    good_args($#_,3) ||
+#       return "#-1 FUNCTION (EDIT) EXPECTS 3 ARGUMENTS";
+# 
+#    my $txt = evaluate($self,$prog,shift);
+#    my $from = quotemeta(evaluate($self,$prog,shift));
+#    my $to= evaluate($self,$prog,shift);
+#    $txt =~ s/$from/$to/ig;
+#    return $txt;
+# }
 
 sub fun_num
 {
@@ -1503,8 +1561,8 @@ sub fun_ljust
    } elsif($size !~ /^\s*(\d+)\s*$/) {
       return "#-1 ljust expects a numeric value for the second argument";
    } else {
-      return substr($txt,0,$size) .
-             ($fill x ($size - length(substr($txt,0,$size))));
+      my $sub = ansi_substr($txt,0,$size);
+      return $sub . ($fill x ($size - ansi_length($sub)));
    }
 }
 
@@ -1512,8 +1570,7 @@ sub fun_strlen
 {
    my ($self,$prog) = (shift,shift);
 
-#    return length(evaluate(shift));
-    return length(evaluate($self,$prog,shift));
+   return ansi_length(evaluate($self,$prog,shift));
 }
 
 sub fun_sql
@@ -1561,7 +1618,7 @@ sub fun_substr
       return "#-1 Substr expects a numeric value for third argument";
    }
 
-   return substr($txt,$start,$end);
+   return ansi_substr($txt,$start,$end);
 }
 
 
@@ -1615,15 +1672,6 @@ sub get_socket
    return undef;
 }
 
-sub ordline
-{
-   my $txt = shift;
-
-   for my $i (0 .. length($txt)) {
-      printf("$i : '%s' -> %s\n",substr($txt,$i,1),ord(substr($txt,$i,1)));
-   }
-}
-
 #
 # fun_input
 #    Check to see if there is any input in the specified input buffer
@@ -1647,7 +1695,8 @@ sub fun_input
     # check if there is any buffered data and return it.
     # if not, the socket could have closed
     if($#$input == -1) { 
-       if(defined @connected{$$prog{telnet_sock}}) {
+       if(defined $$prog{telnet_sock} &&
+          defined @connected{$$prog{telnet_sock}}) {
           $$prog{idle} = 1;                                 # hint to queue
           return "#-1 No data found";                  # wait for more data?
        } else {
@@ -1677,9 +1726,8 @@ sub fun_input
        $data =~ s/$ch/E/g;
        my $ch = chr(226) . chr(134) . chr(151);
        $data =~ s/$ch/NE/g;
-       if($data =~ /mph/) {
-          printf("-D- %s\n",ordline($data));
-       }
+       my $ch = chr(226) . chr(134) . chr(150);
+       $data =~ s/$ch/NW/g;
  
        return $data;
     }

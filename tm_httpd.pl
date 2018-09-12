@@ -57,13 +57,20 @@ sub http_error
 {
    my ($s,$fmt,@args) = @_;
 
-   http_out($s,"HTTP/1.1 400 Not Found");
+   http_out($s,"HTTP/1.1 404 Not Found");
    http_out($s,"Date: %s",scalar localtime());
    http_out($s,"Last-Modified: %s",scalar localtime());
    http_out($s,"Connection: close");
    http_out($s,"Content-Type: text/html; charset=ISO-8859-1");
    http_out($s,"");
-   http_out($s,$fmt,@args);
+   http_out($s,"<style>");
+   http_out($s,".big {");
+   http_out($s,"   line-height: 0;");
+   http_out($s,"   font-size: 100pt;");
+   http_out($s,"}");
+   http_out($s,"</style>");
+   http_out($s,"<center><h1 class=big>404</h1><hr>#-1 Page Not Found</center>");
+   http_out($s,"<center>$fmt</center>",@args);
    http_disconnect($s);
 }
 
@@ -73,6 +80,9 @@ sub http_reply
 
    my $msg = sprintf($fmt,@args);
 
+   if($msg =~ /^Huh\? \(Type \"help\" for help\.\)/) {
+      return http_error($s,$fmt,@args);
+   }
    if((stat("txt/http_template.txt"))[9] != @info{template_last}) {
       @info{template} = getfile("http_template.txt");
       @info{template_last} = time();
@@ -87,7 +97,7 @@ sub http_reply
    http_out($s,"%s\n",@info{template});
    http_out($s,"<body>\n");
    http_out($s,"<div id=\"Content\">\n");
-   http_out($s,"<pre>%s\n</pre>\n",$msg);
+   http_out($s,"<pre>%s\n</pre>\n",ansi_remove($msg));
    http_out($s,"</div>\n");
    http_out($s,"</body>\n");
    http_disconnect($s);

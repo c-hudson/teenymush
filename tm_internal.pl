@@ -56,9 +56,9 @@ sub generic_action
 #    Convert a global pattern into a regular expression
 #
 sub glob2re {
-    my ($pat) = @_;
+    my ($pat) = ansi_remove(shift);
 
-    return undef if $pat eq undef;
+    return "(?msx:\\A\\z)" if $pat eq undef;
     $pat =~ s{(\W)}{
         $1 eq '?' ? '(.)' : 
         $1 eq '*' ? '(*PRUNE)(.*?)' :
@@ -164,9 +164,6 @@ sub err
 {
    my ($self,$prog,$fmt,@args) = @_;
 
-   if($fmt eq "I don't see that here") {
-       printf("DONT\n~~~~~\n%s\n",code("long"));
-   }
    necho(self => $self,
          prog => $prog,
          source => [ $fmt,@args ],
@@ -264,7 +261,7 @@ sub evaluate_substitutions
       } elsif($seq eq "%#") {                                # current dbref
          $out .= "#" . @{$$prog{created_by}}{obj_id};
       } elsif(lc($seq) eq "%n") {                          # current dbref
-         $out .= @{$$prog{created_by}}{obj_name};
+         $out .= name($$prog{created_by});
       } elsif($seq =~ /^%([0-9])$/ || $seq =~ /^%\{([^}]+)\}$/) {  # temp vars
          if($1 eq "hostname") {
             $out .= $$user{raw_hostname};
@@ -581,6 +578,14 @@ sub echo_socket
             }
          }
       }
+   } elsif(defined $$obj{sock}) {
+      if(defined @connected{$$obj{sock}} && 
+         @{@connected{$$obj{sock}}}{type} eq "WEBSOCKET") {
+         ws_echo($$obj{sock},ansi_remove($msg));
+      } else {
+         my $s = $$obj{sock};
+         printf($s "%s", ansi_remove($msg));
+      }
    }
 }
 
@@ -597,7 +602,7 @@ sub necho
       printf("%s\n",code("long"));
    }
 
-   if(defined @{$arg{self}}{loggedin} && !@{$arg{self}}{loggedin}) {
+   if(loggedin($self)) {
       # skip checks for non-connected players
    } elsif(!defined $arg{self}) {             # checked passed in arguments
       err($self,$prog,"Echo expects a self argument passed in");
@@ -660,8 +665,9 @@ sub necho
             next;
       }
 
-      if(defined $$self{loggedin} && !$$self{loggedin} &&
-         !defined $$self{port} && !defined $$self{hostname}) {
+      if(!loggedin($target) && 
+         !defined $$target{port} && 
+         !defined $$target{hostname} && defined $$target{sock}) {
          my $s = @{$connected{$$self{sock}}}{sock};
 
          # this might crash if the websocket dies, the evals should
@@ -673,6 +679,12 @@ sub necho
          } elsif(defined @connected{$s}) {
             printf($s "%s",$msg);
          }
+      } elsif(!loggedin($target)) {
+         echo_socket($target,
+                     @arg{prog},
+                     "%s",
+                     $msg
+                    );
       } else {
          log_output($self,$target,-1,$msg);
 
@@ -782,7 +794,8 @@ sub loggedin
    my $target = obj(shift);
 
   
-   if(defined @connected_user{$$target{obj_id}}) {
+   if(defined $$target{obj_id} && 
+      defined @connected_user{$$target{obj_id}}) {
       return 1;
    } else {
       return 0;

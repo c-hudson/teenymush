@@ -327,11 +327,17 @@ sub server_handle_sockets
 sub server_disconnect
 {
    my $id = shift;
+   my $prog;
 
    # notify connected users of disconnect
    if(defined @connected{$id}) {
       my $hash = @connected{$id};
-      my $prog = prog($hash,$hash);
+
+      if(defined @connected{$id} && defined @{@connected{$id}}{prog}) {
+         $prog = @{@connected{$id}}{prog};
+      } else {
+         $prog = prog($hash,$hash);
+      }
       my $type = @{@connected{$id}}{type};
 
       if(defined $$hash{prog} && defined @{$$hash{prog}}{telnet_sock}) {

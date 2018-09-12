@@ -75,7 +75,6 @@ sub sql
    }
 
    if(!$sth->execute( )) {
-      printf("%s",code());
       die("Could not execute sql");
    }
    @$con{rows} = $sth->rows;

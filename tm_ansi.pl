@@ -1,11 +1,28 @@
 #!/usr/bin/perl
 
 use strict;
+use MIME::Base64;
 
-my %ansi_color = {
-   red => "\e[31m"
-};
+my %ansi = (
+   x => 30, X => 40,
+   r => 31, R => 41,
+   g => 32, G => 42,
+   y => 33, Y => 43,
+   b => 34, B => 44,
+   m => 35, M => 45,
+   c => 36, C => 46,
+   w => 37, W => 47,
+   u => 4,  i => 7,
+   h => 1
+);
 
+sub ansi_debug
+{
+    my $txt = shift;
+
+    $txt =~ s/\e/<ESC>/g;
+    return $txt;
+}
 #
 # ansi_add
 #   Add a character or escape code to the data array. Every add of a
@@ -39,10 +56,11 @@ sub ansi_add
    if(!$type) {                                           # add escape code
       push(@{$$code[$#$ch]}, $txt);
 
-      if(substr($txt,1) eq "[0m") {
+      if(substr($txt,1,3) eq "[0m") {
          $$data{state} = [];
+      } else {
+         push(@{$$data{state}},$txt);            # keep track of current state
       }
-      push(@{$$data{state}},$txt);            # keep track of current state
    } else {                                                 # add character
       $$ch[$#$ch] = $txt;
       $$snap[$#$ch] = [ @{@$data{state}} ];  # copy current state to char
@@ -100,24 +118,24 @@ sub ansi_init
    return $data;
 }
 
-sub ansi_debug
-{
-   my @array = @_;
-   my $result;
-
-   for my $i (0 .. $#array) {
-      $result .= "<ESC>" . substr(@array[$i],1);
-   }
-   return $result;
-}
+#sub ansi_debug
+#{
+#   my @array = @_;
+#   my $result;
+#
+#   for my $i (0 .. $#array) {
+#      $result .= "<ESC>" . substr(@array[$i],1);
+#   }
+#   return $result;
+#}
 
 #
-# ansi_print
+# ansi_string
 #    Take ansi data structure and return 
 #        type => 0 : everything but the escape codes
 #        type => 1 : original string [including escape codes]
 #
-sub ansi_print
+sub ansi_string
 {
    my ($data,$type) = @_;
    my $buf;
@@ -136,7 +154,7 @@ sub ansi_print
 sub ansi_substr
 {
    my ($txt,$start,$count) = @_;
-   my ($reset,$result);
+   my ($result,$data,$last);
 
    $start = 0 if($start !~ /^\s*\d+\s*$/);                  # sanity checks
    if($count !~ /^\s*\d+\s*$/) {
@@ -146,16 +164,23 @@ sub ansi_substr
    }
    return undef if($start < 0);                         # no starting point
 
-   my $data = ansi_init($txt);
 
-   # loop through each "character" w/attached ansi codes
-   for(my $i = $start;$i < $count && $i < $#{$$data{ch}};$i++) {
-      my $code=join('',@{@{$$data{($i == $start) ? "snap" : "code"}}[$i]});
-      $reset = 1 if($reset == 0 && length($code) > 0);
-      $result .= $code . @{$$data{ch}}[$i];
+   if(ref($txt) eq "HASH") {
+      $data = $txt;
+   } else {
+      $data = ansi_init($txt);
    }
 
-   return $result . (($reset) ? chr(27) . "[m" : "");
+   # loop through each "character" w/attached ansi codes
+   for(my $i = $start;$i < $count && $i <= $#{$$data{ch}};$i++) {
+
+      my $code=join('',@{@{$$data{($i == $start) ? "snap" : "code"}}[$i]});
+      $result .= $code . @{$$data{ch}}[$i];
+      $last = $#{@{$$data{snap}}[$i]};
+   }
+
+   # are attributes turned on on last character? if so, reset them.
+   return $result . (($last == -1) ? "" : (chr(27) . "[0m"));
 }
 
 #
@@ -178,10 +203,23 @@ sub ansi_length
    }
 }
 
-sub ansi_color
+sub color
 {
-   return \%ansi_color;
+   my ($codes,$txt) = @_;
+   my $pre;
+
+   $txt =~ s/ //g;
+
+   for my $ch (split(//,$codes)) {
+      if(defined @ansi{$ch}) {
+         $pre .= "\e[@ansi{$ch};1m";
+      } elsif(defined @ansi{$ch}) {
+         $pre .= "\e[@ansi{$ch}m";
+      }
+   }
+   return $pre . $txt . "\e[0m";
 }
+
 
 #
 # ansi_remove
@@ -197,14 +235,70 @@ sub ansi_remove
    return $txt;
 }
 
+sub space_scan
+{
+   my ( $data, $start )= @_;
+
+   for my $i ( $start .. $#{$$data{ch}}) {
+      return $i if(@{$$data{ch}}[$i] ne " ");
+   }
+   return $#{$$data{ch}};
+}
+
+sub ansi_wrap
+{
+   my $rules = {
+      max_x => 79,
+      max_word => 25,
+   };
+
+   my $txt = ansi_init(shift);
+   my $str = $$txt{ch};
+   my ($start,$word_end,$i,$out) = (0,0,0,undef);
+
+   while($i < $#$str) {
+      if($i - $start >= $$rules{max_x}) {
+         if($i - $word_end >= $$rules{max_word}) {       # split at screen
+            $out .= ansi_substr($txt,$start,$i-$start) . "\n";
+            $i = space_scan($txt,$i);
+            $start = $i;
+         } else {                                             # split at word
+            $out .= ansi_substr($txt,$start,$word_end-$start) . "\n";
+            $i = space_scan($txt,$word_end + 1);
+            $start = $i;
+         }
+         $word_end = $start + 1;
+      } elsif($$str[$i] eq " " && ($i == 0 || $$str[$i-1] ne " ")) {
+         $word_end = $i;
+         $i++;
+      }  else {
+         $i++;
+      }
+   }
+
+   if($start < $#$str) {
+      $out .= ansi_substr($txt,$start,$#$str);
+   }
+
+   return $out;
+}
+
+sub lord
+{
+   my $txt = shift;
+
+   $txt =~ s/\e/<ESC>/g;
+   return $txt;
+}
+
 # open(FILE,"iweb") ||
 #    die("Could not open file iweb for reading");
-# 
+#  
 # while(<FILE>) {
-#       s/\r|\n//g;
-##       my $str = ansi_init($_);
-##     printf("%s\n",ansi_print($str,0));
-#    printf("%s\n",ansi_substr($_,1,15));
+#    s/\r|\n//g;
+# #   if(/This/) {
+#      printf("%s\n",ansi_wrap($_));
+# #   }
 # }
 # close(FILE);
 
@@ -214,3 +308,13 @@ sub ansi_remove
 #for my $i (0 .. 78) {
 #   printf("%0d : '%s'\n",$i,ansi_length(ansi_substr($str,$i,7)));
 #}
+
+#my $str = decode_base64("CiAgICAtLS0tLS0tLS0tLS0tLS0gICAgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQogMSB8LnwufC58LnwufC58LnwufCAgfCAgICAgICBUYW86IFRoaXMgQWluJ3QgT3RoZWxsbyAgICAgICB8CiAyIHwufC58T3xPfC58LnwufC58ICB8ICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHwKIDMgfC58I3xPfE98I3xPfC58LnwgIHwgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgfAogNCB8LnwufCN8T3xPfC58LnwufCAgfCAgIzogV2ViT2JqZWN0ICAgICAgICBoYXMgIDYgcGllY2VzICB8CiA1IHwufCN8T3xPfE98T3wufC58ICB8ICBPOiAbWzM0bUFkcmljaxtbMG0bW20gICAgICAgICAgIGhhcyAxMSBwaWVjZXMgIHwKIDYgfC58LnwufCN8LnwjfC58LnwgIHwgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgfAogNyB8LnwufC58LnwufC58LnwufCAgfCAgICoqKiBJdCBpcyBXZWJPYmplY3QncyB0dXJuICoqKiAgICB8CiA4IHwufC58LnwufC58LnwufC58ICB8ICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHwKICAgIC0tLS0tLS0tLS0tLS0tLSAgICAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCiAgICAxIDIgMyA0IDUgNiA3IDhd");
+
+
+
+# printf("%s\n",ansi_debug($str));
+#my $a = ansi_init($str);
+#printf("%s\n",$str);
+#printf("%s\n",lord(ansi_string($a,1)));
+#printf("SUB:%s\n",ansi_substr($a,11,1));

@@ -1678,7 +1678,6 @@ sub date_split
 #
 sub move
 {
-   printf("%s",print_var(@db));
    my ($self,$prog,$target,$dest,$type) = 
       (obj($_[0]),obj($_[1]),obj($_[2]),obj($_[3]),$_[4]);
 
@@ -2078,6 +2077,7 @@ sub read_config
    # always use .dev version for easy setup of dev db.
    $fn .= ".dev" if(-e "$fn.dev");
 
+   printf("Reading Config: $fn\n");
    for my $line (split(/\n/,getfile($fn))) {
       $line =~ s/\r|\n//g;
       if($line =~/^\s*#/ || $line =~ /^\s*$/) {

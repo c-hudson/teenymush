@@ -506,6 +506,8 @@ sub spin_run
       $hash = \%command;
 #      delete @$prog{hint};
    } elsif(hasflag($self,"PLAYER") && !loggedin($self)) {
+      printf("LOGGEDIN: '%s'\n",$$self{obj_id},loggedin($self));
+      printf("%s\n",print_var($self));
       $hash = \%offline;                                     # offline users
    } elsif(defined $$self{site_restriction} && $$self{site_restriction} == 69) {
       $hash = \%honey;                                   # honeypotted users

@@ -17,7 +17,6 @@ $SIG{HUP} = sub {
 #
 
 if(mysqldb) {
-   printf("mysqldb: '%s'\n",mysqldb);
    sql($db,"delete from socket");
    sql($db,"update socket_history " .
            "   set skh_end_time = skh_start_time " .

@@ -543,9 +543,9 @@ sub lattr
    if(mysqldb) {
       my @result;
       for my $atr (@{sql("select atr_name ".
-                    "  from attribute ".
-                    " where obj_id = ? ",
-                    $$obj{obj_id})}) {
+                         "  from attribute ".
+                         " where obj_id = ? ",
+                         $$obj{obj_id})}) {
          push(@result,$$atr{atr_name});
       }
       return @result;

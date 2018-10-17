@@ -157,7 +157,8 @@ sub server_process_line
             if($$user{site_restriction} == 69) {
                my ($cmd,$arg) = lookup_command($data,\%honey,$1,$',0);
                &{@honey{$cmd}}($arg);                            # invoke cmd
-            } elsif(loggedin($hash) || hasflag($hash,"OBJECT")) {
+            } elsif(loggedin($hash) || 
+                    (defined $$hash{obj_id} && hasflag($hash,"OBJECT"))) {
                add_last_info($input);                                   #logit
                io($user,1,$input);
                return mushrun(self   => $user,

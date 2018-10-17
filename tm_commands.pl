@@ -195,8 +195,6 @@ delete @honey{keys %honey};
 @command{"\@sqldump"}= { fun  => sub { db_sql_dump(@_); }                };
 @command{"\@dbread"} = { fun  => sub { fun_dbread(@_); }                 };
 @command{"\@dump"}   = { fun  => sub { cmd_dump(@_); }                   };
-@command{"\@backupmode"}   = { fun  => sub { cmd_backupmode(@_); }                   };
-@command{"\@delta"}   = { fun  => sub { cmd_delta(@_); }                   };
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@poll"}  =  { fun => sub { cmd_doing(@_[0],@_[1],@_[2],
@@ -1182,7 +1180,6 @@ sub cmd_dump
    my $cmd = $$prog{cmd_last};
    if(!defined $$cmd{dump_pos}) {                      # initialize "loop"
       if(defined @info{backup_mode} && is_running(@info{backup_mode})) {
-         printf("%s",print_var($prog));
          return err($self,$prog,"Backup is already running.");
       }
       $$cmd{dump_pos} = 0;
@@ -1560,7 +1557,7 @@ sub read_atr_config
    for my $atr (lattr(0)) {
       if($atr =~ /^conf\.(mysql|websock|httpd)/ && @info{"conf.$1"} == -1) {
          # skip
-      } elsif($atr =~ /^conf./) {
+      } elsif($atr =~ /^conf\./i) {
          if(get(0,$atr) =~ /^\s*#(\d+)\s*$/) {
             @info{lc($atr)} = $1;
          } else {
@@ -3533,15 +3530,25 @@ sub invalid_player
           return 0;
        }
    } else {
-       my $count = one_val("select count(*) value ".
-                           "  from object ".
-                           " where lower(obj_name) = lower(?) " .
-                           "   and obj_password = password(?)",
-                           $name,
-                           $pass
-                          );
+       my $id = one_val("select obj.obj_id value ".
+                        "  from object obj, ".
+                        "       flag flg, ".
+                        "       flag_definition fde ".
+                        " where lower(obj_name) = lower(?) " .
+                        "   and obj.obj_id = flg.obj_id " .
+                        "   and flg.fde_flag_id = fde.fde_flag_id " .
+                        "   and fde.fde_name = 'PLAYER' " .
+                        "   and obj_password = password(?)",
+                        $name,
+                        $pass
+                       );
 
-       return ($count == 0) ? 1 : 0;
+       if($id ne undef) {
+          $$self{obj_id} = $id;
+          return 0;
+       } else {
+          return 1;
+       }
    }
 }
 
@@ -3648,8 +3655,8 @@ sub cmd_connect
       if(@info{"conf.master"} ne undef) {
          for my $obj (lcon(@info{"conf.master"}),$player) {
             if(($atr = get($obj,"ACONNECT")) && $atr ne undef){
-               mushrun(self   => $player,                 # handle aconnect
-                       runas  => $player,
+               mushrun(self   => $self,                 # handle aconnect
+                       runas  => $self,
                        source => 0,
                        cmd    => $atr
                       );

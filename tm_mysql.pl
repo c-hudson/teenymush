@@ -41,7 +41,6 @@ sub sql
    my ($sql,@args) = @_;
    my (@result,$sth);
    @info{sqldone} = 0;
-   die($sql);
 
    delete @$con{rows};
 
@@ -61,7 +60,6 @@ sub sql
 
    # connected/reconnect to DB if needed
    if(!defined $$con{db} || !$$con{db}->ping) {
-      printf("CODE: '%s'\n",code());
       $$con{host} = "localhost" if(!defined $$con{host});
       $$con{db} = DBI->connect("DBI:mysql:database=$$con{database}:" .
                              "host=$$con{host}",

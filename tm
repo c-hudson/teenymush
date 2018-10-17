@@ -3,7 +3,7 @@
 use strict;
 use IO::Select;
 use IO::Socket;
-use DBI;
+
 
 # Any variables that need to survive a reload of code should be placed
 # here. Variables that need to be accessed in other files may need to be
@@ -26,10 +26,27 @@ my (%command,                       # commands for after player has connected
     %info,                                                # misc info storage
     $user,                                             # current user details
     $enactor,                                # object who initated the action
-    $obj,
     %cache,
-    %c
+    %c,
+
+    #----[memory database structures]---------------------------------------#
+    %help,                                                      # online-help
+    @db,                                                     # whole database
+    @delta,                                              # db changes storage
+    %player,                                   # player list for quick lookup
+    @free,                                                # free objects list
+    %deleted,                                 # deleted objects during backup
    );
+
+sub mysqldb
+{
+   return @info{"conf.mysqldb"};
+}
+
+sub memorydb
+{
+   return @info{"conf.memorydb"};
+}
 
 #
 # getfile
@@ -40,7 +57,7 @@ sub getfile
    my ($fn,$code) = @_;
    my($file, $out);
 
-   if($fn =~ /^[^\\|\/]+\.(pl|dat)$/i) {
+   if($fn =~ /^[^\\|\/]+\.(pl|dat|dev)$/i) {
       open($file,$fn) || return undef;                         # open pl file
    } elsif($fn =~ /^[^\\|\/]+$/i) {
       open($file,"txt\/$fn") || return undef;                 # open txt file
@@ -74,15 +91,35 @@ sub load_code_in_file
       my $data = qq[#line 1 "$file"\n] . getfile($file,\%code);                      # read code in
 
       @{$code{$file}}{size} = length($data);
+      @{$code{$file}}{mod}  = (stat($file))[9];
+
       if($verbose) {                                  # show whats happening
-         printf("Loading: %s [%s bytes]\n",$file,@{$code{$file}}{size});
+         $| = 1;
+         printf("Loading: %-30s",$file);
       }
 
       $@ = '';
       eval($data);                                                # run code
+ 
       if($@) {                                         # report any failures
-         printf("\nload_code fatal: '%s'\n",$@);
+         if($file eq "tm_websock.pl") {
+            @info{"conf.websock"} = 0;
+            printf("    [ FAILED/websocket disabled ]\n");
+            return 1;
+         } elsif($file eq "tm_mysql.pl") {
+            @info{"conf.memorydb"} = 1;
+            @info{"conf.mysqldb"} = 0;
+            printf("    [ FAILED/mysql disabled ]\n");
+            return 1;
+         } elsif($file eq "tm_httpd.pl") {
+            @info{"conf.httpd"} = 0;
+            printf("    [ FAILED/httpd disabled ]\n");
+         } else {
+            printf("\n\nload_code fatal: '%s'\n",$@);
+         }
          return 0;
+      } else {
+         printf("\n");
       }
    }
    return 1;                                           # everything was good
@@ -103,7 +140,8 @@ sub load_all_code
       return "Could not open current directory for reading";
 
    for my $file (readdir($dir))  {
-      if($file =~ /^tm_.*.pl$/i && $file !~ /(backup|test)/ && 
+      if($file =~ /^tm_.*.pl$/i && 
+         $file !~ /(backup|test)/ && 
          $file !~ /^tm_(main).pl$/i) {
          my $current = (stat($file))[9];         # should be file be reloaded?
          if(!defined $code{$file} || 
@@ -126,7 +164,11 @@ sub load_all_code
 sub read_config
 {
    my $count=0;
-   for my $line (split(/\n/,getfile("tm_config.dat"))) {
+   my $fn = "tm_config.dat";
+
+   $fn = "$fn.dev" if(-e "$fn.dev");
+
+   for my $line (split(/\n/,getfile($fn))) {
       $line =~ s/\r|\n//g;
       if($line =~/^\s*#/ || $line =~ /^\s*$/) {
          # comment or blank line, ignore
@@ -173,6 +215,7 @@ sub get_credentials
 {
    my ($file,%save);
 
+   return if memorydb;
    if($$db{user} =~ /^\s*$/) {
       $$db{user} = prompt("Enter database user: ");
       @save{user} = $$db{user};
@@ -210,6 +253,7 @@ sub load_new_db
 {
    my $result;
 
+   return if(memorydb);
    return if(one_val("select count(*) value ".
                      "  from information_schema.tables  " .
                      " where table_name = 'object' " .
@@ -269,15 +313,18 @@ sub load_db_backup
 read_config();
 get_credentials();
 
-printf("Loading: tm_mysql.pl\n");
-load_code_in_file("tm_mysql.pl");                       # only call of main
+if(mysqldb) {
+   load_code_in_file("tm_mysql.pl",1);                     # only call of main
+} else {
+   load_code_in_file("tm_compat.pl",1);                     # only call of main
+}
 load_all_code(1);                                    # initial load of code
+
 
 load_new_db();                                           # optional db load
 load_db_backup();
 
-printf("Loading: tm_main.pl\n");
-load_code_in_file("tm_main.pl");                       # only call of main
+load_code_in_file("tm_main.pl",1);                       # only call of main
 main::server_start();
 
 printf("### DONE ###\n");            # should never get here unless @shutdown

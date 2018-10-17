@@ -15,11 +15,15 @@ $SIG{HUP} = sub {
 #
 # close the loop on connections that have start times but not end times
 #
-sql($db,"delete from socket");
-sql($db,"update socket_history " .
-        "   set skh_end_time = skh_start_time " .
-        " where skh_end_time is null");
-my_commit($db);
+
+if(mysqldb) {
+   printf("mysqldb: '%s'\n",mysqldb);
+   sql($db,"delete from socket");
+   sql($db,"update socket_history " .
+           "   set skh_end_time = skh_start_time " .
+           " where skh_end_time is null");
+   my_commit($db);
+}
 
 for (@Addon::EXPORT) {
   print "$_\n";

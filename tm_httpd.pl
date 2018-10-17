@@ -150,7 +150,7 @@ sub http_process_line
          http_error($s,"Malformed Request");
       } else {
          my $id = @info{"conf.webuser"};
-         my $self = fetch(@info{"conf.webuser"});
+         my $self = obj(@info{"conf.webuser"});
 
          my $msg =  uri_unescape($$data{get});
 #         $msg = $' if($msg =~ /^\s*\/+/);
@@ -166,7 +166,7 @@ sub http_process_line
 
          printf("   %s\@web [%s]\n",$addr,$msg);
 
-         if($msg !~ /^\s*favicon\.ico\s*$/i) {
+         if(mysqldb && $msg !~ /^\s*favicon\.ico\s*$/i) {
             sql(e($db,1),
                 "insert into socket_history ".
                 "( obj_id, " .

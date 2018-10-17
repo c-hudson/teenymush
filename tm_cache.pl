@@ -90,7 +90,6 @@ sub remove_flag_cache
    }
 }
 
-
 sub cache_atrflag
 {
    my ($obj,$atr,$flag) = (obj(shift),trim(uc(shift)),trim(uc(shift)));
@@ -106,6 +105,13 @@ sub atr_case
 
    if(ref($obj) ne "HASH" || !defined $$obj{obj_id}) {
      return undef;
+   } elsif(memorydb) {
+      my $attr = mget($obj,$atr);
+      if(!defined $$attr{flag} || !defined @{$$attr{flag}}{case}) {
+         return 0;
+      } else {
+         return 1;
+      }
    } elsif(!incache_atrflag($obj,$atr,"CASE")) {
       my $val = one_val("select count(*) value " .
                         "  from attribute atr, " .
@@ -128,10 +134,27 @@ sub atr_case
 
 sub latr_regexp
 {
-   my ($obj,$type) = @_;
+   my ($obj,$type) = (obj(shift),shift);
    my @result;
 
-   if(!incache($obj,"latr_regexp_$type")) {
+   if(memorydb) {
+      return undef if !valid_dbref($obj);
+      for my $name ( lattr($obj) ) {
+         my $attr = mget($obj,$name);
+         if(defined $$attr{type} && defined $$attr{regexp}) {
+            if(($type == 1 && $$attr{type} eq "\$")  ||
+               ($type == 2 && $$attr{type} eq "^")  ||
+               ($type == 3 && $$attr{type} eq "!")) { 
+               push(@result,{ atr_regexp => $$attr{regexp},
+                              atr_value  => $$attr{value},
+                              atr_name   => $name
+                            }
+                   );
+            }
+         }
+      }
+      return @result;
+   } elsif(!incache($obj,"latr_regexp_$type")) {
       for my $atr (@{sql("select atr_name, atr_regexp, atr_value ".
                          "  from attribute atr ".
                          " where obj_id = ? ".
@@ -158,7 +181,19 @@ sub lcon
    my $object = obj(shift);
    my @result;
 
-   if(!incache($object,"lcon")) {
+
+   if(memorydb) {
+      my $attr = mget($object,"obj_content");
+
+      if($attr eq undef) {
+         return @result;
+      } else {
+         for my $id ( keys %{$$attr{value}} ) {
+            push(@result,obj($id));
+         }
+         return @result;
+      }
+   } elsif(!incache($object,"lcon")) {
        my @list;
        for my $obj (@{sql($db,
                           "select con.obj_id " .
@@ -183,7 +218,18 @@ sub lexits
    my $object = obj(shift);
    my @result;
 
-   if(!incache($object,"lexits")) {
+   if(memorydb) {
+      my $attr = mget($object,"obj_exits");
+
+      if($attr eq undef) {
+         return @result;
+      } else {
+         for my $id ( keys %{$$attr{value}} ) {
+            push(@result,obj($id));
+         }
+         return @result;
+      }
+   } elsif(!incache($object,"lexits")) {
        my @list;
        for my $obj (@{sql($db,
                           "select con.obj_id " .
@@ -210,7 +256,9 @@ sub money
 
    my $owner = owner($target);
 
-   if(!incache($owner,"obj_money")) {
+   if(memorydb) {
+      return get($owner,"obj_money");
+   } elsif(!incache($owner,"obj_money")) {
       my $money = one_val("select obj_money value ".
                           "  from object ".
                           " where obj_id = ? ",
@@ -240,16 +288,28 @@ sub money
 #
 sub name
 {
-   my $target = obj(shift);
+   my ($target,$flag) = (obj(shift),shift);
 
-   if(!incache($target,"obj_name")) {
+   if(memorydb) {
+      if($flag) {
+         return get($target,"obj_name");
+      } elsif(get($target,"obj_cname") ne undef) {
+         return get($target,"obj_cname");
+      } else {
+         return get($target,"obj_name");
+      }
+   } elsif(!incache($target,"obj_name")) {
       my $hash = one("select obj_name, obj_cname ".
                      "  from object ".
                      " where obj_id = ? ",
                      $$target{obj_id}
                     );
 
-      if($$hash{obj_cname} eq undef &&
+      if($flag && $$hash{obj_name} eq undef) {
+         return "[<UNKNOWN>]";
+      } elsif($flag && $$hash{obj_name} ne undef) {
+         return $$hash{obj_name};
+      } elsif($$hash{obj_cname} eq undef &&
          $$hash{obj_name} eq undef) {
          return "[<UNKNOWN>]";
       } elsif($$hash{obj_cname} eq undef) {
@@ -265,9 +325,28 @@ sub name
 sub flag_list
 {
    my ($obj,$flag) = (obj($_[0]),uc($_[1]));
+   my (@list,$array,$connected);
    $flag = 0 if !$flag;
 
-   if(!incache($obj,"FLAG_LIST_$flag")) {
+   if(memorydb) {
+      my $attr = mget($obj,"obj_flag");
+
+      if($attr eq undef) {
+         return undef;
+      } else {
+         my $hash = $$attr{value};
+
+         # connected really isn't a flag, but should be
+         if(defined $$hash{player} && defined @connected_user{$$obj{obj_id}}) {
+            push(@list,$flag ? "CONNECTED" : 'C');
+         }
+
+         for my $key (keys %$hash) {
+            push(@list,$flag ? uc($key) : flag_letter($key));
+         }
+         return join($flag ? ' ' : '',sort @list);
+      }
+   } elsif(!incache($obj,"FLAG_LIST_$flag")) {
       my (@list,$array);
       for my $hash (@{sql($db,"select * from ( " .
                               "select fde_name, fde_letter, fde_order" .
@@ -301,23 +380,33 @@ sub flag_list
 #
 sub owner
 {
-   my $object = obj(shift);
+   my $obj = obj(shift);
    my $owner;
 
-   if(!incache($$object{obj_id},"OWNER")) {
-      $owner = one_val("select obj_owner value" .
-                       "  from object" .
-                       " where obj_id = ?",
-                       $$object{obj_id}
-                      );
-
-      if($owner ne undef) {
-         set_cache($$object{obj_id},"OWNER",$owner);
-      } else {
+   if(memorydb()) {
+      if(!valid_dbref($obj)) {
          return undef;
+      } elsif(hasflag($obj,"PLAYER")) {
+         return $obj;
+      } else {
+         return obj(get($obj,"obj_owner"));
       }
+   } else {
+      if(!incache($$obj{obj_id},"OWNER")) {
+         $owner = one_val("select obj_owner value" .
+                          "  from object" .
+                          " where obj_id = ?",
+                          $$obj{obj_id}
+                         );
+   
+         if($owner ne undef) {
+            set_cache($$obj{obj_id},"OWNER",$owner);
+         } else {
+            return undef;
+         }
+      }
+      return obj(cache($$obj{obj_id},"OWNER"));
    }
-   return obj(cache($$object{obj_id},"OWNER"));
 }
 
 #
@@ -326,12 +415,24 @@ sub owner
 #
 sub hasflag
 {
-   my ($target,$flag) = (obj($_[0]),$_[1]);
+   my ($target,$flag) = (obj(shift),uc(shift));
    my $val;
 
    if($flag eq "CONNECTED") {                  # not in db, no need to cache
       return (defined @connected_user{$$target{obj_id}}) ? 1 : 0;
    } elsif(!valid_dbref($target)) {
+      return 0;
+   } elsif(memorydb) {
+      $target = owner($target) if($flag eq "WIZARD");
+
+      my $attr = mget($target,"obj_flag");
+
+      if(!defined $$attr{value} || !defined @{$$attr{value}}{lc($flag)}) {
+         return 0;
+      } else {
+         return 1;
+      }
+   } elsif(memorydb) {
       return 0;
    } elsif(!incache($target,"FLAG_$flag")) {
       if($flag eq "WIZARD") {
@@ -344,7 +445,7 @@ sub hasflag
                             "   and obj_id = ? " .
                             "   and fde_name = ? ",
                             $owner,
-                            uc($flag));
+                            $flag);
          # let owner cache object know its value was used for this object
          $cache{$owner}->{FLAG_DEPENDANCY}->{$$target{obj_id}} = 1;
       } else {
@@ -356,7 +457,7 @@ sub hasflag
                             "   and obj_id = ? " .
                             "   and fde_name = ? ",
                             $$target{obj_id},
-                            uc($flag));
+                            $flag);
       }
       set_cache($target,"FLAG_$flag",$val);
    }
@@ -367,7 +468,9 @@ sub dest
 {
     my $obj = obj(shift);
 
-   if(!incache($obj,"con_dest_id")) {
+   if(memorydb) {
+      return get($obj,"obj_destination");
+   } elsif(!incache($obj,"con_dest_id")) {
       my $val = one_val("select con_dest_id value ".
                         "  from content ".
                         " where obj_id = ?",
@@ -383,7 +486,9 @@ sub home
 {
    my $obj = obj(shift);
 
-   if(!incache($obj,"home")) {
+   if(memorydb) {
+      return get($obj,"obj_home");
+   } elsif(!incache($obj,"home")) {
       my $val = one_val("select obj_home value".
                         "  from object " .
                         " where obj_id = ?",
@@ -413,7 +518,9 @@ sub loc_obj
 {
    my $obj = obj(shift);
 
-   if(!incache($obj,"con_source_id")) {
+   if(memorydb) {
+      return obj(get($obj,"obj_location"));
+   } elsif(!incache($obj,"con_source_id")) {
       my $val = one_val("select con_source_id value " .
                         "  from content " .
                         " where obj_id = ?",
@@ -426,5 +533,27 @@ sub loc_obj
       return undef;
    } else {
       return { obj_id => cache($obj,"con_source_id") };
+   }
+}
+
+sub lattr
+{
+   my $obj = obj(shift);
+
+   if(mysqldb) {
+      my @result;
+      for my $atr (@{sql("select atr_name ".
+                    "  from attribute ".
+                    " where obj_id = ? ",
+                    $$obj{obj_id})}) {
+         push(@result,$$atr{atr_name});
+      }
+      return @result;
+   } elsif(memorydb) {
+      return () if(!valid_dbref($obj));
+      my $hash = dbref($obj);
+      return ($hash eq undef) ? undef : (keys %$hash);
+   } else {
+      return ();
    }
 }

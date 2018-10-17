@@ -11,8 +11,7 @@ use IO::Select;
 use IO::Socket;
 use Time::Local;
 use Carp;
-
-# my %cache;
+use Fcntl qw( SEEK_END SEEK_SET);
 
 my %months = (
    jan => 1, feb => 2, mar => 3, apr => 4, may => 5, jun => 6,
@@ -23,11 +22,59 @@ my %days = (
    mon => 1, tue => 2, wed => 3, thu => 4, fri => 5, sat => 6, sun => 7,
 );
 
+sub dump_complete
+{
+   my $filename = shift;
+   my ($buf,$fh);
+
+   return 1 if(@ARGV[0] eq "--forceload");
+   open($fh,$filename) || return 0;
+
+   my $eof = sysseek($fh,0,SEEK_END);          # seek to end to determine size
+   seek($fh,$eof - 46,SEEK_SET);                        # backup 46 characters
+   sysread($fh,$buf,45);                                  # read 45 characters
+   close($fh);
+ 
+   if($buf =~ /^\*\* Dump Completed (.*) \*\*$/) {        # verify if complete
+      return 1;
+   } else {
+      return 0;
+   }
+}
+
+#
+# newest_full
+#    Search for the newest dump file.
+#
+sub newest_full
+{
+    my (%list, $fh,$dir);
+    my %list;
+
+    if(!-d "dumps") {
+      mkdir("dumps") ||
+         die("Unable to create directory 'dumps'.");
+    }
+
+    opendir($dir,"dumps") ||
+       die("Unable to find dumps directory");
+
+    for my $file (readdir($dir)) {
+       if($file =~ /^@info{"conf.mudname"}.FULL\.([\d_]+)\.tdb$/i && 
+          dump_complete("dumps/$file")) {
+          @list{"dumps/$file"} = (stat("dumps/$file"))[9];
+       }
+    }
+    closedir($dir);
+
+    return (sort { @list{$b} <=> @list{$a}}  keys %list)[0];
+}
+
 sub generic_action
 {
    my ($self,$prog,$action,$src) = @_;
 
-   if((my $atr = get($self,"$action")) ne undef) {
+   if((my $atr = get($self,$action)) ne undef) {
          necho(self => $self,
                prog => $prog,
                room => [ $src, "%s %s", name($self), $atr  ],
@@ -58,7 +105,7 @@ sub generic_action
 sub glob2re {
     my ($pat) = ansi_remove(shift);
 
-    return "(?msx:\\A\\z)" if $pat eq undef;
+    return "^\s*\$" if $pat eq undef;
     $pat =~ s{(\W)}{
         $1 eq '?' ? '(.)' : 
         $1 eq '*' ? '(*PRUNE)(.*?)' :
@@ -68,7 +115,7 @@ sub glob2re {
     $pat =~ s/\\\(.\)/?/g;
 
 #    return "(?mnsx:\\A$pat\\z)";
-    return "(?msx:\\A$pat\\z)";
+    return "(?msix:\\A$pat\\z)";
 }
 
 #
@@ -77,6 +124,7 @@ sub glob2re {
 #
 sub io
 {
+   return if memorydb;
    my ($self,$type,$data) = @_;
 
    return if($$self{obj_id} eq undef);
@@ -169,7 +217,7 @@ sub err
          source => [ $fmt,@args ],
         );
 
-   my_rollback;
+   my_rollback if mysqldb;
 
    return 0;
 #   return sprintf($fmt,@args);
@@ -307,6 +355,9 @@ sub table
    my ($sql,@args) = @_;
    my ($out, @data, @line, @header, @keys, %order, %max,$count,@pos);
 
+   if(memorydb) {
+      return "Not supported in MemoryDB";
+   }
    # determine column order from the original sql
    if($sql =~ /^\s*select (.+?) from/) {
       for my $field (split(/\s*,\s*/,$1)) {
@@ -483,6 +534,7 @@ sub log_output
 {
    my ($src,$dst,$loc,$txt) = (obj(shift),obj(shift),shift,shift);
 
+   return if memorydb;
    return if($$src{obj_id} eq undef);
 
    $txt =~ s/([\r\n]+)$//g;
@@ -747,17 +799,20 @@ sub echo_flag
 
    for my $key (keys %connected) {
       my $echo = 1;
-      for my $flag (split(/,/,$flags)) {
-         if(!hasflag(@{@connected{$key}}{obj_id},$flag)) {
-            $echo = 0;
-            last;
+
+      if(defined @{@connected{$key}}{obj_id}) {
+         for my $flag (split(/,/,$flags)) {
+            if(!hasflag(@{@connected{$key}}{obj_id},$flag)) {
+               $echo = 0;
+               last;
+            }
          }
-      }
-      if($echo) {
-         necho(self => $self,
-               prog => $prog,
-               target => [ obj(@{@connected{$key}}{obj_id}), $fmt, @args ]
-              );
+         if($echo) {
+            necho(self => $self,
+                  prog => $prog,
+                  target => [ obj(@{@connected{$key}}{obj_id}), $fmt, @args ]
+                 );
+         }
       }
    }
 }
@@ -807,9 +862,18 @@ sub valid_dbref
    my $id = obj(shift);
    $$id{obj_id} =~ s/#//g;
 
-   # owner will return undef on non-existant objects & its cached
-   if(owner($id) eq undef) {
-      return 0;
+   if(memorydb) {
+      if($$id{obj_id} =~ /^\s*(\d+)\s*$/) {
+         if(defined @info{backup_mode} && @info{backup_mode}) {
+            if(defined @db[$1] || defined @delta[$1]) {
+               return 1;
+            }
+         } else {
+            return (defined @db[$$id{obj_id}]) ? 1 : 0;
+         }
+      }
+   }  elsif(owner($id) eq undef) {                # owner will return undef on 
+      return 0;                            # non-existant objects & its cached
    } else {
       return 1;
    }
@@ -825,155 +889,6 @@ sub owner_id
    return $$owner{obj_id};
 }
 
-sub locate_player
-{
-   my ($name,$type) = @_;
-   my @part;
-
-   if($name =~ /^\s*#(\d+)\s*$/) {      # specified dbref, verify is player
-      my $target=one("select * ".
-                     " from object obj, flag flg, flag_definition fde ".
-                     "where obj.obj_id = flg.obj_id " .
-                     "  and fde.fde_flag_id = flg.fde_flag_id " .
-                     "  and fde_name = 'PLAYER' " .
-                     "  and flg.atr_id is null " .
-                     "  and fde_type = 1 " .
-                     "  and obj.obj_id = ? ",$1) ||
-          return undef;
-      return $target;
-   } elsif($name =~ /^\s*me\s*$/) {              # use current object/player
-      return $user;
-   } elsif($name =~ /^\s*\*([^ ]+)\s*$/) {
-      $name = $1;
-   }
-
-   if($type eq "online") {                                  # online player
-      for my $i (keys %connected) {
-         if(uc(@{$connected{$i}}{obj_name}) eq uc($name)) {
-            return $connected{$i};
-         } elsif(${$connected{$i}}{obj_name}=~/^\s*$name/i) {
-            return undef if($#part == 0);
-            push(@part,$connected{$i});
-         }
-      }
-      return $part[0];
-   } else {
-      my $target = one($db,
-                       "select * " .
-                       "  from object obj, flag flg, flag_definition fde " .
-                       " where obj.obj_id = flg.obj_id " .
-                       "   and flg.fde_flag_id = fde.fde_flag_id " .
-                       "   and fde.fde_name = 'PLAYER' " .
-                       "   and flg.atr_id is null " .
-                       "   and fde_type = 1 " .
-                       "   and upper(obj_name) = upper(?) ",
-                       $name
-                      ) ||
-         return undef;
-      return $target;
-   }
-}
-  
-
-sub locate_object
-{
-   my ($self,$prog,$name,$type) = @_;
-   my ($where, @what,$exact,$indirect);
-
-   if($name =~ /^\s*#(\d+)\s*$/) {                                  # dbref
-      if(owner(obj($1)) ne undef) {            # check owner, its cached
-         return obj($1);
-       } else {
-         return undef;
-       }
-   } elsif($name =~ /^\s*%#\s*$/) {
-      return $$prog{created_by};
-   } elsif($name =~ /^\s*me\s*$/) {                                # myself
-      return $self;
-   } elsif($name =~ /^\s*here\s*$/) {
-      return loc_obj($self);
-   } elsif($name =~ /^\s*\*([^ ]+)\s*$/) {                  # online-player
-      return locate_player($name,"all");
-   } elsif($type eq "CONTENT") {
-      $where = 'con.con_source_id in ( ? )';
-      (@what[0]) = ($$self{obj_id});
-   } elsif($type eq "LOCAL") {
-      $where = 'con.con_source_id in ( ? , ? )';
-      ($what[0],$what[1]) = (loc($self),$$self{obj_id});
-   } else {
-      $where = 'con.con_source_id in ( ? , ? )';
-      ($what[0],$what[1]) = (loc($self),$$self{obj_id});
-   }
-    
-   
-   for my $hash (@{sql($db,"select * " .
-                           "  from object obj, flag flg, flag_definition fde, ".
-                           "       content con " .
-                           " where obj.obj_id = flg.obj_id " .
-                           "   and flg.fde_flag_id = fde.fde_flag_id " .
-                           "   and con.obj_id = obj.obj_id ".
-                           "   and fde.fde_name in ('PLAYER','OBJECT', 'EXIT')".
-                           "  and upper(substr(obj_name,1,length(?)))=upper(?)".
-                           "   and atr_id is null " .
-                           "   and fde_type = 1 " .
-                           "   and $where",
-                    $name,
-                    $name,
-                    @what)}) {
-      if(($$hash{fde_name} ne "EXIT" &&
-         lc($name) eq lc($$hash{obj_name})) ||
-        ($$hash{fde_name} eq 'EXIT' && 
-         $$hash{obj_name} =~ /(^|;)\s*$name\s*(;|$)/i)) {
-         if($exact eq undef) {
-            $exact = $hash;
-         } else {
-            return undef;
-         }
-      } elsif($indirect ne undef) {
-         if(length($$indirect{obj_name}) > length($$hash{obj_name})) {
-            $indirect = $hash;
-         }
-      } else {
-         $indirect = $hash;
-      }
-   }
-   return ($exact ne undef) ? $exact : $indirect;
-}
-
-sub locate_exit
-{
-   my ($self,$name,$type) = @_;
-   my $partial;
-
-   if($name =~ /^\s*#(\d+)\s*$/) {                                   # dbref
-      if(hasflag($name,"EXIT")) {
-         obj($name);                                        # good exit dbref
-      } else {
-         return undef;                                       # non exit dbref
-      }
-   }
-
-   for my $exit (lexits(loc($self))) {      # search all exits in current loc
-      for my $item (split(';',name($exit))) {             # search exit alias
-         if(lc($item) eq lc($name)) {                           # exact match
-            return obj($exit);
-         } elsif(substr(lc($item),0,length($name)) eq lc($name)) { # partial?
-            if($partial ne undef) {                   # more then one partial
-               return undef;                                       # - bail -
-            } else {
-               $partial = $item;                        # one partial, so far
-            }
-         }
-      }
-   }
-
-   if($type eq "EXACT") {                              # only exact matches
-      return undef;
-   } else {
-      return $partial;
-   }
-}
-
 
 #
 # set_flag
@@ -982,104 +897,127 @@ sub locate_exit
 #
 sub set_flag
 {
-    my ($self,$prog,$obj,$flag,$override) = 
-       (obj($_[0]),$_[1],obj($_[2]),uc($_[3]),$_[4]);
-    my $who = $$user{obj_name};;
-    my ($remove,$count);
+   my ($self,$prog,$obj,$flag,$override) = 
+      (obj($_[0]),$_[1],obj($_[2]),uc($_[3]),$_[4]);
+   my $who = $$user{obj_name};;
+   my ($remove,$count);
 
-    if(!$override && !controls($user,$obj)) {
-       return err($self,$prog,"#-1 PERMission denied.");
-    }
+   if(!$override && !controls($user,$obj)) {
+      return err($self,$prog,"#-1 PERMission denied.");
+   }
 
-    $who = "CREATE_USER" if($flag eq "PLAYER" && $who eq undef);
-    ($flag,$remove) = ($',1) if($flag =~ /^\s*!\s*/);         # remove flag 
+   if(!is_flag($flag)) {
+      return "I don't understand that flag.";
+   } elsif(memorydb) {
+      if($flag =~ /^\s*!\s*/) {
+         $remove = 1;
+         $flag = trim($');
+      }
 
-    # lookup flag info
-    my $hash = one($db,
-        "select fde1.fde_flag_id, " .
-        "       fde1.fde_name, " .
-        "       fde2.fde_name fde_permission_name," .
-        "       fde1.fde_permission" .
-        "       from flag_definition fde1," .
-        "            flag_definition fde2 " .
-        " where fde1.fde_permission = fde2.fde_flag_id " .
-        "   and fde1.fde_type = 1 " .
-        "   and fde2.fde_type = 1 " .
-        "   and fde1.fde_name=upper(?)",
-        $flag
-       );
-
-    if($hash eq undef || !defined $$hash{fde_flag_id} ||
-       $$hash{fde_name} eq "ANYONE") {       # unknown flag?
-       return "#-1 Unknown Flag.";
-    }
-
-    if(!perm($user,$$hash{fde_name}) && $flag ne "PLAYER") {
-       return "#-1 PERMission Denied.";
-    }
-
-    if($override || $$hash{fde_permission_name} eq "ANYONE" ||
-       ($$hash{fde_permission} >= 0 && 
-        hasflag($user,$$hash{fde_permission_name})
-       )) {
-
-       # check if the flag is already set
-       my $count = one_val($db,"select count(*) value from flag ".
-                               " where obj_id = ? " .
-                               "   and fde_flag_id = ?" .
-                               "   and atr_id is null ",
-                               $$obj{obj_id},
-                               $$hash{fde_flag_id});
-
-       # add flag to the object/user
-       if($count > 0 && $remove) {
-          sql($db,"delete from flag " .
-                  " where obj_id = ? " .
-                  "   and fde_flag_id = ?",
-                  $$obj{obj_id},
-                  $$hash{fde_flag_id});
-
-          remove_flag_cache($obj,$flag);
-         
-          my_commit;
-          if($flag =~ /^\s*(PUPPET|LISTENER)\s*$/i) {
-             necho(self => $self,
-                   prog => $prog,
-                   all_room => [$obj,"%s is no longer listening.",
-                      $$obj{obj_name} ]
-                  );
-          }
-          return "Flag Removed.";
-       } elsif($remove) {
-          return "Flag not set.";
-       } elsif($count > 0) {
-          return "Already Set.";
-       } else {
-          if($flag =~ /^\s*(PUPPET|LISTENER)\s*$/i) {
-             necho(self => $self,
-                   prog => $prog,
-                   all_room => [$obj,"%s is now listening.", $$obj{obj_name} ]
-                  );
-          }
-          sql($db,
-              "insert into flag " .
-              "   (obj_id,ofg_created_by,ofg_created_date,fde_flag_id)" .
-              "values " .
-              "   (?,?,now(),?)",
-              $$obj{obj_id},
-              $who,
-              $$hash{fde_flag_id});
-          my_commit;
-          return "#-1 Flag note removed [Internal Error]" if($$db{rows} != 1);
-
-          remove_flag_cache($obj,$flag);
-          set_cache($obj,"FLAG_$flag",1);
-
-          return "Set.";
+      if(!$override && !can_set_flag($self,$obj,$flag)) {
+         return "Permission DeNied";
+      } elsif($remove) {                  # remove, don't check if set or not
+         db_remove_list($obj,"flag",$flag);           # to mimic original mush
+         return "Cleared.";
+      } else {
+         db_set_list($obj,"flag",$flag);
+         return "Set.";
+      }
+   } else {
+       $who = "CREATE_USER" if($flag eq "PLAYER" && $who eq undef);
+       ($flag,$remove) = ($',1) if($flag =~ /^\s*!\s*/);         # remove flag
+   
+       # lookup flag info
+       my $hash = one($db,
+           "select fde1.fde_flag_id, " .
+           "       fde1.fde_name, " .
+           "       fde2.fde_name fde_permission_name," .
+           "       fde1.fde_permission" .
+           "       from flag_definition fde1," .
+           "            flag_definition fde2 " .
+           " where fde1.fde_permission = fde2.fde_flag_id " .
+           "   and fde1.fde_type = 1 " .
+           "   and fde2.fde_type = 1 " .
+           "   and fde1.fde_name=upper(?)",
+           $flag
+          );
+   
+       if($hash eq undef || !defined $$hash{fde_flag_id} ||
+          $$hash{fde_name} eq "ANYONE") {       # unknown flag?
+          return "#-1 Unknown Flag.";
        }
-    } else {
-       return "#-1 Permission Denied.";
-    }
+   
+       if(!perm($user,$$hash{fde_name}) && $flag ne "PLAYER") {
+          return "#-1 PERMission Denied.";
+       }
+   
+       if($override || $$hash{fde_permission_name} eq "ANYONE" ||
+          ($$hash{fde_permission} >= 0 &&
+           hasflag($user,$$hash{fde_permission_name})
+          )) {
+   
+          # check if the flag is already set
+          my $count = one_val($db,"select count(*) value from flag ".
+                                  " where obj_id = ? " .
+                                  "   and fde_flag_id = ?" .
+                                  "   and atr_id is null ",
+                                  $$obj{obj_id},
+                                  $$hash{fde_flag_id});
+   
+          # add flag to the object/user
+          if($count > 0 && $remove) {
+             sql($db,"delete from flag " .
+                     " where obj_id = ? " .
+                     "   and fde_flag_id = ?",
+                     $$obj{obj_id},
+                     $$hash{fde_flag_id});
+   
+             remove_flag_cache($obj,$flag);
+   
+             my_commit;
+             if($flag =~ /^\s*(PUPPET|LISTENER)\s*$/i) {
+                necho(self => $self,
+                      prog => $prog,
+                      all_room => [$obj,"%s is no longer listening.",
+                         $$obj{obj_name} ]
+                     );
+             }
+             return "Flag Removed.";
+          } elsif($remove) {
+             return "Flag not set.";
+          } elsif($count > 0) {
+             return "Already Set.";
+          } else {
+             if($flag =~ /^\s*(PUPPET|LISTENER)\s*$/i) {
+                necho(self => $self,
+                      prog => $prog,
+                      all_room => [ $obj,
+                                    "%s is now listening.", 
+                                    $$obj{obj_name} ]
+                     );
+             }
+             sql($db,
+                 "insert into flag " .
+                 "   (obj_id,ofg_created_by,ofg_created_date,fde_flag_id)" .
+                 "values " .
+                 "   (?,?,now(),?)",
+                 $$obj{obj_id},
+                 $who,
+                 $$hash{fde_flag_id});
+             my_commit;
+             if($$db{rows} != 1) {
+                return "#-1 Flag not removed [Internal Error]";
+             }
+             remove_flag_cache($obj,$flag);
+
+             set_cache($obj,"FLAG_$flag",1);
+   
+             return "Set.";
+          }
+       } else {
+          return "#-1 Permission Denied.";
+       }
+   }
 }
 
 #
@@ -1256,7 +1194,7 @@ sub destroy_object
 sub create_object
 {
    my ($self,$prog,$name,$pass,$type) = @_;
-   my ($where);
+   my ($where,$id);
    my $who = $$user{obj_name};
    my $owner = $$user{obj_id};
 
@@ -1266,7 +1204,7 @@ sub create_object
    }
   
    if($type eq "PLAYER") {
-      $where = 3;
+      $where = get(0,"CONF.STARTING_ROOM");
       $who = $$user{hostname};
       $owner = 0;
    } elsif($type eq "OBJECT") {
@@ -1277,36 +1215,63 @@ sub create_object
       $where = -1;
    }
 
+   if(memorydb) {
+      my $id = get_next_dbref();
+      db_delete($id);
+      db_set($id,"name",$name);
+      if($pass ne undef && $type eq "PLAYER") {
+         db_set($id,"password",mushhash($pass));
+      }
+ 
+      my $out = set_flag($self,$prog,$id,$type,1);
 
-   # find an id to reuse. You shouldn't refuse IDs in a db, but it
-   # part of the "charm" of a MUSH.
-   my $id = one_val("select a.obj_id + 1 value ".
-                    "  from object a ".
-                    "     left join object b ".
-                    "        on a.obj_id + 1 = b.obj_id ".
-                    "where b.obj_id is null ".
-                    "  and a.obj_id is not null ".
-                    "limit 1"
-                   );
+      if($out =~ /^#-1 /) {
+         necho(self => $self,
+               prog => $prog,
+               source => [ "%s", $out ]
+              );
+         db_delete($id);
+         push(@free,$id);
+         return undef;
+      }
 
-   if($id ne undef) {
-      sql($db,
-          " insert into object " .
-          "    (obj_id,obj_name,obj_password,obj_owner,obj_created_by," .
-          "     obj_created_date, obj_home " .
-          "    ) ".
-          "values " .
-          "   (?, ?,password(?),?,?,now(),?)",
-          $id,$name,$pass,$owner,$who,$where);
+      db_set($id,"home",$self);
+      db_set($id,"created_date",scalar localtime());
+      if($type eq "PLAYER" || $type eq "OBJECT") {
+         move($self,$prog,$id,$where);
+      }
+      return $id;
+
    } else {
-      sql($db,
-          " insert into object " .
-          "    (obj_name,obj_password,obj_owner,obj_created_by," .
-          "     obj_created_date, obj_home " .
-          "    ) ".
-          "values " .
-          "   (?,password(?),?,?,now(),?)",
-          $name,$pass,$owner,$who,$where);
+      # find an id to reuse. You shouldn't refuse IDs in a db, but it
+      # part of the "charm" of a MUSH.
+      my $id = one_val("select a.obj_id + 1 value ".
+                       "  from object a ".
+                       "     left join object b ".
+                       "        on a.obj_id + 1 = b.obj_id ".
+                       "where b.obj_id is null ".
+                       "  and a.obj_id is not null ".
+                       "limit 1"
+                      );
+      if($id ne undef) {
+         sql($db,
+             " insert into object " .
+             "    (obj_id,obj_name,obj_password,obj_owner,obj_created_by," .
+             "     obj_created_date, obj_home " .
+             "    ) ".
+             "values " .
+             "   (?, ?,password(?),?,?,now(),?)",
+             $id,$name,$pass,$owner,$who,$where);
+      } else {
+         sql($db,
+             " insert into object " .
+             "    (obj_name,obj_password,obj_owner,obj_created_by," .
+             "     obj_created_date, obj_home " .
+             "    ) ".
+             "values " .
+             "   (?,password(?),?,?,now(),?)",
+             $name,$pass,$owner,$who,$where);
+      }
    }
 
    if($$db{rows} != 1) {                           # oops, nothing happened
@@ -1405,18 +1370,22 @@ sub inuse_player_name
    my ($name) = @_;
    $name =~ s/^\s+|\s+$//g;
 
-   my $result = one_val($db,
-                  "select if(count(*) = 0,0,1) value " .
-                  "  from object obj, flag flg, flag_definition fde " .
-                  " where obj.obj_id = flg.obj_id " .
-                  "   and flg.fde_flag_id = fde.fde_flag_id " .
-                  "   and fde.fde_name = 'PLAYER' " .
-                  "   and atr_id is null " .
-                  "   and fde_type = 1 " .
-                  "   and lower(obj_name) = lower(?) ",
-                  $name
-                 );
-   return $result;
+   if(memorydb) {
+      return defined @player{lc($name)} ? 1 : 0;
+   } else {
+      my $result = one_val($db,
+                     "select if(count(*) = 0,0,1) value " .
+                     "  from object obj, flag flg, flag_definition fde " .
+                     " where obj.obj_id = flg.obj_id " .
+                     "   and flg.fde_flag_id = fde.fde_flag_id " .
+                     "   and fde.fde_name = 'PLAYER' " .
+                     "   and atr_id is null " .
+                     "   and fde_type = 1 " .
+                     "   and lower(obj_name) = lower(?) ",
+                     $name
+                    );
+      return $result;
+   }
 }
 
 #
@@ -1434,14 +1403,18 @@ sub give_money
 
    my $money = money($target);
 
-   sql("update object " .
-       "   set obj_money = ? ".
-       " where obj_id = ? ",
-       $money + $amount,
-       $$owner{obj_id});
+   if(memorydb) {
+      db_set($owner,"money",$money + $amount);
+   } else {
+      sql("update object " .
+          "   set obj_money = ? ".
+          " where obj_id = ? ",
+          $money + $amount,
+          $$owner{obj_id});
 
-   return undef if($$db{rows} != 1);
-   set_cache($target,"obj_money",$money + $amount);
+      return undef if($$db{rows} != 1);
+      set_cache($target,"obj_money",$money + $amount);
+   }
 
    return 1;
 }
@@ -1461,82 +1434,110 @@ sub set
       err($self,$prog,"Attribute name is bad, use the following characters: " .
            "A-Z, 0-9, and _ : $attribute");
    } elsif($value =~ /^\s*$/) {
-      sql($db,
-          "delete " .
-          "  from attribute " .
-          " where atr_name = ? " .
-          "   and obj_id = ? ",
-          lc($attribute),
-          $$obj{obj_id}
-         );
-      set_cache($obj,"latr_regexp_1");
-      set_cache($obj,"latr_regexp_2");
-      set_cache($obj,"latr_regexp_3");
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "Set." ]
-           );
-   } else {
-      # match $/^/! till the first unescaped :
-      if($value =~ /([\$\^\!])(.+?)(?<![\\])([:])/) {
-         ($pat,$value) = ($2,$');
-         if($1 eq "\$") {
-            $type = 1;
-         } elsif($1 eq "^") {
-            $type = 2;
-         } elsif($1 eq "!") {
-            $type = 3;
+      if(memorydb) {
+         if(reserved($attribute)) {
+            err($self,$prog,"That attribute name is reserved.");
+         } else {
+            db_set($obj,$attribute,undef);
+            if(!$quiet) {
+                necho(self => $self,
+                      prog => $prog,
+                      source => [ "Set." ]
+                     );
+            }
          }
-         $pat =~ s/\\:/:/g;
       } else {
-         $type = 0;
+         sql($db,
+             "delete " .
+             "  from attribute " .
+             " where atr_name = ? " .
+             "   and obj_id = ? ",
+             lc($attribute),
+             $$obj{obj_id}
+            );
+         set_cache($obj,"latr_regexp_1");
+         set_cache($obj,"latr_regexp_2");
+         set_cache($obj,"latr_regexp_3");
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "Set." ]
+              );
       }
-
-      sql("insert into attribute " .
-          "   (obj_id, " .
-          "    atr_name, " .
-          "    atr_value, " .
-          "    atr_pattern, " .
-          "    atr_pattern_type,  ".
-          "    atr_regexp, ".
-          "    atr_first,  ".
-          "    atr_created_by, " .
-          "    atr_created_date, " .
-          "    atr_last_updated_by, " .
-          "    atr_last_updated_date)  " .
-          "values " .
-          "   (?,?,?,?,?,?,?,?,now(),?,now()) " .
-          "ON DUPLICATE KEY UPDATE  " .
-          "   atr_value=values(atr_value), " .
-          "   atr_pattern=values(atr_pattern), " .
-          "   atr_pattern_type=values(atr_pattern_type), " .
-          "   atr_regexp=values(atr_regexp), " .
-          "   atr_first=values(atr_first), " .
-          "   atr_last_updated_by=values(atr_last_updated_by), " .
-          "   atr_last_updated_date = values(atr_last_updated_date)",
-          $$obj{obj_id},
-          uc($attribute),
-          $value,
-          $pat,
-          $type,
-          glob2re($pat),
-          atr_first($pat),
-          $$user{obj_name},
-          $$user{obj_name}
-         );
-
-      set_cache($obj,"latr_regexp_1");
-      set_cache($obj,"latr_regexp_2");
-      set_cache($obj,"latr_regexp_3");
-      if($$obj{obj_id} eq 0 && $attribute =~ /^conf./i) {
-         @info{$attribute} = $value;
-      }
-
-      if(!$quiet) {
-          necho(self => $self,
-                prog => $prog,
-                source => [ "Set." ]
-               );
+   } else {
+      if(memorydb) {
+         if(reserved($attribute)) {
+            err($self,$prog,"That attribute name is reserved.");
+         } else {
+            db_set($obj,$attribute,$value);
+            if(!$quiet) {
+                necho(self => $self,
+                      prog => $prog,
+                      source => [ "Set." ]
+                     );
+            }
+         }
+      } else {
+         # match $/^/! till the first unescaped :
+         if($value =~ /([\$\^\!])(.+?)(?<![\\])([:])/) {
+            ($pat,$value) = ($2,$');
+            if($1 eq "\$") {
+               $type = 1;
+            } elsif($1 eq "^") {
+               $type = 2;
+            } elsif($1 eq "!") {
+               $type = 3;
+            }
+            $pat =~ s/\\:/:/g;
+         } else {
+            $type = 0;
+         }
+   
+         sql("insert into attribute " .
+             "   (obj_id, " .
+             "    atr_name, " .
+             "    atr_value, " .
+             "    atr_pattern, " .
+             "    atr_pattern_type,  ".
+             "    atr_regexp, ".
+             "    atr_first,  ".
+             "    atr_created_by, " .
+             "    atr_created_date, " .
+             "    atr_last_updated_by, " .
+             "    atr_last_updated_date)  " .
+             "values " .
+             "   (?,?,?,?,?,?,?,?,now(),?,now()) " .
+             "ON DUPLICATE KEY UPDATE  " .
+             "   atr_value=values(atr_value), " .
+             "   atr_pattern=values(atr_pattern), " .
+             "   atr_pattern_type=values(atr_pattern_type), " .
+             "   atr_regexp=values(atr_regexp), " .
+             "   atr_first=values(atr_first), " .
+             "   atr_last_updated_by=values(atr_last_updated_by), " .
+             "   atr_last_updated_date = values(atr_last_updated_date)",
+             $$obj{obj_id},
+             uc($attribute),
+             $value,
+             $pat,
+             $type,
+             glob2re($pat),
+             atr_first($pat),
+             $$user{obj_name},
+             $$user{obj_name}
+            );
+   
+         set_cache($obj,"latr_regexp_1");
+         set_cache($obj,"latr_regexp_2");
+         set_cache($obj,"latr_regexp_3");
+         if($$obj{obj_id} eq 0 && $attribute =~ /^conf./i) {
+            @info{$attribute} = $value;
+         }
+   
+         if(!$quiet) {
+             necho(self => $self,
+                   prog => $prog,
+                   source => [ "Set." ]
+                  );
+         }
       }
    }
 }
@@ -1547,31 +1548,45 @@ sub get
    my $hash;
 
    $attribute = "description" if(lc($attribute) eq "desc");
+  
+   if(memorydb) {
+      my $attr = mget($obj,$attribute);
 
-   if((my $hash = one($db,"select atr_value, " .
-                          "       atr_pattern, ".
-                          "       atr_pattern_type ".
-                          "  from attribute " .
-                          " where obj_id = ? " .
-                          "   and atr_name = upper( ? )",
-                          $$obj{obj_id},
-                          $attribute
-                         ))) {
-      if($$hash{atr_pattern} ne undef && !$flag) {
-         my $type;                            # rebuild full attribute value
-         if($$hash{atr_pattern_type} == 1) {
-            $type = "\$";
-         } elsif($$hash{atr_pattern_type} == 2) {
-            $type = "^";
-         } elsif($$hash{atr_pattern_type} == 3) {
-            $type = "!";
-         }
-         return $type . $$hash{atr_pattern} . ":" . $$hash{atr_value};
-      } else {                                      # no pattern to rebuild
-         return $$hash{atr_value};
+      if(ref($attr) eq "HASH") {
+         if(defined $$attr{regexp}) {
+           return "$$attr{type}$$attr{glob}:$$attr{value}";
+         } else {
+            return $$attr{value};
+         } 
+      } else {
+        return undef;
       }
-   } else {                                                 # atr not found
-      return undef;
+   } else {
+      if((my $hash = one($db,"select atr_value, " .
+                             "       atr_pattern, ".
+                             "       atr_pattern_type ".
+                             "  from attribute " .
+                             " where obj_id = ? " .
+                             "   and atr_name = upper( ? )",
+                             $$obj{obj_id},
+                             $attribute
+                            ))) {
+         if($$hash{atr_pattern} ne undef && !$flag) {
+            my $type;                            # rebuild full attribute value
+            if($$hash{atr_pattern_type} == 1) {
+               $type = "\$";
+            } elsif($$hash{atr_pattern_type} == 2) {
+               $type = "^";
+            } elsif($$hash{atr_pattern_type} == 3) {
+               $type = "!";
+            }
+            return $type . $$hash{atr_pattern} . ":" . $$hash{atr_value};
+         } else {                                      # no pattern to rebuild
+            return $$hash{atr_value};
+         }
+      } else {                                                 # atr not found
+         return undef;
+      }
    }
 }
 
@@ -1606,12 +1621,12 @@ sub obj_ref
 
 sub obj_name
 {
-   my ($self,$obj,$flag) = (obj(shift),obj(shift),shift);
+   my ($self,$obj,$flag,$noansi) = (obj(shift),obj(shift),shift,shift);
 
    if(controls($self,$obj) || $flag) {
-      return name($obj) . "(#" . $$obj{obj_id} . flag_list($obj) . ")";
+      return name($obj,$noansi) . "(#" . $$obj{obj_id} . flag_list($obj) . ")";
    } else {
-      return name($obj);
+      return name($obj,$noansi);
    }
 }
 
@@ -1663,56 +1678,62 @@ sub date_split
 #
 sub move
 {
+   printf("%s",print_var(@db));
    my ($self,$prog,$target,$dest,$type) = 
       (obj($_[0]),obj($_[1]),obj($_[2]),obj($_[3]),$_[4]);
 
-   my $current = loc($target);
-   if(hasflag($current,"ROOM")) {
-      set($self,$prog,$current,"LAST_INHABITED",scalar localtime(),1);
-   }
-
    my $loc = loc($target);
-#   printf("move1: target = '%s'\n",$$target{obj_id});
-#   printf("move2: src    = '%s'\n",$loc);
-#   printf("move2: dest   = '%s'\n",$$dest{obj_id});
+   return 0 if $loc eq undef;
 
-   set_cache($target,"lcon");
-   set_cache($target,"con_source_id");
-   set_cache($loc,"lcon");
-   set_cache($loc,"con_source_id");
-   set_cache($dest,"lcon");
-   set_cache($dest,"con_source_id");
+   if(memorydb) {
+      db_set($loc,"LAST_INHABITED",scalar localtime());
+      db_set($target,"LAST_INHABITED",scalar localtime());
+      db_set($target,"location",$$dest{obj_id});
+      db_set_list($dest,"content",$$target{obj_id});
+      db_remove_list($loc,"content",$$target{obj_id});
+      return 1;
+   } else {
+      if(hasflag($loc,"ROOM")) {
+         set($self,$prog,$loc,"LAST_INHABITED",scalar localtime(),1);
+      }
+      set_cache($target,"lcon");                       # remove cached items
+      set_cache($target,"con_source_id");
+      set_cache($loc,"lcon");
+      set_cache($loc,"con_source_id");
+      set_cache($dest,"lcon");
+      set_cache($dest,"con_source_id");
 
-   # look up destination object
-   # remove previous location record for object
-   sql($db,"delete from content " .           # remove previous loc
-           " where obj_id = ?",
-           $$target{obj_id});
+      # look up destination object
+      # remove previous location record for object
+      sql($db,"delete from content " .                  # remove previous loc
+              " where obj_id = ?",
+              $$target{obj_id});
 
-   # insert current location record for object
-   my $result = sql(e($db,1),                              # set new location
-       "INSERT INTO content (obj_id, ".
-       "                     con_source_id, ".
-       "                     con_created_by, ".
-       "                     con_created_date, ".
-       "                     con_type) ".
-       "     VALUES (?, ".
-       "             ?, ".
-       "             ?, ".
-       "             now(), ".
-       "             ?)",
-       $$target{obj_id},
-       $$dest{obj_id},
-       ($$self{obj_name} eq undef) ? "CREATE_COMMAND": $$self{obj_name},
-       ($type eq undef) ? 3 : 4
-   );
-
-   $current = loc($target);
-   if(hasflag($current,"ROOM")) {
-      set($self,$prog,$current,"LAST_INHABITED",scalar localtime(),1);
+      # insert current location record for object
+      my $result = sql(e($db,1),                              # set new location
+          "INSERT INTO content (obj_id, ".
+          "                     con_source_id, ".
+          "                     con_created_by, ".
+          "                     con_created_date, ".
+          "                     con_type) ".
+          "     VALUES (?, ".
+          "             ?, ".
+          "             ?, ".
+          "             now(), ".
+          "             ?)",
+          $$target{obj_id},
+          $$dest{obj_id},
+          ($$self{obj_name} eq undef) ? "CREATE_COMMAND": $$self{obj_name},
+          ($type eq undef) ? 3 : 4
+      );
+   
+      $loc = loc($target);
+      if(hasflag($loc,"ROOM")) {
+         set($self,$prog,$loc,"LAST_INHABITED",scalar localtime(),1);
+      }
+      my_commit($db);
+      return 1;
    }
-   my_commit($db);
-   return 1;
 }
 
 sub obj
@@ -1722,6 +1743,10 @@ sub obj
    if(ref($id) eq "HASH") {
       return $id;
    } else {
+      if($id !~ /^\s*\d+\s*$/) {
+         printf("ID: '%s' -> '%s'\n",$id,code());
+         die();
+      }
       return { obj_id => $id };
    }
 }
@@ -1782,6 +1807,8 @@ sub link_exit
    }
 
    if($$db{rows} == 1) {
+      set_cache($src,"lexits");
+      set_cache($exit,"con_source_id");
       my_commit;
       return 1;
    } else {
@@ -1837,32 +1864,94 @@ sub lastsite
 {
    my $target = obj(shift);
 
-   return one_val($db,
-                  "SELECT skh_hostname value " .
-                  "  from socket_history skh " .
-                  "     join (select max(skh_id) skh_id  ".
-                  "             from socket_history  ".
-                  "            where obj_id = ?  ".
-                  "          ) max ".
-                  "       on skh.skh_id = max.skh_id",
-                  $$target{obj_id}
-                 );
+   if(memorydb) {
+      my $attr = mget($target,"obj_lastsite");
+
+      if($attr eq undef) {
+         return undef;
+      } else {
+         my $list = $$attr{value};
+         my $data = $$list{(sort keys %$list)[-1]};
+
+         if($data =~ /^\d+,\d+,(.*)$/) {
+            return $1;
+         } else {
+            return undef;
+         }
+      }
+   } else {
+      return one_val($db,
+                     "SELECT skh_hostname value " .
+                     "  from socket_history skh " .
+                     "     join (select max(skh_id) skh_id  ".
+                     "             from socket_history  ".
+                     "            where obj_id = ?  ".
+                     "          ) max ".
+                     "       on skh.skh_id = max.skh_id",
+                     $$target{obj_id}
+                    );
+   }
+}
+
+sub lasttime
+{
+   my $target = obj(shift);
+
+   if(memorydb) {
+      my $attr = mget($target,"obj_lastsite");
+
+      if($attr eq undef) {
+         return undef;
+      } else {
+         my $list = $$attr{value};
+         return scalar localtime((sort keys %$list)[-1]);
+      }
+   } else {
+      my $last = one_val($db,
+                         "select ifnull(max(skh_end_time), " .
+                         "              max(skh_start_time) " .
+                         "             ) value " .
+                         "  from socket_history " .
+                         " where obj_id = ? ",
+                         $$target{obj_id}
+                        );
+      return $last;
+   }
 }
 
 sub firstsite
 {
    my $target = obj(shift);
 
-   return one_val($db,
-                  "SELECT skh_hostname value " .
-                  "  from socket_history skh " .
-                  "     join (select min(skh_id) skh_id  ".
-                  "             from socket_history  ".
-                  "            where obj_id = ?  ".
-                  "          ) min".
-                  "       on skh.skh_id = min.skh_id",
-                  $$target{obj_id}
-                 );
+   if(!hasflag($target,"PLAYER")) {
+      return undef;
+   } elsif(memorydb) {
+      return get($target,"obj_created_by");
+   } else {
+      return one_val($db,
+                     "SELECT skh_hostname value " .
+                     "  from socket_history skh " .
+                     "     join (select min(skh_id) skh_id  ".
+                     "             from socket_history  ".
+                     "            where obj_id = ?  ".
+                     "          ) min".
+                     "       on skh.skh_id = min.skh_id",
+                     $$target{obj_id}
+                    );
+   }
+}
+
+sub firsttime
+{
+   my $target = obj(shift);
+
+   if(memorydb) {
+      return scalar localtime(fuzzy(get($target,"obj_created_date")));
+   } else {
+      my $obj = fetch($target);
+
+      return $$obj{obj_created_date};
+   }
 }
 
 #
@@ -1965,29 +2054,40 @@ sub get_segment
 
 sub isatrflag
 {
-    my $txt = shift;
-    $txt = $' if($txt =~ /^\s*!/);
+   my $txt = shift;
+   $txt = $' if($txt =~ /^\s*!/);
 
-    return one_val($db,
-                   "select count(*) value " .
-                   "  from flag_definition " .
-                   " where fde_name = upper(trim(?)) " .
-                   "   and fde_type = 2",
-                   $txt
-                   );
+   if(memorydb) {
+      return flag_attr($txt);
+   } else {
+      return one_val($db,
+                     "select count(*) value " .
+                     "  from flag_definition " .
+                     " where fde_name = upper(trim(?)) " .
+                     "   and fde_type = 2",
+                     $txt
+                    );
+   }
 }
 
 sub read_config
 {
    my $count=0;
-   for my $line (split(/\n/,getfile("tm_config.dat"))) {
+   my $fn = "tm_config.dat";
+
+   # always use .dev version for easy setup of dev db.
+   $fn .= ".dev" if(-e "$fn.dev");
+
+   for my $line (split(/\n/,getfile($fn))) {
       $line =~ s/\r|\n//g;
       if($line =~/^\s*#/ || $line =~ /^\s*$/) {
          # comment or blank line, ignore
+      } elsif($line =~ /^\s*([^ =]+)\s*=\s*#(\d+)\s*$/) {
+         @info{$1} = $2;
       } elsif($line =~ /^\s*([^ =]+)\s*=\s*(.*?)\s*$/) {
          @info{$1} = $2;
       } else {
-         printf("Invalid data in tm_config.dat:\n") if($count == 0);
+         printf("Invalid data in $fn:\n") if($count == 0);
          printf("    '%s'\n",$line);
          $count++;
       }
@@ -2006,5 +2106,23 @@ sub source
       return @{@{$$user{internal}}{cmd}}{source};
    } else {
       return 0;
+   }
+}
+
+sub is_flag
+{
+   my $flag = shift;
+
+   $flag = trim($') if($flag =~ /^\s*!/);
+   if(memorydb) {
+      return (flag_letter($flag) eq undef) ? 0 : 1;
+   } else {
+      my $count = one_val("select count(*) value " .
+                         "  from flag_definition fde1," .
+                         " where fde_name = trim(upper(?)) ".
+                         "   and fde_type = 1",
+                         $flag
+                        );
+      return ($count == 0) ? 0 : 1;
    }
 }

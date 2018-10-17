@@ -1,9 +1,7 @@
 #!/usr/bin/perl
 
 use strict;
-use HTML::HTML5::Entities;
 use Carp;
-use Text::Glob qw( match_glob glob_to_regex );
 use Scalar::Util qw(looks_like_number);
 use Math::BigInt;
 use POSIX;
@@ -26,7 +24,7 @@ my %exclude =
 
 my %fun = 
 (
-   ansi      => sub { return &fun_ansi(@_);                             },
+   ansi      => sub { return &color($_[2],$_[3]);                       },
    ansi_debug=> sub { return &ansi_debug($_[2]);                        },
    substr    => sub { return &fun_substr(@_);                           },
    cat       => sub { return &fun_cat(@_);                              },
@@ -115,9 +113,22 @@ my %fun =
    fold      => sub { return &fun_fold(@_);                             },
    telnet_open => sub { return &fun_telnet(@_);                         },
    min        => sub { return &fun_min(@_);                             },
-   decode_entities => sub { return &fun_de(@_);                         },
+   find       => sub { return &fun_find(@_);                             },
 );
 
+sub fun_find
+{
+    my ($self,$prog,$txt) = @_;
+
+    my $obj = find($self,$prog,$txt);
+
+    printf("FUN_FIND: '%s'\n",$obj);
+    if($obj ne undef) {
+       return $$obj{obj_id};
+    } else {
+       return "UNFOUND";
+    }
+}
 # starting point
 sub fun_ansi
 {
@@ -217,7 +228,7 @@ sub fun_idle
 
    my $name = shift;
 
-   my $player = locate_player($name) ||
+   my $player = find_player($self,$prog,$name) ||
      return -2;
 
    if(!defined @connected_user{$$player{obj_id}}) {
@@ -386,7 +397,7 @@ sub fun_lexits
    my ($self,$prog,$txt) = @_;
    my @result;
 
-   my $target = locate_object($self,$prog,$txt);
+   my $target = find($self,$prog,$txt);
    return "#-1 NOT FOUND" if($target eq undef);
 
    for my $exit (lexits($target)) {
@@ -399,10 +410,15 @@ sub fun_graph
 {
    my ($self,$prog,$txt,$x,$y) = @_;
 
-   if($txt =~ /^\s*(mush|web)\s*$/i) {
-      return graph_connected(lc($1),$x,$y);
+   if(mysqldb) {
+      if($txt =~ /^\s*(mush|web)\s*$/i) {
+         return "Specify Connected";
+         return graph_connected(lc($1),$x,$y);
+      } else {
+         return "Specify Connected";
+      }
    } else {
-      return "Specify Connected";
+      return "Not written for MemoryDB";
    }
 }
 
@@ -646,7 +662,7 @@ sub fun_mudname
 {
    my ($self,$prog) = (shift,shift);
 
-   my $name = @info{"conf.master"};
+   my $name = @info{"conf.mudname"};
 
    return ($name eq undef) ? "TeenyMUSH" : $name;
 }
@@ -735,7 +751,7 @@ sub fun_home
    good_args($#_,0,1) ||
       return "#-1 FUNCTION (HOME) EXPECT 0 OR 1 ARGUMENT";
 
-   my $target = locate_object($self,$prog,shift);
+   my $target = find($self,$prog,shift);
    return "#-1 NOT FOUND" if($target eq undef);
 
    return "#" . home($target);
@@ -790,7 +806,7 @@ sub fun_loc
 {
    my ($self,$prog,$txt) = @_;
 
-   my $target = locate_object($self,$prog,$txt);
+   my $target = find($self,$prog,$txt);
 
    if($target eq undef) {
       return "#-1 NOT FOUND";
@@ -808,7 +824,7 @@ sub fun_hasflag
    good_args($#_,2) ||
       return "#-1 FUNCTION (HASFLAG) EXPECTS 2 ARGUMENTS";
 
-   if((my $target = locate_object($self,$prog,$_[0])) ne undef) {
+   if((my $target = find($self,$prog,$_[0])) ne undef) {
       return hasflag($target,$_[1]);
    } else {
       return "#-1 Unknown Object";
@@ -931,9 +947,10 @@ sub fun_match
       return "#-1 FUNCTION (MATCH) EXPECTS 1, 2 OR 3 ARGUMENTS";
 
    $delim = " " if $delim eq undef; 
+   $pat = glob2re($pat);
 
    for my $word (safe_split(ansi_remove($txt),$delim)) {
-      return $count if(match_glob(lc($pat),lc($word)));
+      return $count if($word =~ /$pat/);
       $count++;
    }
    return 0;
@@ -1244,13 +1261,6 @@ sub fun_sub
    return $result;
 }
 
-sub fun_de
-{
-   my ($self,$prog) = (shift,shift);
-
-   decode_entities(@_[0]);
-}
-
 sub lord
 {
    my $txt = shift;
@@ -1270,10 +1280,11 @@ sub fun_edit
    my $from = ansi_remove(evaluate($self,$prog,shift));
    my $to   = evaluate($self,$prog,shift);
    my $size = ansi_length($from);
+   my $size = length($from);
 
-   for(my $i = 0;$i <= $#{$$txt{ch}};$i++) {
+   for(my $i = 0, $start=0;$i <= $#{$$txt{ch}};$i++) {
       if(ansi_substr($txt,$i,$size) eq $from) {
-#         printf("MAT: '%s' -> '%s'  *MATCH*\n",ansi_substr($txt,$i,$size),$from);
+#         printf("MAT[$size]: '%s' -> '%s'  *MATCH*\n",ansi_substr($txt,$i,$size),$from);
          if($start ne undef or $i != $start) {
             $out .= ansi_substr($txt,$start,$i - $start);
          }
@@ -1312,7 +1323,7 @@ sub fun_num
    good_args($#_,1) ||
       return "#-1 FUNCTION (NUM) EXPECTS 1 ARGUMENT";
 
-   my $result = locate_object($self,$prog,$_[0]);
+   my $result = find($self,$prog,$_[0]);
  
    if($result eq undef) {
       return "#-1";
@@ -1340,7 +1351,7 @@ sub fun_name
    good_args($#_,1) ||
       return "#-1 FUNCTION (NAME) EXPECTS 1 ARGUMENT";
 
-   my $result = locate_object($self,$prog,$_[0]);
+   my $result = find($self,$prog,$_[0]);
  
    if($result eq undef) {
       return "#-1";
@@ -1356,7 +1367,7 @@ sub fun_type
    good_args($#_,1) ||
       return "#-1 FUNCTION (TYPE) EXPECTS 1 ARGUMENT";
 
-   if((my $target= locate_object($self,$prog,$_[0])) ne undef) {
+   if((my $target= find($self,$prog,$_[0])) ne undef) {
       if(hasflag($target,"PLAYER")) {
          return "PLAYER";
       } elsif(hasflag($target,"OBJECT")) {
@@ -1384,7 +1395,7 @@ sub fun_u
    set_digit_variables($self,$prog,@_);              # update to new values
 
    if($txt =~ /\//) {                    # input in object/attribute format?
-      ($obj,$attr) = (locate_object($self,$prog,$`,"LOCAL"),$');
+      ($obj,$attr) = (find($self,$prog,$`,"LOCAL"),$');
    } else {                                  # nope, just contains attribute
       ($obj,$attr) = ($self,$txt);
    }
@@ -1419,7 +1430,7 @@ sub fun_get
       ($obj,$atr) = ($txt,@_[0]);
    }
 
-   my $target = locate_object($self,$prog,evaluate($self,$prog,$obj),"LOCAL");
+   my $target = find($self,$prog,evaluate($self,$prog,$obj));
 
    if($target eq undef ) {
       return "#-1 Unknown object";
@@ -1437,9 +1448,9 @@ sub fun_get
 
 sub fun_v
 {
-   my ($self,$prog) = (shift,shift);
+   my ($self,$prog,$txt) = (shift,shift,shift);
 
-   return get($self,$_[0]);
+   return evaluate($self,$prog,get($self,$txt));
 }
 
 sub fun_setq
@@ -1741,7 +1752,7 @@ sub fun_flags
    return "#-1" if($txt =~ /^\s*$/);
 
    # find object
-   my $target = locate_object($self,$prog,$txt,"LOCAL");
+   my $target = find($self,$prog,$txt);
    return "#-1" if($target eq undef);
 
    # return results
@@ -1851,35 +1862,42 @@ sub mysql_pattern
 sub fun_lattr
 {
    my ($self,$prog) = (shift,shift);
-
    my $txt = shift;
    my ($obj,$atr,@list);
 
    if($txt =~ /\s*\/\s*/) {                               # input has a slash 
-      ($obj,$atr) = ($`,$');                          # designating a pattern
+      ($obj,$atr) = ($`, $');
    } elsif($txt =~ /^\s*$/) {                                      # no input
       return "#-1 FUNCTION (LATTR) EXPECTS 1 ARGUMENTS";
    } else {
-      ($obj,$atr) = ("me",$txt);                         # only attr provided
+      $obj = $txt;                                        # only obj provided
    }
 
-   my $target = locate_object($self,$prog,$obj,"LOCAL");
+   my $target = find($self,$prog,$obj);
    return "#-1 Unknown object" if $target eq undef;  # oops, can't find object
 
-   if(!controls($self,$obj) && !hasflag($target,"VISUAL")) {
+   if(!controls($self,$target) && !hasflag($target,"VISUAL")) {
       return err($self,$prog,"#-1 Permission Denied.");
    }
 
-   for my $attr (@{sql($db,                     # query db for attribute names
-                       "  select atr_name " .
-                       "    from attribute " .
-                       "   where obj_id = ? " .
-                       "     and atr_name like upper(?) " .
-                       "order by atr_name",
-                       $$target{obj_id},
-                       mysql_pattern($atr)
-                      )}) {
-      push(@list,$$attr{atr_name});
+   if(memorydb) {
+      my $pat = ($atr eq undef) ? undef : glob2re($atr);
+
+      for my $attr (lattr($target)) {
+         push(@list,uc($attr)) if($pat eq undef || $attr =~ /$pat/i);
+      }
+   } else {
+      for my $attr (@{sql($db,                  # query db for attribute names
+                          "  select atr_name " .
+                          "    from attribute " .
+                          "   where obj_id = ? " .
+                          "     and atr_name like upper(?) " .
+                          "order by atr_name",
+                          $$target{obj_id},
+                          mysql_pattern($atr)
+                         )}) {
+         push(@list,$$attr{atr_name});
+      }
    }
    return join(' ',@list);
 }

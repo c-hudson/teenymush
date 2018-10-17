@@ -208,8 +208,6 @@ sub color
    my ($codes,$txt) = @_;
    my $pre;
 
-   $txt =~ s/ //g;
-
    for my $ch (split(//,$codes)) {
       if(defined @ansi{$ch}) {
          $pre .= "\e[@ansi{$ch};1m";

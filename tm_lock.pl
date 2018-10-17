@@ -80,7 +80,7 @@ sub lock_item_eval
       }
    } elsif($item =~ /^\s*(!{0,1})\s*([^ ]+)\s*$/) {             # handle item
       $not = ($1 eq "!") ? 1 : 0;
-      $target = locate_object($obj,$prog,$2,"LOCAL");
+      $target = find($obj,$prog,$2);
 
       if($target eq undef) {                             # verify item exists
          return lock_error($lock,"Target($2) does not exist.");
@@ -170,7 +170,7 @@ sub lock_item_compile
          lock_error($lock,"Expected operand but found '$item'");
       }
 
-      $target = locate_object($obj,$prog,$txt,"LOCAL");
+      $target = find($obj,$prog,$txt);
       
       if($target eq undef) {                             # verify item exists
          return lock_error($lock,"Target($obj) does not exist");

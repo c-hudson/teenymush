@@ -2,7 +2,8 @@
 
 
 use Text::Wrap;
-use Devel::Size qw(size total_size);
+# use Devel::Size qw(size total_size);
+use Digest::SHA qw(sha1 sha1_hex);
 
 delete @command{keys %command};
 delete @offline{keys %offline};
@@ -192,6 +193,10 @@ delete @honey{keys %honey};
 @command{"\@websocket"}= { fun  => sub { cmd_websocket(@_); }            };
 @command{"\@find"}   = { fun  => sub { cmd_find(@_); }                   };
 @command{"\@sqldump"}= { fun  => sub { db_sql_dump(@_); }                };
+@command{"\@dbread"} = { fun  => sub { fun_dbread(@_); }                 };
+@command{"\@dump"}   = { fun  => sub { cmd_dump(@_); }                   };
+@command{"\@backupmode"}   = { fun  => sub { cmd_backupmode(@_); }                   };
+@command{"\@delta"}   = { fun  => sub { cmd_delta(@_); }                   };
 # --[ aliases ]-----------------------------------------------------------#
 
 @command{"\@poll"}  =  { fun => sub { cmd_doing(@_[0],@_[1],@_[2],
@@ -216,7 +221,21 @@ delete @honey{keys %honey};
 @command{"\@\@"}     = { fun  => sub { return;}                          };
  
 # ------------------------------------------------------------------------#
-
+# Generate Partial Commands                                               #
+#    Instead of looping through all the commands every time, we'll just   #
+#    populate the table with all possibilities.                           #
+# ------------------------------------------------------------------------#
+   for my $key (sort {length($a) <=> length($b)} keys %command) {
+      for my $i (0 .. length($key)) {
+         if(!defined @command{substr($key,0,$i)}) {
+            @command{substr($key,0,$i)} = @command{$key};
+         }
+      }
+   }
+   delete @command{q};                                 # no alias for QUIT
+   delete @command{qu};
+   delete @command{qui};
+# ------------------------------------------------------------------------#
 sub atr_first
 {
    my $txt = shift;
@@ -228,6 +247,27 @@ sub atr_first
    }
 }
 
+sub cmd_dbread
+{
+   my ($self,$prog,$txt) = @_;
+
+   if(!hasflag($self,"WIZARD")) {
+      return err($self,$prog,"Permission denied.");
+   } if($file eq undef) {
+      return err($self,$prog,"Unable to find a dump file to read");
+   } else {
+      delete @db[0 .. $#db];
+      my $file = newest_full(@info{"conf.mudname"} . ".FULL.DB");
+      db_read(undef,undef,$file);
+   }
+}
+
+#
+# cmd_compile
+#   This doesn't actually compile but generates the regexps that are
+#   required by the user's code. Currently regexps are not supported inside
+#   the mush, only globs... so they need to be converted.
+#
 sub cmd_compile
 {
    my ($self,$prog,$txt) = @_;
@@ -235,6 +275,8 @@ sub cmd_compile
 
    if(!hasflag($self,"WIZARD")) {
       return err($self,$prog,"Permission denied.");
+   } elsif(memorydb) {
+      return err($self,$prog,"This command is not implimented for MemoryDB");
    }
 
    necho(self   => $self,
@@ -267,31 +309,61 @@ sub cmd_compile
      );
 }
 
+sub cmd_backupmode
+{
+   my ($self,$prog,$txt) = @_;
+   @info{backup_mode} = 1;
+   necho(self   => $self,
+      prog   => $prog,
+      source => [ "Backup mode enabled." ]
+     );
+}
+
+sub cmd_delta
+{
+   my ($self,$prog,$txt) = @_;
+   printf("%s\n",print_var(\@delta));
+}
+
 sub cmd_find
 {
    my ($self,$prog,$txt) = @_;
+   my @out;
 
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ table("select concat(obj_name, ".
-                           "              '(#', ".
-                           "              o.obj_id, ".
-                           "              fde_letter, ".
-                           "              ')' ".
-                           "             ) object  ".
-                           "  from object o,  ".
-                           "       flag f,  ".
-                           "       flag_definition fd  ".
-                           " where o.obj_id = f.obj_id  ".
-                           "   and f.fde_flag_id = fd.fde_flag_id  ".
-                           "   and o.obj_owner = ?  ".
-                           "   and CAST(fde_letter as binary) in " .
-                           "       ('o','R','e','P')",
-                           owner_id($self)
-                          )
-                   ]
+   if(memorydb) {
+      my $pat = glob2re("*$txt*");
+      for(my $i=0;$i < $#db;$i++) {
+         if(valid_dbref($i) && controls($self,$i) && name($i,1) =~ /$pat/i) {
+            push(@out,obj_name($self,$i));
+         }
+      }
+      push(@out,"**End of List**");
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ join("\n",@out) ]
         );
-   
+   } else {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ table("select concat(obj_name, ".
+                              "              '(#', ".
+                              "              o.obj_id, ".
+                              "              fde_letter, ".
+                              "              ')' ".
+                              "             ) object  ".
+                              "  from object o,  ".
+                              "       flag f,  ".
+                              "       flag_definition fd  ".
+                              " where o.obj_id = f.obj_id  ".
+                              "   and f.fde_flag_id = fd.fde_flag_id  ".
+                              "   and o.obj_owner = ?  ".
+                              "   and CAST(fde_letter as binary) in " .
+                              "       ('o','R','e','P')",
+                              owner_id($self)
+                             )
+                      ]
+           );
+   }
 }
 
 sub cmd_perl
@@ -374,7 +446,7 @@ sub cmd_give
 
 
    if($txt =~ /=/) {
-      my ($target,$what) = (locate_object($self,$prog,$`),$');
+      my ($target,$what) = (find($self,$prog,$`),$');
       return err($self,$prog,"Give to whom?") if $target eq undef;
 
       if($what =~ /^\s*\-{0,1}(\d+)\s*$/) {
@@ -436,7 +508,7 @@ sub cmd_trigger
       if($2 eq undef) {
          ($name,$target) = ($1,$self);
       } else {
-         ($name,$target) = ($2,locate_object($self,$prog,$1,"LOCAL"));
+         ($name,$target) = ($2,find($self,$prog,$1));
       }
 
       if($target eq undef) {
@@ -547,7 +619,7 @@ sub cmd_lock
 
    if($txt =~ /^\s*([^ ]+)\s*=\s*/) {
 
-      my $target = locate_object($self,$prog,$1,"LOCAL");       # find target
+      my $target = find($self,$prog,$1);       # find target
 
       if($target eq undef) {                            # found invalid object
          return err($self,$prog,"I don't see that here.");
@@ -1049,7 +1121,7 @@ sub cmd_split
     my @stack;
    
     if($txt =~ /,/) {
-       my $target = locate_object($self,$prog,$`,"LOCAL") ||
+       my $target = find($self,$prog,$`) ||
          return err($self,$prog,"I can't find that");
        my $txt = get($target,$');
        $txt =~ s/\r\s*|\n\s*//g;
@@ -1080,6 +1152,113 @@ sub cmd_split
        err($self,$prog,"Usage: \@split <object>,<attribute>");
     }
 }
+
+#
+# cmd_dump
+#    Dump the database to a file in segments so that the mush doesn't
+#    need to "pause" while writing out the database. Why hang the mush
+#    for no reason? This also does not fork() off a second copy of the
+#    database to background the database like standard MUSHes do.
+#
+sub cmd_dump
+{
+   my ($self,$prog,$type) = @_;
+   my ($file,$start);
+
+   if(defined $$prog{nomushrun}) {
+      out($prog,"#-1 \@DUMP is not a valid command to use in RUN function");
+      return;
+   } elsif(!hasflag($self,"WIZARD") && !hasflag($self,"GOD")) {
+      return err($self,$prog,"Permission denied.");
+   } elsif(mysqldb) {
+      return err($self,$prog,"Mysql does not need to be \@dumped");
+   }
+
+   $type = "normal" if($type eq undef);
+
+   #-----------------------------------------------------------------------#
+   # initialize loop                                                       #
+   #-----------------------------------------------------------------------#
+   my $cmd = $$prog{cmd_last};
+   if(!defined $$cmd{dump_pos}) {                      # initialize "loop"
+      if(defined @info{backup_mode} && is_running(@info{backup_mode})) {
+         printf("%s",print_var($prog));
+         return err($self,$prog,"Backup is already running.");
+      }
+      $$cmd{dump_pos} = 0;
+
+      my ($sec,$min,$hour,$day,$mon,$yr,$wday,$yday,$isdst) =
+                                                localtime(time);
+      $mon++;
+      $yr -= 100;
+      my $fn = sprintf("dumps/%s.FULL.%02d%02d%02d_%02d%02d%02d.tdb",
+                       @info{"conf.mudname"},
+                       $yr,$mon,$day,$hour,$min,$sec);
+
+      open($file,"> $fn") ||
+        return err($self,$prog,"Unable to open $fn for writing");
+
+      printf($file "server: %s, dbversion=%s, exported=%s, type=$type\n",
+         @info{version},db_version(),scalar localtime());
+
+      $$cmd{dump_file} = $file;
+      @info{backup_mode} = $$prog{pid};
+      @info{db_last_dump} = time();
+      if($type ne "CRASH") {
+         echo_flag($user,
+                   prog($user,$user),
+                   "CONNECTED,PLAYER,LOG",
+                   "<LOG> Database backup started.",name($user)
+                  );
+      }
+   } else {
+      $file = $$cmd{dump_file};
+   }
+
+   my $start = $$cmd{dump_pos};
+
+   #-----------------------------------------------------------------------#
+   # write out the database in 50 object segments                          #
+   #-----------------------------------------------------------------------#
+   while($$cmd{dump_pos} <= $#db && 
+       ($$cmd{dump_pos} - $start <= 50 || $type eq "CRASH")) {
+       printf($file "%s", db_object($$cmd{dump_pos}));
+       $$cmd{dump_pos}++;
+   }
+
+   #-----------------------------------------------------------------------#
+   # handle dump clean up or notify still running                          #
+   #-----------------------------------------------------------------------#
+   if($$cmd{dump_pos} > $#db) {                                 # dump done
+      if(defined @$cmd{dump_file}) {                    # should not happen?
+         printf($file "** Dump Completed %s **\n", scalar localtime());
+         close($file);
+         delete @$cmd{dump_file};
+      }
+
+      # sync changes back into the database
+      for(my $i=0;$i <= $#delta;$i++) {
+         if(defined @delta[$i] && ref(@delta[$i]) eq "HASH") {
+            @db[$i] = @delta[$i];
+         }
+      }
+      delete @delta[0 .. $#delta];                        # empty the delta
+      delete @info{backup_mode};                     # turn off backup mode
+
+      if($type ne "CRASH") {
+         echo_flag($user,
+                   prog($user,$user),
+                   "CONNECTED,PLAYER,LOG",
+                   "<LOG> Database finished."
+                  );
+      }
+      return;
+   } else {
+      return "RUNNING";                                       # still running
+   }
+}
+
+   
 
 # cmd_while
 #    Loop while the expression is true
@@ -1269,29 +1448,44 @@ sub cmd_password
                      );
       }
 
-      if(one($db,"select obj_password ".
-                 "  from object " .
-                 " where obj_id = ? " .
-                 "   and obj_password = password(?)",
-                 $$self{obj_id},
-                 $1
-            )) {
-         sql(e($db,1),
-             "update object ".
-             "   set obj_password = password(?) " . 
-             " where obj_id = ?" ,
-             $2,
-             $$self{obj_id}
-            );
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "Your password has been updated." ],
-              );
-      } else {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "Invalid old password." ],
-              );
+      if(memorydb) {
+         if(mushhash($1) ne get($self,"obj_password")) {
+            necho(self   => $self,
+                  prog   => $prog,
+                  source => [ "Invalid old password." ],
+                 );
+         } else {
+            db_set($self,"password",mushhash($2));
+            necho(self   => $self,
+                  prog   => $prog,
+                  source => [ "Passworld changed." ],
+                 );
+         }
+      } else {                                                      # mysql
+         if(one($db,"select obj_password ".              # verify old password
+                    "  from object " .
+                    " where obj_id = ? " .
+                    "   and obj_password = password(?)",
+                    $$self{obj_id},
+                    $1
+               )) {
+            sql(e($db,1),                                 # verify succeeded
+                "update object ".                   # update to new password
+                "   set obj_password = password(?) " . 
+                " where obj_id = ?" ,
+                $2,
+                $$self{obj_id}
+               );
+            necho(self   => $self,
+                  prog   => $prog,
+                  source => [ "Your password has been updated." ],
+                 );
+         } else {                                             # verify failed
+            necho(self   => $self,
+                  prog   => $prog,
+                  source => [ "Invalid old password." ],
+                 );
+         }
       }
    } else {
       necho(self   => $self,
@@ -1354,23 +1548,28 @@ sub read_atr_config
       linkcost            => 1,
       digcost             => 10,
       createcost          => 10,
+      backup_interval     => 3600,
+      login               => "Welcome to @info{version}\r\n\r\n" .
+                             "   Type the below command to customize this " .
+                             "screen after loging in as God.\r\n\r\n" .
+                             "    \@set #0/conf.login = Login screen\r\n\r\n"
    );
 
    my %updated;
-   for my $atr (@{sql("select atr_name, ".
-                       "      atr_value ".
-                       "  from attribute ".
-                       " where obj_id = 0 ".
-                       "   and atr_name like 'conf.%'"
-                      )
-                }) {
-       if($$atr{atr_value} =~ /^\s*#\d+\s*$/) {
-          $$atr{atr_value} =~ s/^\s*#//g;
-       }
-       @info{lc($$atr{atr_name})} = $$atr{atr_value};
-       @updated{lc($$atr{atr_name})} = 1;
-   }
 
+   for my $atr (lattr(0)) {
+      if($atr =~ /^conf\.(mysql|websock|httpd)/ && @info{"conf.$1"} == -1) {
+         # skip
+      } elsif($atr =~ /^conf./) {
+         if(get(0,$atr) =~ /^\s*#(\d+)\s*$/) {
+            @info{lc($atr)} = $1;
+         } else {
+            @info{lc($atr)} = get(0,$atr);
+         }
+         @updated{lc($atr)} = 1;
+      }
+   }
+   
    for my $key (keys %default) {
       if(!defined @info{"conf.$key"}) {
          @info{"conf.$key"} = @default{$key};
@@ -1385,11 +1584,11 @@ sub read_atr_config
    } 
 
    if($self eq undef) {
-      printf("%s\n", wrap("Updated: ",
-                          "         ",
-                          join(' ', keys %updated)
-                        )
-            );
+#      printf("%s\n", wrap("Updated: ",
+#                          "         ",
+#                          join(' ', keys %updated)
+#                        )
+#            );
    } else {
       $Text::Wrap::columns=75;
       necho(self   => $self,
@@ -1430,7 +1629,11 @@ sub cmd_read
                      );
       }
 
-      sql("delete from help");
+      if(memorydb) {
+         delete @help{keys %help};
+      } else {
+         sql("delete from help");
+      }
 
       while(<$file>) {
          s/\r|\n//g;
@@ -1438,8 +1641,13 @@ sub cmd_read
             if($data ne undef) {
                $count++;
                $data =~ s/\n$//g;
-               sql("insert into help(hlp_name,hlp_data) " .
-                   "values(?,?)",$name,$data);
+
+               if(memorydb) {
+                  @help{$name} = $data;
+               } else {
+                  sql("insert into help(hlp_name,hlp_data) " .
+                      "values(?,?)",$name,$data);
+               }
             }
             $name = $';
             $data = undef;
@@ -1450,11 +1658,16 @@ sub cmd_read
 
       if($data ne undef) {
          $data =~ s/\n$//g;
-         sql("insert into help(hlp_name,hlp_data) " .
-             "values(?,?)",$name,$data);
+
+         if(memorydb) {
+            @help{$name} = $data;
+         } else {
+            sql("insert into help(hlp_name,hlp_data) " .
+                "values(?,?)",$name,$data);
+         }
          $count++;
       }
-      my_commit;
+      my_commit if mysqldb;
 
       necho(self   => $self,
             prog   => $prog,
@@ -1520,7 +1733,7 @@ sub cmd_squish
       return err($self,$prog,"usage: \@squish <object>/<attribute");
    }
 
-   my $target = locate_object($self,$prog,evaluate($self,$prog,$obj),"LOCAL");
+   my $target = find($self,$prog,evaluate($self,$prog,$obj));
 
    if($target eq undef ) {
       return err($self,$prog,"Unknown object '$obj'");
@@ -1551,6 +1764,7 @@ sub cmd_switch
     my ($first,$second) = (get_segment2(shift(@list),"="));
     $first = ansi_remove(evaluate($self,$prog,$first));
     $first =~ s/[\r\n]//g;
+    $first =~ tr/\x80-\xFF//d;
     unshift(@list,$second);
 
     while($#list >= 0) {
@@ -1561,7 +1775,7 @@ sub cmd_switch
        if($#list >= 1) {
           my ($txt,$cmd) = (evaluate($self,$prog,shift(@list)),shift(@list));
           $txt =~ s/^\s+|\s+$//g;
-          my $pat = glob2re($txt);
+          my $pat = glob2re(ansi_remove($txt));
 
           if($first =~ /$pat/) {
              return mushrun(self   => $self,
@@ -1594,7 +1808,7 @@ sub cmd_newpassword
                 "passwords.");
    } elsif($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*$/) {
 
-      my $player = locate_player($1) ||
+      my $player = find_player($1) ||
          return err($self,$prog,"Unknown player '%s' specified",$1);
 
       if(!controls($self,$player)) {
@@ -1603,13 +1817,17 @@ sub cmd_newpassword
 
 #      good_password($2) || return;
 
-      sql(e($db,1),
-          "update object ".
-          "   set obj_password = password(?) " . 
-          " where obj_id = ?" ,
-          $2,
-          $$player{obj_id}
-         );
+      if(memorydb) {
+         db_set($player,"password",mushhash($2));
+      } else {
+         sql(e($db,1),
+             "update object ".
+             "   set obj_password = password(?) " . 
+             " where obj_id = ?" ,
+             $2,
+             $$player{obj_id}
+            );
+      }
       necho(self   => $self,
             prog   => $prog,
             source => [ "The password for %s has been updated.",name($player) ],
@@ -1681,24 +1899,27 @@ sub cmd_telnet
       }
 
       $readable->add($sock);
-      sql(e($db,1),
-          "insert into socket " . 
-          "(   obj_id, " .
-          "    sck_start_time, " .
-          "    sck_type, " . 
-          "    sck_socket, " .
-          "    sck_tag, " .
-          "    sck_hostname, " .
-          "    sck_port " .
-          ") values ( ? , now(), ?, ?, ?, ?, ? )",
-               $$self{obj_id},
-               2,
-               $sock,
-               "NONE",
-               $1,
-               $2
-         );
-        my_commit;
+
+      if(mysqldb) {
+          sql(e($db,1),
+              "insert into socket " . 
+              "(   obj_id, " .
+              "    sck_start_time, " .
+              "    sck_type, " . 
+              "    sck_socket, " .
+              "    sck_tag, " .
+              "    sck_hostname, " .
+              "    sck_port " .
+              ") values ( ? , now(), ?, ?, ?, ?, ? )",
+                   $$self{obj_id},
+                   2,
+                   $sock,
+                   "NONE",
+                   $1,
+                   $2
+             );
+            my_commit;
+      }
       @info{io} = {} if(!defined @info{io});
 
       @info{io}->{$sock} = {};
@@ -1869,19 +2090,26 @@ sub cmd_force
     my ($self,$prog,$txt) = @_;
 
     if($txt =~ /^\s*([^ ]+)\s*=\s*/) {
-       my $target = locate_object($self,$prog,$1,"LOCAL") ||
+       my $target = find($self,$prog,$1) ||
           return err($self,$prog,"I can't find that");
 
        if(!controls($self,$target)) {
           return err($self,$prog,"Permission Denied.");
        }
 
-       mushrun(self   => $self,
+#       mushrun(self   => $target,
+##               prog   => prog($target,$target$prog,
+#               runas  => $target,
+#               source => 0,
+#               cmd    => evaluate($self,$prog,$'),
+##               cmd    => $',
+#               hint   => "INTERNAL"
+#              );
+       mushrun(self   => $target,
                prog   => $prog,
                runas  => $target,
                source => 0,
                cmd    => evaluate($self,$prog,$'),
-#               cmd    => $',
                hint   => "INTERNAL"
               );
    } else {
@@ -1917,7 +2145,7 @@ sub motd
    
    my $atr = @info{"conf.motd"};
    return motd_with_border($self,$prog) if($atr eq undef);
-   motd_with_border($self,$prog,evaluate(fetch(0),$prog,$atr));
+   motd_with_border($self,$prog,evaluate(0,$prog,$atr));
 }
 
 sub cmd_list
@@ -2026,18 +2254,31 @@ sub cmd_list
              source => [ "%s",print_var($hash) ],
             );
    } elsif($txt =~ /^\s*sockets\s*$/) {
-       necho(self   => $self,
-             prog   => $prog,
-             source => [ "%s",
-                         ,table("select obj_id, " .
-                                "       sck_start_time start, " .
-                                "       sck_hostname host, " .
-                                "       sck_port port, " .
-                                "       concat(sck_tag,':',sck_type) tag ".
-                                "  from socket "
-                               )
-                       ]
-            );
+      if(memorydb) {
+         my $out;
+         for my $key (keys %connected) {
+            my $hash = @connected{$key};
+            $out .= "\n$$hash{hostname}$$hash{start}$$hash{port}"
+         }
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "%s",$out ],
+              );
+ 
+      } else {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "%s",
+                           ,table("select obj_id, " .
+                                  "       sck_start_time start, " .
+                                  "       sck_hostname host, " .
+                                  "       sck_port port, " .
+                                  "       concat(sck_tag,':',sck_type) tag ".
+                                  "  from socket "
+                                 )
+                         ]
+              );
+      }
    } else {
        err($self,
            $prog,
@@ -2071,7 +2312,7 @@ sub cmd_clean
                     delete $cache{$x}->{$y};
                     $del++;
                     if($y eq "FLAG_WIZARD") {
-                       remove_flag_cache($obj,"FLAG_WIZARD");
+                       remove_flag_cache($x,"FLAG_WIZARD");
                     }
                   }
                } else {
@@ -2102,7 +2343,7 @@ sub cmd_destroy
    my ($self,$prog,$txt) = @_;
 
    return err($self,$prog,"syntax: \@destroy <object>") if($txt =~ /^\s*$/);
-   my $target = locate_object($self,$prog,$txt,"LOCAL") ||
+   my $target = find($self,$prog,$txt) ||
        return err($self,$prog,"I can't find an object named '%s'",$txt);
 
    if(hasflag($target,"PLAYER")) {
@@ -2140,7 +2381,7 @@ sub cmd_toad
        return err($self,$prog,"syntax: \@toad <object>");
    }
 
-   my $target = locate_object($self,$prog,$txt,"LOCAL") ||
+   my $target = find($self,$prog,$txt) ||
        return err($self,$prog,"I can't find an object named '%s'",$txt);
 
    if(!hasflag($target,"PLAYER")) {
@@ -2195,7 +2436,7 @@ sub cmd_pemit
    my ($self,$prog,$txt) = @_;
 
    if($txt =~ /^\s*([^ =]+)\s*=/s) {
-      my $target = locate_object($self,$prog,evaluate($self,$prog,$1),"local");
+      my $target = find($self,$prog,evaluate($self,$prog,$1));
       my $txt=$';
 
       if($target eq undef) {
@@ -2235,7 +2476,7 @@ sub cmd_drop
    if(hasflag($self,"GUEST")) {
       return err($self,$prog,"Permission Denied.");
    }
-   my $target = locate_object($self,$prog,$txt,"CONTENT") ||
+   my $target = find_content($self,$prog,$txt) ||
       return err($self,$prog,"I don't see that here.");
 
    if(hasflag($target,"ROOM") || hasflag($target,"EXIT")) {
@@ -2315,7 +2556,7 @@ sub cmd_take
       return err($self,$prog,"Permission Denied.");
    }
 
-   my $target = locate_object($self,$prog,$txt,"LOCAL") ||
+   my $target = find($self,$prog,$txt) ||
       return err($self,$prog,"I don't see that here.");
 
    if(hasflag($target,"EXIT")) {
@@ -2331,7 +2572,7 @@ sub cmd_take
    }
 
 
-   my $atr = get($target,"LOCK_DEFAULT");
+   my $atr = get($target,"OBJ_LOCK_DEFAULT");
 
    if($atr ne undef) {
       my $lock = lock_eval($self,$prog,$target,$atr);
@@ -2374,7 +2615,7 @@ sub cmd_name
    if(hasflag($self,"GUEST")) {
       return err($self,$prog,"Permission Denied.");
    } elsif($txt =~ /^\s*([^=]+?)\s*=\s*(.+?)\s*$/) {
-      my $target = locate_object($self,$prog,$1,"LOCAL") ||
+      my $target = find($self,$prog,$1) ||
          return err($self,$prog,"I don't see that here.");
       my $cname = trim(evaluate($self,$prog,$2));
       my $name = ansi_remove($cname);
@@ -2394,31 +2635,36 @@ sub cmd_name
          return err($self,$prog,"Names may not start with * or #");
       }
 
-      sql($db,
-          "update object " .
-          "   set obj_name = ?, " .
-          "       obj_cname = ? " .
-          " where obj_id = ?",
-          $name,
-          $cname,
-          $$target{obj_id},
-          );
- 
-      set_cache($target,"obj_name");
-
-      if($$db{rows} == 1) {
-
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "Set." ],
-               room   => [ $target, "%s is now known by %s.\n",$old, $cname]
-              );
-
-         $$target{obj_name} = $name;
-         my_commit;
+      if(memorydb) {
+         delete @player{name($target,1)};
+         db_set($target,"name",$name);
+         db_set($target,"cname",$cname);
       } else {
-         err($self,$prog,"Internal error, name not updated.");
+
+         sql($db,
+             "update object " .
+             "   set obj_name = ?, " .
+             "       obj_cname = ? " .
+             " where obj_id = ?",
+             $name,
+             $cname,
+             $$target{obj_id},
+             );
+    
+         set_cache($target,"obj_name");
+
+         if($$db{rows} != 1) {
+            err($self,$prog,"Internal error, name not updated.");
+         } else {
+            my_commit;
+         }
       }
+
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Set." ],
+            room   => [ $target, "%s is now known by %s.\n",$old, $cname]
+           );
    } else {
       err($self,$prog,"syntax: \@name <object> = <new_name>");
    }
@@ -2428,7 +2674,7 @@ sub cmd_enter
 {
    my ($self,$prog,$txt) = @_;
 
-   my $target = locate_object($self,$prog,$txt,"LOCAL") ||
+   my $target = find($self,$prog,$txt) ||
       return err($self,$prog,"I don't see that here.");
 
    # must be owner or object enter_ok to enter it
@@ -2437,7 +2683,7 @@ sub cmd_enter
    }
 
    # check to see if object can pass enter lock
-   my $atr = get($target,"LOCK_ENTER");
+   my $atr = get($target,"OBJ_LOCK_ENTER");
 
    if($atr ne undef) {
       my $lock = lock_eval($self,$prog,$target,$atr);
@@ -2479,7 +2725,7 @@ sub cmd_to
     my ($self,$prog,$txt) = @_;
 
     if($txt =~ /^\s*([^ ]+)\s*/) {
-       my $tg = locate_object($self,$prog,$1,"LOCAL") ||
+       my $tg = find($self,$prog,$1) ||
           return err($self,$prog,"I don't see that here.");
 
        necho(self   => $self,
@@ -2498,8 +2744,12 @@ sub whisper
 {
    my ($self,$prog,$target,$msg) = @_;
 
-   my $obj = locate_object($self,$prog,$target,"LOCAL");
+   my $obj = find($self,$prog,$target);
    return err($self,$prog,"I don't see that here.") if $obj eq undef;
+
+   if(hasflag($obj,"EXIT") || hasflag($obj,"ROOM")) {
+      return err($self,$prog,"You may only whisper to objects or players");
+   }
 
    if($msg =~ /^\s*:/) {
       necho(self   => $self,
@@ -2534,7 +2784,7 @@ sub cmd_whisper
    if($txt =~ /^\s*([^ ]+)\s*=/) {                           # standard whisper
       whisper($self,$prog,$1,$');
    } else {
-      my $target = get($self,"LAST_WHISPER");               # no target whisper
+      my $target = get($self,"OBJ_LAST_WHISPER");          # no target whisper
       return whisper($self,$prog,$target,$txt) if($target ne undef);
 
       err($self,
@@ -2549,7 +2799,7 @@ sub page
 {
    my ($self,$prog,$target,$msg) = @_;
 
-   my $target = locate_player($target,"online") ||
+   my $target = find_player($target,"online") ||
        return err($self,$prog,"That player is not connected.");
 
    my $target = fetch($$target{obj_id});
@@ -2585,7 +2835,7 @@ sub cmd_page
 
    return page($self,$prog,$1,$') if($txt =~ /^\s*([^ ]+)\s*=/); # standard page
 
-   my $target = get($self,"LAST_PAGE");                       # no target page
+   my $target = get($self,"OBJ_LAST_PAGE");                    # no target page
    return page($self,$prog,$target,$txt) if($target ne undef);
 
    err($self,
@@ -2601,7 +2851,7 @@ sub cmd_last
 
    # determine the target
    if($txt =~ /^\s*([^ ]+)\s*$/) {
-      $what = locate_player($1,"anywhere") ||
+      $what = find_player($1,"anywhere") ||
          return err($self,$prog,"Unknown player '%s'",$1);
       $what = $$what{obj_id};
    } else {
@@ -2684,7 +2934,7 @@ sub cmd_go
 
    } else {
       # find the exit to go through
-      $exit = locate_exit($self,$txt) ||
+      $exit = find_exit($self,$prog,$txt) ||
          return err($self,$prog,"You can't go that way.");
  
       $dest = dest($exit);
@@ -2733,10 +2983,10 @@ sub cmd_teleport
           "        \@teleport <location>");
    }
 
-   $target = locate_object($self,$prog,$target) ||
+   $target = find($self,$prog,$target) ||
       return err($self,$prog,"I don't see that object here.");
 
-   $location = locate_object($self,$prog,$location) ||
+   $location = find($self,$prog,$location) ||
       return err($self,$prog,"I can't find that location");
 
    controls($self,$target) ||
@@ -3024,7 +3274,7 @@ sub cmd_create
          source => [ "Object created as: %s",obj_name($self,$dbref) ],
         );
 
-   my_commit;
+   my_commit if mysqldb;
 }
 
 sub cmd_link
@@ -3044,10 +3294,10 @@ sub cmd_link
    my $loc = loc($self) ||
       return err($self,$prog,"Unable to determine your location");
 
-   my $target = locate_object($self,$prog,$name,"EXIT") ||
+   my $target = find_exit($self,$prog,$name) ||
       return err($self,$prog,"I don't see that here");
 
-   my $d = locate_object($self,$prog,$dest) ||
+   my $d = find($self,$prog,$dest) ||
       return err($self,$prog,"I don't see $dest here");
 
    if(!valid_dbref($target)) {
@@ -3080,14 +3330,19 @@ sub cmd_link
             source => [ "That is not an object or room." ]
            );
    } elsif(controls($self,$target) || hasflag($target,"ABODE")) {
-         sql("update object " . 
-             "   set obj_home = ? ".
-             " where obj_id = ? ",
-             $$d{obj_id},
-             $$target{obj_id}
-            );
-         if($$db{rows} != 1) {
-            return err($self,$prog,"Internal error, unable to set home");
+
+         if(memorydb) {
+            db_set($target,"home",$$target{obj_id});
+         } else {
+            sql("update object " . 
+                "   set obj_home = ? ".
+                " where obj_id = ? ",
+                $$d{obj_id},
+                $$target{obj_id}
+               );
+            if($$db{rows} != 1) {
+               return err($self,$prog,"Internal error, unable to set home");
+            }
          }
          necho(self   => $self,
                prog   => $prog,
@@ -3151,7 +3406,7 @@ sub cmd_dig
    }
 
 
-   if($in ne undef && locate_exit($self,$in,"EXACT")) {
+   if($in ne undef && find_exit($self,$in)) {
       return err($self,$prog,"Exit '%s' already exists in this location",$in);
    }
 
@@ -3222,7 +3477,7 @@ sub cmd_open
       return err($self,$prog,"You are out of QUOTA to create objects");
    }
 
-   !locate_exit($self,$exit,"EXACT") ||
+   !find_exit($self,$exit,"EXACT") ||
       return err($self,$prog,"Exit '%s' already exists in this location",$exit);
 
    my $loc = loc($self) ||
@@ -3234,7 +3489,7 @@ sub cmd_open
 
 
    if($destination ne undef) {
-      $dest = locate_object($self,$prog,$destination) ||
+      $dest = find($self,$prog,$destination) ||
          return err($self,$prog,"I can't find that destination location");
 
       if(!(controls($self,$loc) || hasflag($loc,"LINK_OK"))) {
@@ -3253,6 +3508,10 @@ sub cmd_open
    my_commit;
 }
 
+sub mushhash
+{
+   return "*" . uc(sha1_hex(sha1(shift)));
+}
 
 #
 # invalid_player
@@ -3261,41 +3520,31 @@ sub cmd_open
 #
 sub invalid_player
 {
-   my ($sock,$player,$data,$value) = @_;
+   my ($self,$name,$pass) = @_;
 
-   if($value eq undef && $data ne undef) {
-      return 0;
-   } elsif($value ne undef && $data eq $value) {
-      return 0;
-   }
+   if(memorydb()) {
+       return 1 if(!defined @player{lc($name)});
 
-   if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
-      ws_echo($sock,"Either that player does not exist, or has a different " .
-          "password.\r\n");
+       if(!valid_dbref(@player{lc($name)}) ||
+          get(@player{lc($name)},"obj_password") ne mushhash($pass)) {
+          return 1;
+       } else {
+          $$self{obj_id} = @player{lc($name)};
+          return 0;
+       }
    } else {
-      printf($sock "Either that player does not exist, or has a different " .
-          "password.\r\n");
+       my $count = one_val("select count(*) value ".
+                           "  from object ".
+                           " where lower(obj_name) = lower(?) " .
+                           "   and obj_password = password(?)",
+                           $name,
+                           $pass
+                          );
+
+       return ($count == 0) ? 1 : 0;
    }
-  
-   # log invalid connects for possible brute attack detection?
-   sql("insert into socket_history ".
-       "( obj_id, " .
-       "  skh_hostname, " .
-       "  skh_start_time, " .
-       "  skh_end_time, " .
-       "  skh_success, " .
-       "  skh_type, " .
-       "  skh_detail " .
-       ") values ( " .
-       "  ?, ?, now(), now(), 0, 1, ? ".
-       ")",
-          $$player{obj_id},
-          $$user{hostname},
-          $$player{obj_name}
-      );
-   my_commit($db);
-   return 1;
 }
+
 
 #
 # cmd_connect
@@ -3313,27 +3562,14 @@ sub cmd_connect
       my ($username,$pass) = ($1,$2);
 
       # --- Valid User ------------------------------------------------------#
-      $player = one("select * " .                        # find requested user
-                    "  from object obj, ".
-                    "       flag flg, ".
-                    "       flag_definition fde" .
-                    " where obj.obj_id = flg.obj_id ".
-                    "   and flg.fde_flag_id = fde.fde_flag_id ".
-                    "   and fde_name = 'PLAYER' " .
-                    "   and lower(obj_name) = ?",
-                    $username
-                   );
-      return if invalid_player($sock,{obj_id=>-1,obj_name=>$username},$player);
 
-      # --- Valid Password --------------------------------------------------#
-      if(!hasflag($player,"GUEST")) {
-          my $good = one_val("select count(*) value ".
-                             "  from object ".
-                             " where obj_id = ? " .
-                             "   and obj_password = password(?)",
-                             $$player{obj_id},
-                             $2);
-         return if invalid_player($sock,$player,$good,1);          # bad pass
+      if(invalid_player($self,$username,$pass)) {
+         if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
+            ws_echo($sock,"Invalid command, try: connect <user> <password>");
+         } else {
+            printf($sock "Invalid command, try: connect <user> <password>\r\n");
+         }
+         return;
       }
 
       # --- Hook connected user up to local structures ----------------------#
@@ -3349,38 +3585,40 @@ sub cmd_connect
       @{@connected_user{$$user{obj_id}}}{$$user{sock}} = $$user{sock};
 
       # --- log connnect ----------------------------------------------------#
-      sql( "insert into socket " .
-          "( " . 
-          "    obj_id, " . 
-          "    sck_start_time, " .
-          "    sck_hostname, " .
-          "    sck_socket, " .
-          "    sck_type " . 
-          ") values ( ?, now(), ?, ?, ? ) ",
-               $$user{obj_id},
-               $$user{hostname},
-               $$user{sock},
-               1
-         );
-
-      # put the historical request in right away, no need to wait.
-      sql("insert into socket_history ".
-          "( obj_id, " .
-          "  sck_id, " .
-          "  skh_hostname, " .
-          "  skh_start_time, " .
-          "  skh_success, " .
-          "  skh_type ".
-          ") values ( " .
-          "  ?, ?, ?, now(), 1, ? ".
-          ")",
-          $$user{obj_id},
-          curval(),
-          $$user{hostname},
-          1
-         );
-
-      my_commit($db);
+      if(mysqldb) {
+         sql( "insert into socket " .
+             "( " . 
+             "    obj_id, " . 
+             "    sck_start_time, " .
+             "    sck_hostname, " .
+             "    sck_socket, " .
+             "    sck_type " . 
+             ") values ( ?, now(), ?, ?, ? ) ",
+                  $$user{obj_id},
+                  $$user{hostname},
+                  $$user{sock},
+                  1
+            );
+   
+         # put the historical request in right away, no need to wait.
+         sql("insert into socket_history ".
+             "( obj_id, " .
+             "  sck_id, " .
+             "  skh_hostname, " .
+             "  skh_start_time, " .
+             "  skh_success, " .
+             "  skh_type ".
+             ") values ( " .
+             "  ?, ?, ?, now(), 1, ? ".
+             ")",
+             $$user{obj_id},
+             curval(),
+             $$user{hostname},
+             1
+            );
+   
+         my_commit($db);
+      }
 
       # --- Provide users visual feedback / MOTD --------------------------#
 
@@ -3391,7 +3629,7 @@ sub cmd_connect
 
       cmd_look($user,prog($user,$user));                    # show room
 
-      printf("    %s@%s\n",$$player{obj_name},$$user{hostname});
+      printf("    %s@%s\n",name($user),$$user{hostname});
 
 
       # notify users local and users with monitor flag
@@ -3404,13 +3642,12 @@ sub cmd_connect
                 prog($user,$user),
                 "CONNECTED,PLAYER,MONITOR",
                 "[Monitor] %s has connected.",name($user));
-            my_commit($db);
 
       # --- Handle @ACONNECTs on masteroom and players-----------------------#
 
       if(@info{"conf.master"} ne undef) {
          for my $obj (lcon(@info{"conf.master"}),$player) {
-            if(($atr = get($obj,"ACONNECT")) && $atr ne undef) {
+            if(($atr = get($obj,"ACONNECT")) && $atr ne undef){
                mushrun(self   => $player,                 # handle aconnect
                        runas  => $player,
                        source => 0,
@@ -3511,7 +3748,7 @@ sub cmd_set
       } else {                                               # non-user input
          ($target,$attr) = (evaluate($self,$prog,$1),evaluate($self,$prog,$2));
       }
-      ($target,$value) = (locate_object($self,$prog,$target),$3);
+      ($target,$value) = (find($self,$prog,$target),$3);
 
       return err($self,$prog,"Unknown object '%s'",$1) if !$target;
       controls($self,$target) || return err($self,$prog,"Permission denied");
@@ -3528,10 +3765,10 @@ sub cmd_set
          }
          set($self,$prog,$target,evaluate($self,$prog,$attr),$value);
       }
-      my_commit($db);
+      my_commit($db) if(mysqldb);
 
    } elsif($txt =~ /^\s*([^ =\\]+?)\s*= *(.*?) *$/s) { # flag?
-      ($target,$flag) = (locate_object($self,$prog,$1),$2);
+      ($target,$flag) = (find($self,$prog,$1),$2);
       return err($self,$prog,"Unknown object '%s'",$1) if !$target;
       controls($self,$target) || return err($self,$prog,"Permission denied");
 
@@ -3553,99 +3790,122 @@ sub cmd_set
    }
 }
 
+sub reconstitute
+{
+   my ($name,$type,$pattern,$value,$flag,$raw) = @_;
+
+   if($type eq undef) {
+      if($flag eq undef) {
+         return color("h",uc($name)) . ": $value" if($type eq undef);
+      } else {
+         return color("h",uc($name)) . "[$flag]: $value" if($type eq undef);
+      }
+   }
+
+   if($type == 1) {
+      $type = "\$";
+   } elsif($type == 2) {
+      $type = "^";
+   } elsif($type == 3) {
+      $type = "!";
+   }
+
+   # convert single line unreadable mushcode into hopefully readable
+   # multiple line code
+   if(!$raw &&
+      length($value) > 78 &&
+      $value !~ /\n/ &&
+      ($pattern ne undef || $value  =~ /^\s*([\$|\[|^|!|@])/)) {
+      if($1 eq "[") {
+         $value = "\n" . function_print(3,single_line($value));
+      } else {
+         $value = "\n" . pretty(3,single_line($value));
+      }
+      $value =~ s/\n+$//;
+   }
+
+   if($flag ne undef) {
+      return color("h",uc($name)) . "[$flag]: ".$type.$pattern . ":" . $value;
+   } else {
+      return color("h",uc($name)) . ": $type$pattern:" . $value;
+   }
+}
+
+sub list_attr_flags
+{
+   my $attr = shift;
+   my $result;
+
+   for my $name (keys %{$$attr{flag}}) {
+      $result .= flag_letter($name);
+   }
+   return $result;
+}
+
 sub list_attr
 {
-   my ($obj,$atr,$switch) = @_;
-   my ($query,@where,@result);
+   my ($obj,$pattern,$switch) = @_;
+   my (@out,$pat,$keys);
 
-   $atr =~ s/\*/%/g;
-   $atr =~ s/_/\\_/g;
-   if($atr ne undef) {
-      $query = "and lower(atr_name) like lower(?) ";
-      push(@where,$atr);
-   }
+   $pat = glob2re($pattern) if($pattern ne undef);
 
-   for my $hash (@{sql($db,
-       "   select atr_name, " .
-       "          atr_value, " .
-       "          atr_pattern, " .
-       "          atr_pattern_type, ".
-       "          group_concat(distinct fde_letter order by fde_order " .
-       "             separator '') atr_flag " .
-       "     from attribute atr left join ( " .
-       "             select atr_id, fde_letter, fde_order " .
-       "               from flag flg, flag_definition fde " .
-       "              where flg.fde_flag_id = fde.fde_flag_id " .
-       "                and fde_type = 2 " .
-       "           ) flg on (atr.atr_id = flg.atr_id) " .
-       "    where atr.obj_id = ? " .
-       "      and atr_name not in ('DESCRIPTION', " .
-       "                           'LOCK_DEFAULT', " . 
-       "                           'LAST_WHISPER', " .
-       "                           'LAST_PAGE') " .
-       "      $query " .
-       " group by atr.atr_id, atr_name " .
-       "order by atr.atr_name",
-       $$obj{obj_id},
-       @where
-      )}) { 
-
-      # convert single line unreadable mushcode into hopefully readable
-      # multiple line code
-      if(!defined $$switch{raw}) {
-         if(length($$hash{atr_value}) > 78 &&
-            $$hash{atr_value} !~ /\n/ &&
-            ($$hash{atr_pattern} ne undef ||
-            $$hash{atr_value} =~ /^\s*([\$|\[|^|!|@])/)) {
-            if($1 eq "[") {
-               $$hash{atr_value}=function_print(3,
-                                                single_line($$hash{atr_value})
-                                               );
-            } else {
-               $$hash{atr_value}="\n" . 
-                                 pretty(3,single_line($$hash{atr_value}));
+   if(memorydb) {
+      for my $name (lattr($obj)) {
+         if($pat eq undef || $name =~ /$pat/) {
+            if(!reserved($name)) {
+                my $attr = mget($obj,$name);
+                push(@out,reconstitute($name,
+                                       $$attr{type},
+                                       $$attr{glob},
+                                       $$attr{value},
+                                       list_attr_flags($attr),
+                                       $$switch{raw}
+                                      )
+                    );
             }
-            $$hash{atr_value} =~ s/\n+$//;
          }
       }
+   } else {
+      for my $hash (@{sql($db,
+          "   select atr_name, " .
+          "          atr_value, " .
+          "          atr_pattern, " .
+          "          atr_pattern_type, ".
+          "          group_concat(distinct fde_letter order by fde_order " .
+          "             separator '') atr_flag " .
+          "     from attribute atr left join ( " .
+          "             select atr_id, fde_letter, fde_order " .
+          "               from flag flg, flag_definition fde " .
+          "              where flg.fde_flag_id = fde.fde_flag_id " .
+          "                and fde_type = 2 " .
+          "           ) flg on (atr.atr_id = flg.atr_id) " .
+          "    where atr.obj_id = ? " .
+          "      and atr_name not in ('DESCRIPTION', " .
+          "                           'LOCK_DEFAULT', " . 
+          "                           'LAST_WHISPER', " .
+          "                           'LAST_PAGE') ".
+          " group by atr.atr_id, atr_name " .
+          " order by atr.atr_name",
+          $$obj{obj_id},
+         )}) { 
 
-      if($$hash{atr_pattern_type} == 1) {
-         $$hash{atr_value} = "\$$$hash{atr_pattern}:$$hash{atr_value}";
-      } elsif($$hash{atr_pattern_type} == 2) {
-         $$hash{atr_value} = "^$$hash{atr_pattern}:$$hash{atr_value}";
-      } elsif($$hash{atr_pattern_type} == 3) {
-         $$hash{atr_value} = "!$$hash{atr_pattern}:$$hash{atr_value}";
-      }
-
-      if($$hash{atr_value} =~ /\n/ && $$hash{atr_value} !~ /^\s*[\$!^]/) {
-         $$hash{atr_value} = "\n$$hash{atr_value}";
-      }
-
-      if($$hash{atr_flag} eq undef) {
-         push(@result,sprintf("%s: %s",
-                              color("h",$$hash{atr_name}),
-                              $$hash{atr_value}
-                             )
-             );
-      } else {
-         push(@result,sprintf("%s[%s]: %s",
-                              color("h",@$hash{atr_name}),
-                              $$hash{atr_flag},
-                              $$hash{atr_value}
-                             )
-             );
-      }
-      if(uc($$hash{atr_name}) eq uc($atr)) {
-         return @result[$#result];
+         if($pat eq undef || $$hash{atr_name} =~ /$pat/) {
+            push(@out,reconstitute($$hash{atr_name},
+                                   $$hash{atr_pattern_type},
+                                   $$hash{atr_pattern},
+                                   $$hash{atr_value},
+                                   $$switch{raw}
+                                  )
+                );
+         }
       }
    }
 
-   if($#result == -1 && $atr eq undef) {
-      return;
-   } elsif($#result == -1) {
+
+   if($#out == -1 && $pattern !~ /^\s*$/) {
       return "No matching attributes";
    } else {
-      return join("\n",@result);
+      return join("\n",@out);
    }
 }
 
@@ -3664,11 +3924,12 @@ sub cmd_ex
    if($txt =~ /^\s*$/) {
       $target = loc_obj($self);
    } elsif($txt =~ /^\s*(.+?)\s*$/) {
-      $target = locate_object($self,$prog,$1) ||
+      $target = find($self,$prog,$1) ||
          return err($self,$prog,"I don't see that here.");
    } else {
        return err($self,$prog,"I don't see that here.");
    }
+
 
    my $perm = controls($self,$target,1);
 
@@ -3685,11 +3946,12 @@ sub cmd_ex
    $out .= obj_name($self,$target,$perm);
    my $flags = flag_list($target,1);
 
-   if($flags =~ /(PLAYER|OBJECT|ROOM|EXIT)/) {
+   if($flags =~ /(PLAYER|OBJECT|ROOM|EXIT)/i) {
+      $out .= "\n" . color("h","Type") . ": $1  " . 
+              color("h","Flags") . ": ";
       my $rest = trim($` . $');
       $rest =~ s/\s{2,99}/ /g;
-      $out .= "\n" . color("h","Type") . ": $1  " . 
-              color("h","Flags") . ": " . $rest;
+      $out .= $rest;
    } else {
       $out .= "\n" . color("h","Type") . ": *UNKNOWN*  " . 
               color("h","Flags") . ": " . $flags;
@@ -3704,27 +3966,20 @@ sub cmd_ex
    $out .= "\n" . color("h","Owner") . ": " . obj_name($self,$owner,$perm) . 
            "  " . color("h","Key") . " : " . nvl(lock_uncompile($self,
                                           $prog,
-                                          get($target,"LOCK_DEFAULT")
+                                          get($target,"OBJ_LOCK_DEFAULT")
                                          ),
                            "*UNLOCKED*"
                           ) .
            "  " . color("h",ucfirst(@info{"conf.money_name_plural"})) .
            ": ". money($target);
 
-   $out .= "\n" . color("h","Created") . " : $$target{obj_created_date}";
+   $out .= "\n" . color("h","Created") . ": " . firsttime($target);
    if(hasflag($target,"PLAYER")) {
       if($perm) {
-         $out .= "\n".color("h","Firstsite").": $$target{obj_created_by}\n" .
-                 color("h","Lastsite") . ": " . lastsite($$target{obj_id});
+         $out .= "\n".color("h","Firstsite").": " . firstsite($target) . "\n" .
+                 color("h","Lastsite") . ": " . lastsite($target);
       }
-      my $last = one_val($db,
-                         "select ifnull(max(skh_end_time), " .
-                         "              max(skh_start_time) " .
-                         "             ) value " .
-                         "  from socket_history " .
-                         " where obj_id = ? ",
-                         $$target{obj_id}
-                        );
+      my $last = lasttime($target);
        
       if($last eq undef) {
          $out .= "\nLast: N/A";
@@ -3739,75 +3994,32 @@ sub cmd_ex
    }
 
 
-   for my $hash (@{sql($db," SELECT con.obj_id, obj_name " .
-                           "    FROM content con, object obj, flag flg, " .
-                           "         flag_definition fde " .
-                           "   WHERE obj.obj_id = con.obj_id " .
-                           "     AND flg.obj_id = obj.obj_id ".
-                           "     AND fde.fde_flag_id = flg.fde_flag_id " .
-                           "     AND con_source_id = ?  " .
-                           "     AND fde.fde_name in ('PLAYER','OBJECT') " .
-                           "     AND fde.fde_type = 1 " .
-                           "     AND atr_id is null " .
-                           "ORDER BY con.con_created_date",
-                           $$target{obj_id}
-                          )}) {
-      if($$self{obj_id} != $$hash{obj_id}) {
-         push(@content,obj_name($self,$hash,$perm));
-      }
+   for my $obj (lcon($target)) {
+      push(@content,obj_name($self,$obj));
    }
 
    if($#content > -1) {
       $out .= "\n" . color("h","Contents") . ":\n" . join("\n",@content);
    }
 
-   my $con = one("select * " . 
-                 "  from content " .
-                 " where obj_id = ?",
-                 $$target{obj_id});
-
    if(hasflag($target,"EXIT")) {
-      if($con eq undef || $$con{con_source_id} eq undef) {
-         $out .= "\nSource: ** No where **";
-      } else {
-         my $src = fetch($$con{con_source_id});
-         $out .= "\nSource: " . obj_name($self,$src,$perm);
-      }
-
-      if($con eq undef || $$con{con_dest_id} eq undef) {
-         $out .= "\nDesination: ** No where **";
-      } else {
-         my $dst = fetch($$con{con_dest_id});
-         $out .= "\nDestination: " . obj_name($self,$dst,$perm);
-      }
+      $out .= "\nSource: " . nvl(obj_name($self,loc_obj($target)),"N/A");
+      $out .= "\nDestination: " . nvl(obj_name(dest($target)),"*UNLINKED*");
    }
 
-   if(hasflag($target,"ROOM")) {
-      for my $hash (@{sql($db,"  SELECT obj_name, obj.obj_id " .
-                              "    FROM content con, object obj, " . 
-                              "         flag flg, flag_definition fde " .
-                              "   WHERE con.obj_id = obj.obj_id " .
-                              "     AND flg.obj_id = obj.obj_id " . 
-                              "     AND fde.fde_flag_id = flg.fde_flag_id " .
-                              "     AND con_source_id = ?  " .
-                              "     AND atr_id is null " .
-                              "     and fde_type = 1 " .
-                              "     AND fde.fde_name = 'EXIT' " .
-                              "ORDER BY con_created_date",
-                              $$target{obj_id}
-                         )}) {
-         push(@exit,obj_name($self,$hash));
-      }
-      if($#exit >= 0) {
-         $out .= "\nExits:\n" . join("\n",@exit);
-      }
+   for my $obj (lexits($target)) {
+      push(@exit,obj_name($self,$obj)) if(!hasflag($obj,"DARK"));
+   }
+
+   if($#exit >= 0) {
+      $out .= "\nExits:\n" . join("\n",@exit);
    }
 
    if($perm && (hasflag($target,"PLAYER") || hasflag($target,"OBJECT"))) {
       $out .= "\n" . color("h","Home") . ": " . 
-              obj_name($self,fetch($$target{obj_home}),$perm) .
+              obj_name($self,home($target),$perm) .
               "\n" . color("h","Location") . ": " . 
-              obj_name($self,$$con{con_source_id},$perm);
+              obj_name($self,loc_obj($target),$perm);
    }
    necho(self   => $self,
          prog   => $prog,
@@ -3854,7 +4066,7 @@ sub cmd_look
    if($txt =~ /^\s*$/) {
       $target = loc_obj($self);
       return err($self,$prog,"I don't see that here.") if $target eq undef;
-   } elsif(!($target = locate_object($self,$prog,evaluate($self,$prog,$txt)))) {
+   } elsif(!($target = find($self,$prog,evaluate($self,$prog,$txt)))) {
       return err($self,$prog,"I don't see that here.");
    }
 
@@ -3865,7 +4077,35 @@ sub cmd_look
       $out .= "\nYou see nothing special.";
    }
 
-   if(!hasflag($target,"ROOM") ||
+   if(memorydb) {
+      for my $obj (lcon($target)) { 
+         if(!hasflag($obj,"DARK") &&
+            ((hasflag($obj,"PLAYER") && hasflag($obj,"CONNECTED") ||
+            !hasflag($obj,"PLAYER"))) &&
+            $$obj{obj_id} ne $$self{obj_id}) {
+            $out .= "\n" . color("h","Contents") . ":" if(++$flag == 1);
+            if($$prog{hint} eq "WEB") {
+                 $out .= "\n<a href=/look/$$obj{obj_id}/>" . 
+                         obj_name($self,$obj,undef,1) . "</a>";
+            } else {
+               $out .= "\n" . obj_name($self,$obj);
+            }
+         }
+      }
+      for my $obj (lexits($target)) { 
+         if($obj ne undef && !hasflag($obj,"DARK")) {
+            if($$prog{hint} eq "WEB") {
+                push(@exit,
+                     "<a href=/look/" . dest($obj) . ">" . 
+                     first(name($obj)) .
+                     "</a>"
+                    );
+            } else {
+               push(@exit,first(name($obj)));
+            }
+         }
+      }
+   } elsif(!hasflag($target,"ROOM") ||
       (hasflag($target,"ROOM") && !hasflag($target,"DARK"))) {
       for my $hash (@{sql($db,
           "select   group_concat(distinct fde_letter " .
@@ -4162,9 +4402,8 @@ sub who
          $name = "<a href=look/$$hash{obj_id}>$name</a>" .
                  (" " x (15 - ansi_length($name)));
       } else {
-         $name = ansi_substr(name($hash),0,15) . 
-                 "-" x (14 - length($$hash{obj_name}));
-         $name = name($hash) . (" " x (15 - length($$hash{obj_name})));
+         $name = ansi_substr(name($hash),0,15);
+         $name = $name . (" " x (15 - ansi_length($name)));
       }
 
       # show connected user details

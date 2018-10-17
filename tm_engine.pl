@@ -50,7 +50,6 @@ sub mush_command
    my ($self,$prog,$runas,$cmd) = @_;
    my $i =  0;
 
-#   printf("RUNNING: '%s'\n",$cmd);
    for my $obj ($self,loc($self),@info{"conf.master"}) {
       $i += run_container_commands($self,$prog,$runas,$obj,$cmd);
    }
@@ -92,7 +91,7 @@ sub prog
    return {
       stack => [ ],
       created_by => $self,
-      user => 
+      user => $runas,
       var => {},
       priority => priority($self),
       calls => 0
@@ -119,6 +118,7 @@ sub mushrun
       @arg{prog} = prog($arg{self},$arg{runas});
       @info{engine} = {} if not defined $info{engine}; # add to all programs
       @{$info{engine}}{++$info{pid}} = [ $arg{prog} ];
+      $arg{pid} = $info{pid};
    }
 
 
@@ -268,6 +268,24 @@ sub get_digit_variables
     return $result;
 }
 
+
+#
+# is_running
+#    Return if a program is still running or not
+#
+sub is_running
+{
+   my $pid = shift;
+
+   if(!defined @info{engine}) {
+      return 0;
+   } elsif(defined @{@info{engine}}{$pid}) {
+      return 1;
+   } else {
+      return 0;
+   }
+}
+
 #
 # spin
 #    Run one command from each program that is running
@@ -282,6 +300,18 @@ sub spin
 
    my $start = Time::HiRes::gettimeofday();
    @info{engine} = {} if(!defined @info{engine});
+
+   if(memorydb && time()-@info{db_last_dump} > @info{"conf.backup_interval"}) {
+      @info{db_last_dump} = time();
+      my $self = obj(0);
+      mushrun(self   => $self,
+              runas  => $self,
+              source => 0,
+              cmd    => "\@dump",
+              from   => "ATTR",
+              hint   => "ALWAYS_RUN"
+             );
+   }
 
    eval {
        local $SIG{__DIE__} = sub {
@@ -306,6 +336,7 @@ sub spin
          my $program = @$thread[0];
          my $command = $$program{stack};
          @info{program} = @$thread[0];
+         $$program{pid} = $pid;
 
          my $sc = $$program{calls};
          $$program{cycles}++;
@@ -463,7 +494,9 @@ sub spin_run
    $$prog{cmd_last} = $command;
 
 # find command set to use
-   if($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") {
+   if($$prog{hint} eq "ALWAYS_RUN") {
+      $hash = \%command;                                    # connected users
+   } elsif($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") {
       if(defined $$prog{from} && $$prog{from} eq "ATTR") {
          $hash = \%command;
       } else {
@@ -499,23 +532,23 @@ sub spin_run
                           \%switch,
                           1
                          );
-   } elsif(locate_exit($self,$$command{cmd})) {        # handle exit as command
+   } elsif(find_exit($self,$prog,$$command{cmd})) {   # handle exit as command
       return &{@{$$hash{"go"}}{fun}}($$command{runas},$prog,$$command{cmd});
    } elsif(mush_command($self,$prog,$$command{runas},$$command{cmd})) {
       return 1;                                   # mush_command runs command
    } else {
       my $match;
 
-      for my $key (keys %$hash) {              #  find partial unique match
-         if(substr($key,0,length($cmd)) eq $cmd) {
-            if($match eq undef) {
-               $match = $key;
-            } else {
-               $match = undef;
-               last;
-            }
-         }
-      }
+#      for my $key (keys %$hash) {              #  find partial unique match
+#         if(substr($key,0,length($cmd)) eq $cmd) {
+#            if($match eq undef) {
+#               $match = $key;
+#            } else {
+#               $match = undef;
+#               last;
+#            }
+#         }
+#      }
 
       if($match ne undef && lc($cmd) ne "q") {                  # found match
          return run_internal($hash,$match,$command,$prog,$arg);

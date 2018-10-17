@@ -15,7 +15,11 @@ $log = {} if(ref($log) ne "HASH");
 #
 sub get_db_credentials
 {
-   for my $line (split(/\n/,getfile("tm_config.dat"))) {
+   my $fn = "tm_config.dat";
+
+   $fn .= ".dev" if(-e "$fn.dev");
+
+   for my $line (split(/\n/,getfile($fn))) {
       $line =~ s/\r|\n//g;
       if($line =~ /^\s*(user|pass|database)\s*=\s*([^ ]+)\s*$/) {
          $$db{$1} = $2;
@@ -37,6 +41,7 @@ sub sql
    my ($sql,@args) = @_;
    my (@result,$sth);
    @info{sqldone} = 0;
+   die($sql);
 
    delete @$con{rows};
 
@@ -56,6 +61,7 @@ sub sql
 
    # connected/reconnect to DB if needed
    if(!defined $$con{db} || !$$con{db}->ping) {
+      printf("CODE: '%s'\n",code());
       $$con{host} = "localhost" if(!defined $$con{host});
       $$con{db} = DBI->connect("DBI:mysql:database=$$con{database}:" .
                              "host=$$con{host}",
@@ -230,9 +236,10 @@ sub my_rollback
    my $con = (ref($_[0]) eq "HASH") ? shift : $db;
    my ($fmt,@args) = @_;
 
-#   printf("ROLLBACK CALLED %s\n",code("long"));
-   @$con{db}->rollback;
-   return undef;
+   if(mysqldb) {
+      @$con{db}->rollback;
+      return undef;
+   }
 }
 
 sub fetch
@@ -241,8 +248,13 @@ sub fetch
    my $debug = shift;
 
    $$obj{obj_id} =~ s/#//g;
-   my $hash=one($db,"select * from object where obj_id = ?",$$obj{obj_id}) ||
-      return undef;
-   return $hash;
+
+   if(memorydb) {
+      return $obj;
+   } else {
+      my $hash=one($db,"select * from object where obj_id = ?",$$obj{obj_id}) ||
+         return undef;
+      return $hash;
+   }
 }
 

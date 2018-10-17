@@ -240,7 +240,7 @@ sub fmt_switch
 
        if($i % 2 == 1) {
           if($i == $#list) {                        # default test condition
-             $out .= dprint($depth+3,"DEFAULT-" . ($depth+6) . ","); 
+             $out .= dprint($depth+3,"DEFAULT" . ","); 
              $out .= dprint($depth+6,"%s",@list[$i]);
           } else {                                          # test condition
              $out .= dprint($depth+3,"%s",@list[$i]);

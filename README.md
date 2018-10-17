@@ -1,25 +1,12 @@
 # TeenyMUSH
-This is an implementation of a TinyMUSH like server in Perl and
-MySQL. The server can be used to create an ASCII based virtual world.
+This is an implementation of a TinyMUSH like server in Perl. The server can
+be used to create an ASCII based virtual world.
 Users can telnet into the server and interact with other users in a world
 of their creation. Customization of the world does not require
 modification of the internal server code. 
 
 
-# Installation
-   1. Create a mysql database that you can log into
- 
-      Example:
-```
-         mysql -p -u root
-         mysql> create database teenymush
-         mysql> grant all privileges on teenymush.* to $USER@'%'
-                   identified by 'password';
-         Replace $USER with your db user name, and password with your
-         prefered password.
-```
-
-   2. Download source from github:
+   1. Download source from github:
 
 
 ```
@@ -27,9 +14,33 @@ modification of the internal server code.
                cd teenymush
 ```
 
+# Installation using in memory database [skip if using mysql]
+   2. Create a tm_config.dat file containing at least these three lines:
+
+```
+         port=4096
+         conf.mudname=Ascii
+         conf.memorydb=1
+```
+   3.    Skip to step 4
+      
+
+# Installation using Mysql [not required if using memory database]
+   2. Create a mysql database that you can log into
+ 
+      Example:
+```
+         mysql -p -u root
+         mysql> create database teenymush;
+         mysql> grant all privileges on teenymush.* to $USER@'%'
+                   identified by 'password';
+         Replace $USER with your db user name, and password with your
+         prefered password.
+
    3. Run the 'tm' script, answer prompts for username, password, and
       database name. Answer yes to loading default database, unless you
       have a database backup named tm_backup.sql.
+```
 
    4. Login as god with a password of portrzebie
 
@@ -58,10 +69,16 @@ conf.websocket          |  Port to listen to for websocket requests
 conf.money_name_plural  |  Plural form of money's name
 conf.money_name_singlar |  Singular form of money's name
 conf.starting_money     |  How much money does a player get on @create
+conf.starting_room      |  Starting location for new players
 conf.paycheck           |  How much money does a player get per day on connect
 conf.linkcost           |  Cost of link
 conf.digcost            |  Cost of room
 conf.createcost         |  Cost of object
+conf.doing_header       |  The default DOING header
+conf.mudname            |  Name of your MUSH
+conf.memorydb           |  Set this to 1 to use the memorydb
+conf.mysql              |  Set this to 1 to use mysql for the database
+conf.backup_interval    |  How often to dump the memorydb in seconds
 ```
 
 see http://teenymush.blogspot.in/ for more details.

@@ -39,16 +39,21 @@ sub add_site_restriction
 {
    my $sock = shift;
 
-   my $hash=one($db,
-                "select ifnull(min(ste_type),4) ste_type" .
-                "  from site ".
-                " where (lower(?) like lower(ste_pattern) ".
-                "    or lower(?) like lower(ste_pattern))" .
-                "   and ifnull(ste_end_date,now()) >= now()",
-                $$sock{ip},
-                $$sock{hostname}
-               );
-   $$sock{site_restriction} = $$hash{ste_type};
+   if(mysqldb) {
+       my $hash=one($db,
+                    "select ifnull(min(ste_type),4) ste_type" .
+                    "  from site ".
+                    " where (lower(?) like lower(ste_pattern) ".
+                    "    or lower(?) like lower(ste_pattern))" .
+                    "   and ifnull(ste_end_date,now()) >= now()",
+                    $$sock{ip},
+                    $$sock{hostname}
+                   );
+       $$sock{site_restriction} = $$hash{ste_type};
+   } else {
+       $$sock{site_restriction} = 4;
+       ### ADD ###
+   }
 }
 
 #
@@ -71,6 +76,8 @@ sub lookup_command
           ) {
       return (substr($cmd,0,1),trim(substr($cmd,1) . $txt));
    } else {                                     # match on partial cmd name
+      return ('huh',trim($txt));
+
       $txt =~ s/^\s+|\s+$//g;
       for my $key (keys %$hash) {              #  find partial unique match
          if(substr($key,0,length($cmd)) eq $cmd) {
@@ -86,7 +93,8 @@ sub lookup_command
          return ($match,trim($txt));
       } elsif($$user{site_restriction} == 69) {
          return ('huh',trim($txt));
-      } elsif($txt =~ /^\s*$/ && $type && locate_exit($self,$cmd)) {  # exit?
+      } elsif($txt =~ /^\s*$/ && $type && find_exit($self,{},$cmd)) {  # exit?
+         printf("CMD: '$cmd'\n");
          return ("go",$cmd);
       } elsif(mush_command($self,$hash,trim($cmd . " " . $txt,1))) { #mush cmd
          return ("\@\@",$cmd . " " . $txt);    
@@ -135,7 +143,7 @@ sub server_process_line
          local $SIG{__DIE__} = sub {
             printf("----- [ Crash Report@ %s ]-----\n",scalar localtime());
             printf("User:     %s\nCmd:      %s\n",name($user),$_[0]);
-            if(defined @info{sql_last}) {
+            if(mysqldb && defined @info{sql_last}) {
                printf("LastSQL: '%s'\n",@info{sql_last});
                printf("         '%s'\n",@info{sql_last_args});
                delete @info{sql_last};
@@ -235,6 +243,18 @@ sub get_free_port
 sub server_handle_sockets
 {
    eval {
+         local $SIG{__DIE__} = sub {
+            printf("----- [ Crash Report@ %s ]-----\n",scalar localtime());
+            printf("User:     %s\nCmd:      %s\n",name($user),$_[0]);
+            if(mysqldb && defined @info{sql_last}) {
+               printf("LastSQL: '%s'\n",@info{sql_last});
+               printf("         '%s'\n",@info{sql_last_args});
+               delete @info{sql_last};
+               delete @info{sql_last_args};
+            }
+            printf("%s",code("long"));
+         };
+
       # wait for IO or 1 second
       my ($sockets) = IO::Select->select($readable,undef,undef,.4);
       my $buf;
@@ -280,7 +300,7 @@ sub server_handle_sockets
                } elsif($$hash{site_restriction} == 69) {
                   printf($new "%s",getfile("honey.txt"));
                } elsif(!defined @info{"conf.login"}) {
-                  printf($new "Welcome to %s\r\n",@info{"version"});
+                  printf($new "Welcome to %s\r\n\r\n",@info{"version"});
                } else {
                   printf($new "%s\r\n",@info{"conf.login"});    #  show login
                }
@@ -313,8 +333,11 @@ sub server_handle_sockets
    };
    if($@){
       printf("Server Crashed, minimal details [main_loop]\n");
-      printf("LastSQL: '%s'\n",@info{sql_last});
-      printf("         '%s'\n",@info{sql_last_args});
+
+      if(mysqldb) {
+         printf("LastSQL: '%s'\n",@info{sql_last});
+         printf("         '%s'\n",@info{sql_last_args});
+      }
       printf("%s\n---[end]-------\n",$@);
    }
 }
@@ -352,41 +375,49 @@ sub server_disconnect
                prog => $prog,
                "[ Connection closed ]"
               );
-         sql($db,                             # delete socket table row
-             "delete from socket " .
-             " where sck_socket = ? ",
-             $id
-            );
-         my_commit($db);
+
+         if(mysqldb) {
+            sql($db,                             # delete socket table row
+                "delete from socket " .
+                " where sck_socket = ? ",
+                $id
+               );
+            my_commit($db);
+         }
       } elsif(defined $$hash{connect_time}) {                # Player Socket
 
          my $key = connected_user($hash);
-         delete @{@connected_user{$$hash{obj_id}}}{$key};
-         if(scalar keys %{@connected_user{$$hash{obj_id}}} == 0) {
-            delete @connected_user{$$hash{obj_id}};
+
+         if(defined @connected_user{$$hash{obj_id}}) {
+            delete @{@connected_user{$$hash{obj_id}}}{$key};
+            if(scalar keys %{@connected_user{$$hash{obj_id}}} == 0) {
+               delete @connected_user{$$hash{obj_id}};
+            }
          }
 
-         my $sck_id = one_val($db,                           # find socket id
-                              "select sck_id value " .
-                              "  from socket " .
-                              " where sck_socket = ?" ,
-                              $id
-                             );
+         if(mysqldb) {
+            my $sck_id = one_val($db,                        # find socket id
+                                 "select sck_id value " .
+                                 "  from socket " .
+                                 " where sck_socket = ?" ,
+                                 $id
+                                );
 
-         if($sck_id ne undef) {
-             sql($db,                                  # log disconnect time
-                 "update socket_history " .
-                 "   set skh_end_time = now() " .
-                 " where sck_id = ? ",
-                  $sck_id
-                );
+            if($sck_id ne undef) {
+                sql($db,                               # log disconnect time
+                    "update socket_history " .
+                    "   set skh_end_time = now() " .
+                    " where sck_id = ? ",
+                     $sck_id
+                   );
    
-             sql($db,                             # delete socket table row
-                 "delete from socket " .
-                 " where sck_id = ? ",
-                 $sck_id
-                );
-             my_commit($db);
+                sql($db,                          # delete socket table row
+                    "delete from socket " .
+                    " where sck_id = ? ",
+                    $sck_id
+                   );
+                my_commit($db);
+            }
          }
 
          necho(self => $hash,
@@ -412,6 +443,47 @@ sub server_disconnect
 sub server_start
 {
    read_config();
+
+   if(memorydb) {
+      my $file = newest_full(@info{"conf.mudname"} . ".FULL.DB");
+
+      if($file eq undef) {
+         printf("   No database found, loading starter database.\n");
+         printf("   Connect as: god potrzebie\n\n");
+         db_read_string(<<__EOF__);
+server: TeenyMUSH 0.9, dbversion=1.0, exported=Wed Oct 17 08:28:30 2018, type=normal
+obj[0] {
+   conf.starting_room::A:#1
+   obj_created_by::A:Adrick
+   obj_created_date::A:2016-05-05 13:30:56
+   obj_flag::L:player,god
+   obj_home::A:1
+   obj_location::A:1
+   obj_lock_default::A:#0
+   obj_money::A:0
+   obj_name::A:God
+   obj_owner::A:0
+   obj_password::A:*EF5D6D678BAE641D8DAF107523B0EA48D420E0E0
+   obj_quota::A:0
+}
+obj[1] {
+   description::A:A non-descript room
+   last_inhabited::A:Thu Oct  4 14:26:25 2018
+   obj_created_by::A:Adrick
+   obj_created_date::A:2016-04-15 13:49:58
+   obj_flag::L:room
+   obj_home::A:-1
+   obj_name::A:Void
+   obj_owner::A:0
+}
+** Dump Completed Wed Oct 17 08:28:30 2018 **
+__EOF__
+      } else {
+         db_read(undef,undef,$file);
+      }
+      @info{db_last_dump} = time();
+   }
+
    read_atr_config();
    read_config();
 
@@ -424,7 +496,7 @@ sub server_start
                                      Reuse     => 1
                                     );
  
-   if(@info{"conf.httpd"} ne undef) {
+   if(@info{"conf.httpd"} ne undef && @info{"conf.httpd"} > 0) {
       if(@info{"conf.httpd"} =~ /^\s*(\d+)\s*$/) {
          printf("HTTP listening on port %s\n",@info{"conf.httpd"});
 
@@ -437,7 +509,7 @@ sub server_start
       }
    }
 
-   if(@info{"conf.websocket"} ne undef) {
+   if(@info{"conf.websocket"} ne undef && @info{"conf.websocket"} > 0) {
       if(@info{"conf.websocket"} =~ /^\s*(\d+)\s*$/) {
          printf("Websocket listening on port %s\n",@info{"conf.websocket"});
          websock_init();
@@ -465,8 +537,10 @@ sub server_start
 #      };
       if($@){
          printf("Server Crashed, minimal details [main_loop]\n");
-         printf("LastSQL: '%s'\n",@info{sql_last});
-         printf("         '%s'\n",@info{sql_last_args});
+         if(mysqldb) {
+            printf("LastSQL: '%s'\n",@info{sql_last});
+            printf("         '%s'\n",@info{sql_last_args});
+         }
          printf("%s\n---[end]-------\n",$@);
       }
    }

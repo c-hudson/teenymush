@@ -22,8 +22,11 @@ modification of the internal server code.
          conf.mudname=Ascii
          conf.memorydb=1
 ```
-   3. Login as god with a password of portrzebie
-   4. Done
+   3. Run tm perl script
+
+   4. Login as god with a password of portrzebie
+
+   5. Done
       
 
 # Installation using Mysql [not required if using memory database]
@@ -43,9 +46,11 @@ modification of the internal server code.
       database name. Answer yes to loading default database, unless you
       have a database backup named tm_backup.sql.
 
-   4. Login as god with a password of portrzebie
+   4. Run tm perl script
 
-   5. Done
+   5. Login as god with a password of portrzebie
+
+   6. Done
 
 # Setup
 

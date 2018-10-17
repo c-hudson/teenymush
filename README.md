@@ -22,7 +22,8 @@ modification of the internal server code.
          conf.mudname=Ascii
          conf.memorydb=1
 ```
-   3.    Skip to step 4
+   3. Login as god with a password of portrzebie
+   4. Done
       
 
 # Installation using Mysql [not required if using memory database]
@@ -36,14 +37,15 @@ modification of the internal server code.
                    identified by 'password';
          Replace $USER with your db user name, and password with your
          prefered password.
+```
 
    3. Run the 'tm' script, answer prompts for username, password, and
       database name. Answer yes to loading default database, unless you
       have a database backup named tm_backup.sql.
-```
 
    4. Login as god with a password of portrzebie
 
+   5. Done
 
 # Setup
 

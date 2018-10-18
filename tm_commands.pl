@@ -3522,7 +3522,10 @@ sub invalid_player
    if(memorydb()) {
        return 1 if(!defined @player{lc($name)});
 
-       if(!valid_dbref(@player{lc($name)}) ||
+       if(lc($name) eq "guest") {                  # any password for guest
+          $$self{obj_id} = @player{lc($name)};
+          return 0;
+       } elsif(!valid_dbref(@player{lc($name)}) ||
           get(@player{lc($name)},"obj_password") ne mushhash($pass)) {
           return 1;
        } else {
@@ -3530,21 +3533,23 @@ sub invalid_player
           return 0;
        }
    } else {
-       my $id = one_val("select obj.obj_id value ".
-                        "  from object obj, ".
-                        "       flag flg, ".
-                        "       flag_definition fde ".
-                        " where lower(obj_name) = lower(?) " .
-                        "   and obj.obj_id = flg.obj_id " .
-                        "   and flg.fde_flag_id = fde.fde_flag_id " .
-                        "   and fde.fde_name = 'PLAYER' " .
-                        "   and obj_password = password(?)",
-                        $name,
-                        $pass
-                       );
+       my $hash = one("select obj.obj_id, ".
+                      "       obj_password " .
+                      "  from object obj, ".
+                      "       flag flg, ".
+                      "       flag_definition fde ".
+                      " where lower(obj_name) = lower(?) " .
+                      "   and obj.obj_id = flg.obj_id " .
+                      "   and flg.fde_flag_id = fde.fde_flag_id " .
+                      "   and fde.fde_name = 'PLAYER' ",
+                      $name
+                   );
 
-       if($id ne undef) {
-          $$self{obj_id} = $id;
+       if(lc($name) eq "guest" && defined $$hash{obj_id}) { # don't worry 
+          $$self{obj_id} = $$hash{obj_id};                  # about guest's
+          return 0;                                         # password
+       } elsif(mushhash($pass) eq $$hash{obj_password}) {
+          $$self{obj_id} = $$hash{obj_id};
           return 0;
        } else {
           return 1;

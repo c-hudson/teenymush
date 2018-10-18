@@ -3859,7 +3859,7 @@ sub list_attr
    if(memorydb) {
       for my $name (lattr($obj)) {
          if($pat eq undef || $name =~ /$pat/) {
-            if(!reserved($name)) {
+            if(!reserved($name) && lc($name) ne "description") {
                 my $attr = mget($obj,$name);
                 push(@out,reconstitute($name,
                                        $$attr{type},

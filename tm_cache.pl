@@ -519,7 +519,8 @@ sub loc_obj
    my $obj = obj(shift);
 
    if(memorydb) {
-      return obj(get($obj,"obj_location"));
+      my $loc = get($obj,"obj_location");
+      return ($loc eq undef) ? undef : obj($loc);
    } elsif(!incache($obj,"con_source_id")) {
       my $val = one_val("select con_source_id value " .
                         "  from content " .

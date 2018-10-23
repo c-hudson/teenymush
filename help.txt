@@ -320,3 +320,18 @@ command:
    This command change your password. Passwords must contain 8 characters
    or more, contain at least one upper case character, and contain at least
    one numeric character.
+& @mail
+command:
+
+   @mail                                  : Shows an shortened list of email
+   @mail short                            : Shows a count of emails
+   @mail <number>                         : Reads one email message
+   @mail <person> = <message>             : Sends an email message
+   @mail/delete <number>                  : Deletes an email message
+
+   This command is used for displaying or sending email to/from other people.
+
+   ex:
+      @mail adrick = testing
+      @mail 1
+      @mail/delete 1

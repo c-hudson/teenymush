@@ -917,10 +917,10 @@ sub set_flag
       if(!$override && !can_set_flag($self,$obj,$flag)) {
          return "Permission DeNied";
       } elsif($remove) {                  # remove, don't check if set or not
-         db_remove_list($obj,"flag",$flag);           # to mimic original mush
+         db_remove_list($obj,"obj_flag",$flag);       # to mimic original mush
          return "Cleared.";
       } else {
-         db_set_list($obj,"flag",$flag);
+         db_set_list($obj,"obj_flag",$flag);
          return "Set.";
       }
    } else {
@@ -1205,6 +1205,7 @@ sub create_object
   
    if($type eq "PLAYER") {
       $where = get(0,"CONF.STARTING_ROOM");
+      $where =~ s/^\s*#//;
       $who = $$user{hostname};
       $owner = 0;
    } elsif($type eq "OBJECT") {
@@ -1218,9 +1219,9 @@ sub create_object
    if(memorydb) {
       my $id = get_next_dbref();
       db_delete($id);
-      db_set($id,"name",$name);
+      db_set($id,"obj_name",$name);
       if($pass ne undef && $type eq "PLAYER") {
-         db_set($id,"password",mushhash($pass));
+         db_set($id,"obj_password",mushhash($pass));
       }
  
       my $out = set_flag($self,$prog,$id,$type,1);
@@ -1235,8 +1236,15 @@ sub create_object
          return undef;
       }
 
-      db_set($id,"home",$self);
-      db_set($id,"created_date",scalar localtime());
+      if($type eq "PLAYER") {
+         db_set($id,"obj_home",$where);
+         @player{lc($name)} = $id;
+         printf("Addiing: %s => '%s'\n",lc($name),$id);
+      } else {
+         db_set($id,"obj_home",$$self{obj_id});
+      }
+
+      db_set($id,"obj_created_date",scalar localtime());
       if($type eq "PLAYER" || $type eq "OBJECT") {
          move($self,$prog,$id,$where);
       }
@@ -1682,14 +1690,15 @@ sub move
       (obj($_[0]),obj($_[1]),obj($_[2]),obj($_[3]),$_[4]);
 
    my $loc = loc($target);
-   return 0 if $loc eq undef;
 
    if(memorydb) {
-      db_set($loc,"LAST_INHABITED",scalar localtime());
-      db_set($target,"LAST_INHABITED",scalar localtime());
-      db_set($target,"location",$$dest{obj_id});
-      db_set_list($dest,"content",$$target{obj_id});
-      db_remove_list($loc,"content",$$target{obj_id});
+      if($loc ne undef) {
+         db_set($loc,"OBJ_LAST_INHABITED",scalar localtime());
+         db_remove_list($loc,"obj_content",$$target{obj_id});
+      }
+      db_set($target,"OBJ_LAST_INHABITED",scalar localtime());
+      db_set($target,"obj_location",$$dest{obj_id});
+      db_set_list($dest,"obj_content",$$target{obj_id});
       return 1;
    } else {
       if(hasflag($loc,"ROOM")) {
@@ -1744,7 +1753,7 @@ sub obj
    } else {
       if($id !~ /^\s*\d+\s*$/) {
          printf("ID: '%s' -> '%s'\n",$id,code());
-         die();
+#         die();
       }
       return { obj_id => $id };
    }
@@ -1764,6 +1773,27 @@ sub obj_import
    return (@result);
 }
 
+sub set_home
+{
+   my ($self,$prog,$obj,$dest) = (obj(shift),obj(shift),obj(shift),obj(shift));
+
+   if(memorydb) {
+      db_set($obj,"obj_home",$$dest{obj_id});
+   } else {
+      sql("update object " .
+          "   set obj_home = ? ".
+          " where obj_id = ? ",
+          $$dest{obj_id},
+          $$obj{obj_id}
+         );
+
+      if($$db{rows} != 1) {
+         return err($self,$prog,"Internal Error, unable to set home");
+      } else {
+         my_commit;
+      }
+   }
+}
 sub link_exit
 {
    my ($self,$exit,$src,$dst) = obj_import(@_);

@@ -301,16 +301,32 @@ sub spin
    my $start = Time::HiRes::gettimeofday();
    @info{engine} = {} if(!defined @info{engine});
 
-   if(memorydb && time()-@info{db_last_dump} > @info{"conf.backup_interval"}) {
-      @info{db_last_dump} = time();
-      my $self = obj(0);
-      mushrun(self   => $self,
-              runas  => $self,
-              source => 0,
-              cmd    => "\@dump",
-              from   => "ATTR",
-              hint   => "ALWAYS_RUN"
-             );
+   if(memorydb) {
+      if(time()-@info{db_last_dump} > @info{"conf.backup_interval"}) {
+          @info{db_last_dump} = time();
+          my $self = obj(0);
+          mushrun(self   => $self,
+                  runas  => $self,
+                  source => 0,
+                  cmd    => "\@dump",
+                  from   => "ATTR",
+                  hint   => "ALWAYS_RUN"
+                 );
+      } elsif(time() - @info{"conf.freefind_last"} > 
+              @info{"conf.freefind_interval"}) {
+         @info{"conf.freefind_last"} = time();
+         if(!defined @info{"conf.freefind_interval"}) {
+            @info{"conf.freefind_interval"} = 86400;
+         }
+         my $self = obj(0);
+         mushrun(self   => $self,
+                 runas  => $self,
+                 source => 0,
+                 cmd    => "\@freefind",
+                 from   => "ATTR",
+                 hint   => "ALWAYS_RUN"
+                );
+      }
    }
 
    eval {

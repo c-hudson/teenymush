@@ -10,8 +10,12 @@ modification of the internal server code.
 
 
 ```
-      Example: git clone https://github.com/c-hudson/teenymush.git
-               cd teenymush
+      Example:
+          git clone https://github.com/c-hudson/teenymush.git
+
+                                    or
+
+          wget https://github.com/c-hudson/teenymush/raw/master/teenymush.pl
 ```
 
 # Installation using in memory database [skip if using mysql]

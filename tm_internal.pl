@@ -27,7 +27,7 @@ sub dump_complete
    my $filename = shift;
    my ($buf,$fh);
 
-   return 1 if(@ARGV[0] eq "--forceload");
+   return 1 if(arg("forceload"));
    open($fh,$filename) || return 0;
 
    my $eof = sysseek($fh,0,SEEK_END);          # seek to end to determine size
@@ -40,6 +40,16 @@ sub dump_complete
    } else {
       return 0;
    }
+}
+
+sub arg
+{
+   my $txt = shift;
+
+   for my $i (0 .. $#ARGV) {
+      return 1 if(@ARGV[$i] eq $txt || @ARGV[$i] eq "--$txt") 
+   }
+   return 0;
 }
 
 #
@@ -2096,31 +2106,6 @@ sub isatrflag
                      "   and fde_type = 2",
                      $txt
                     );
-   }
-}
-
-sub read_config
-{
-   my $count=0;
-   my $fn = "tm_config.dat";
-
-   # always use .dev version for easy setup of dev db.
-   $fn .= ".dev" if(-e "$fn.dev");
-
-   printf("Reading Config: $fn\n");
-   for my $line (split(/\n/,getfile($fn))) {
-      $line =~ s/\r|\n//g;
-      if($line =~/^\s*#/ || $line =~ /^\s*$/) {
-         # comment or blank line, ignore
-      } elsif($line =~ /^\s*([^ =]+)\s*=\s*#(\d+)\s*$/) {
-         @info{$1} = $2;
-      } elsif($line =~ /^\s*([^ =]+)\s*=\s*(.*?)\s*$/) {
-         @info{$1} = $2;
-      } else {
-         printf("Invalid data in $fn:\n") if($count == 0);
-         printf("    '%s'\n",$line);
-         $count++;
-      }
    }
 }
 

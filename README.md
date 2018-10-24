@@ -6,7 +6,7 @@ of their creation. Customization of the world does not require
 modification of the internal server code. 
 
 
-   1. Download source from github:
+   1. Download source from github. The source for this project is availible in two different formats. A single file (teenymush.pl) that contains the whole distributions or the seperate individual files. The individual files might be easier to manage if you modify the code. Which way you go is up to you.
 
 
 ```
@@ -22,7 +22,8 @@ modification of the internal server code.
          conf.mudname=Ascii
          conf.memorydb=1
 ```
-   3. Run tm perl script
+   3. Run tm perl script or teenymush.pl script depending on if you downloaded
+      all of the files or just the single teenymush.pl script.
 
    4. Login as god with a password of portrzebie
 
@@ -41,16 +42,24 @@ modification of the internal server code.
          Replace $USER with your db user name, and password with your
          prefered password.
 ```
+   3. Create a tm_config.dat file containing at least these three lines:
 
-   3. Run the 'tm' script, answer prompts for username, password, and
-      database name. Answer yes to loading default database, unless you
-      have a database backup named tm_backup.sql.
+```
+         port=4096
+         conf.mudname=Ascii
+         conf.mysqldb=1
+```
 
-   4. Run tm perl script
+   4. Run the 'tm'  or 'teenymush.pl' script, answer prompts for username,
+      password, and database name. Answer yes to loading default database,
+      unless you
+      have a database backup named as tm_backup.sql.
 
-   5. Login as god with a password of portrzebie
+   5. Run tm perl script
 
-   6. Done
+   6. Login as god with a password of portrzebie
+
+   7. Done
 
 # Setup
 

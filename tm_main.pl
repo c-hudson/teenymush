@@ -7,7 +7,7 @@
 #
 
 $SIG{HUP} = sub {
-  my $files = load_all_code();
+  my $files = load_all_code(0,@info{filter});
   delete @info{engine};
   printf("HUP signal caught, reloading: %s\n",$files ? $files : "none");
 };

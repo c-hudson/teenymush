@@ -11,8 +11,6 @@ use Carp;
 use Text::Wrap;
 $Text::Wrap::huge = 'overflow';
 my $max = 78;
-my %info;
-my $count;
 
 sub code
 {

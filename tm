@@ -3,49 +3,68 @@
 use strict;
 use IO::Select;
 use IO::Socket;
+use File::Basename;
 
 
 # Any variables that need to survive a reload of code should be placed
 # here. Variables that need to be accessed in other files may need to be
 # placed here as well.
 
-my (%command,                       # commands for after player has connected
-    %offline,                      # commands for before player has connected
-    %connected,                                # connected socket information
-    %connected_user,                                        # users connected
-    %honey,                                                   # honeypot cmds
-    $readable,                                 # sockets to wait for input on
-    $listener,                                                 # port details
-    $web,                                                  # web port details
-    $ws,                                            # websocket server object
-    $websock,                                            # websocket listener
-    %http,                                                 # http socket list
-    %code,                                   #  loaded perl files w/mod times
-    $db,                                           # main database connection
-    $log,                                      # database connection for logs
-    %info,                                                # misc info storage
-    $user,                                             # current user details
-    $enactor,                                # object who initated the action
-    %cache,
-    %c,
+my (%command,                  #!# commands for after player has connected
+    %fun,                      #!# functions for players to use
+    %offline,                  #!# commands for before player has connected
+    %connected,                #!# connected socket information
+    %connected_user,           #!# users connected
+    %honey,                    #!# honeypot cmds
+    $readable,                 #!# sockets to wait for input on
+    $listener,                 #!# port details
+    $web,                      #!# web port details
+    $ws,                       #!# websocket server object
+    $websock,                  #!# websocket listener
+    %http,                     #!# http socket list
+    %code,                     #!# loaded perl files w/mod times
+    $db,                       #!# main database connection
+    $log,                      #!# database connection for logs
+    %info,                     #!# misc info storage
+    $user,                     #!# current user details
+    $enactor,                  #!# object who initated the action
+    %cache,                    #!# cached data from sql database
+    %c,                        #!#
 
     #----[memory database structures]---------------------------------------#
-    %help,                                                      # online-help
-    @db,                                                     # whole database
-    @delta,                                              # db changes storage
-    %player,                                   # player list for quick lookup
-    @free,                                                # free objects list
-    %deleted,                                 # deleted objects during backup
-   );
+    %help,                     #!# online-help
+    @db,                       #!# whole database
+    @delta,                    #!# db changes storage
+    %player,                   #!# player list for quick lookup
+    @free,                     #!# free objects list
+    %deleted,                  #!# deleted objects during backup
+   );                          #!#
 
 sub mysqldb
 {
-   return @info{"conf.mysqldb"};
+   if(@info{"conf.mysqldb"} && @info{"conf.memorydb"}) {
+      die("Only conf.mysqldb or conf.memorydb may be defined as 1");
+   } elsif(@info{"conf.mysqldb"}) {
+      return 1;
+   } else {
+      return 0;
+   }
 }
 
 sub memorydb
 {
-   return @info{"conf.memorydb"};
+   if(@info{"conf.mysqldb"} && @info{"conf.memorydb"}) {
+      die("Only conf.mysqldb or conf.memorydb may be defined as 1");
+   } elsif(@info{"conf.memorydb"}) {
+      return 1;
+   } else {
+      return 0;
+   }
+}
+
+sub is_single
+{
+   return (basename(lc($0)) eq "teenymush.pl") ? 1 : 0;
 }
 
 #
@@ -54,7 +73,7 @@ sub memorydb
 #
 sub getfile
 {
-   my ($fn,$code) = @_;
+   my ($fn,$code,$filter) = @_;
    my($file, $out);
 
    if($fn =~ /^[^\\|\/]+\.(pl|dat|dev)$/i) {
@@ -67,8 +86,13 @@ sub getfile
 
    @{$$code{$fn}}{lines} = 0 if(ref($code) eq "HASH");
    while(<$file>) {                                           # read all data
+      s/\r//g;
       @{$$code{$fn}}{lines}++ if(ref($code) eq "HASH");
-      $out .= $_;
+      if($filter eq undef || $_ !~ /$filter/ || $_ =~ /$filter ALWAYS_LOAD/) {
+         $out .= $_;
+      } else {
+         $out .= "#!#\n";                           # preserve line numbers?
+      }
    }
    close($file); 
    $out =~ s/\r//g;
@@ -83,20 +107,22 @@ sub getfile
 #
 sub load_code_in_file
 {
-   my ($file,$verbose) = @_;
+   my ($file,$verbose,$filter) = @_;
 
-   if(!-e $file) {
+   if(is_single && basename(lc($0)) ne lc($file)) {
+      # skip
+   } elsif(!-e $file) {
       printf("Fatal: Could not find '%s' to load.\n",$file);
    } else {
-      my $data = qq[#line 1 "$file"\n] . getfile($file,\%code);                      # read code in
+      my $data = qq[#line 1 "$file"\n] . getfile($file,\%code,$filter);
 
       @{$code{$file}}{size} = length($data);
       @{$code{$file}}{mod}  = (stat($file))[9];
 
-      if($verbose) {                                  # show whats happening
+#      if($verbose) {                                  # show whats happening
          $| = 1;
          printf("Loading: %-30s",$file);
-      }
+#      }
 
       $@ = '';
       eval($data);                                                # run code
@@ -133,14 +159,15 @@ sub load_code_in_file
 #
 sub load_all_code
 {
-   my $verbose = shift;
+   my ($verbose,$filter) = @_;
    my ($dir, @file);
 
    opendir($dir,".") ||
       return "Could not open current directory for reading";
 
    for my $file (readdir($dir))  {
-      if($file =~ /^tm_.*.pl$/i && 
+      if(($file =~ /^tm_.*.pl$/i || 
+         (lc($file) eq "teenymush.pl" && $filter eq @info{filter})) &&
          $file !~ /(backup|test)/ && 
          $file !~ /^tm_(main).pl$/i) {
          my $current = (stat($file))[9];         # should be file be reloaded?
@@ -148,7 +175,7 @@ sub load_all_code
             !defined  @{$code{$file}}{mod} ||
             @{$code{$file}}{mod} != $current) {
             @code{$file} = {} if not defined $code{$file};
-            if(load_code_in_file($file,1)) {
+            if(load_code_in_file($file,1,$filter)) {
                push(@file,$file);                  # show which files reloaded
                @{$code{$file}}{mod} = $current;
             } else {
@@ -163,28 +190,30 @@ sub load_all_code
 
 sub read_config
 {
+   my $flag = shift;
    my $count=0;
    my $fn = "tm_config.dat";
 
-   $fn = "$fn.dev" if(-e "$fn.dev");
+   # always use .dev version for easy setup of dev db.
+   $fn .= ".dev" if(-e "$fn.dev");
 
+   printf("Reading Config: $fn\n") if $flag;
    for my $line (split(/\n/,getfile($fn))) {
       $line =~ s/\r|\n//g;
       if($line =~/^\s*#/ || $line =~ /^\s*$/) {
          # comment or blank line, ignore
+      } elsif($line =~ /^\s*([^ =]+)\s*=\s*#(\d+)\s*$/) {
+         @info{$1} = $2;
       } elsif($line =~ /^\s*([^ =]+)\s*=\s*(.*?)\s*$/) {
-         if($1 eq "user" || $1 eq "pass" || $1 eq "database" || $1 eq "host") {
-            @$db{$1} = $2;
-         } else {
-            @info{$1} = $2;
-         }
+         @info{$1} = $2;
       } else {
-         printf("Invalid data in tm_config.dat:\n") if($count == 0);
+         printf("Invalid data in $fn:\n") if($count == 0);
          printf("    '%s'\n",$line);
          $count++;
       }
    }
 }
+
 
 
 #
@@ -289,7 +318,7 @@ sub load_db_backup
 {
    my $result;
 
-   return if(!defined @info{no_db_found} || @ARGV[0] eq "--restore");
+   return if(!defined @info{no_db_found} || arg("restore"));
 
    if(!-e "tm_backup.sql") {
       printf("\nLoading backup requires backup stored as tm_backup.sql\n\n");
@@ -310,21 +339,22 @@ sub load_db_backup
 }
 
 @info{version} = "TeenyMUSH 0.9";
-read_config();
+read_config(1);                                               #!# load once
 get_credentials();
 
+@info{filter} = "#!#";                                        #!# ALWAYS_LOAD
 if(mysqldb) {
    load_code_in_file("tm_mysql.pl",1);                     # only call of main
 } else {
    load_code_in_file("tm_compat.pl",1);                     # only call of main
 }
-load_all_code(1);                                    # initial load of code
+load_all_code(1);                                      # initial load of code
 
 
 load_new_db();                                           # optional db load
 load_db_backup();
 
 load_code_in_file("tm_main.pl",1);                       # only call of main
-main::server_start();
-
-printf("### DONE ###\n");            # should never get here unless @shutdown
+initialize_functions();
+initialize_commands();
+server_start();                                          #!# start only once

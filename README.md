@@ -6,7 +6,7 @@ of their creation. Customization of the world does not require
 modification of the internal server code. 
 
 
-   1. Download source from github. The source for this project is availible in two different formats. A single file (teenymush.pl) that contains the whole distributions or the seperate individual files. The individual files might be easier to manage if you modify the code. Which way you go is up to you.
+   1. Download source from github. The source for this project is availible in two different formats. A single file (teenymush.pl) that contains the whole distributions or the seperate individual files. If you don't have all the required modules installed, using the multi-file distribution will allow the code to bypass those modules required for mysql, httpd, and websockets at the cost of disabling those features.
 
 
 ```

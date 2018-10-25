@@ -1,7 +1,5 @@
 #!/usr/bin/perl
 
-use Net::WebSocket::Server;   # See https://metacpan.org/pod/Net::WebSocket::Server
-
 sub websock_init
 {
    $websock = IO::Socket::INET->new( Listen    => 5,

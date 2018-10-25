@@ -1,7 +1,5 @@
 #!/usr/bin/perl
 
-use URI::Escape;
-
 #
 # http_input
 #    Handle the incoming data and look for disconnects.

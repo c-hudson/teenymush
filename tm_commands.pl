@@ -1789,10 +1789,10 @@ sub read_atr_config
    my %updated;
 
    for my $atr (lattr(0)) {
-      if($atr =~ /^conf\.(mysql|websock|httpd)/ && @info{"conf.$1"} == -1) {
-         # skip
-      } elsif($atr =~ /^conf\./i) {
-         if(get(0,$atr) =~ /^\s*#(\d+)\s*$/) {
+      if($atr =~ /^conf\./i) {
+         if(@info{lc($atr)} == -1) {
+            # skipped, turned off by missing modules? 
+         } elsif(get(0,$atr) =~ /^\s*#(\d+)\s*$/) {
             @info{lc($atr)} = $1;
          } else {
             @info{lc($atr)} = get(0,$atr);

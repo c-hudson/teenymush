@@ -40,27 +40,52 @@ my (%command,                  #!# commands for after player has connected
     %deleted,                  #!# deleted objects during backup
    );                          #!#
 
-sub mysqldb
-{
-   if(@info{"conf.mysqldb"} && @info{"conf.memorydb"}) {
-      die("Only conf.mysqldb or conf.memorydb may be defined as 1");
-   } elsif(@info{"conf.mysqldb"}) {
-      return 1;
-   } else {
-      return 0;
-   }
+if($INC{"URI/Escape.pm"} ne undef) {                                            
+   require URI::Escape;                                                         
+   load URI::Escape;                                                            
+} else {                                                                        
+   printf("WARNING: Missing URI::Escape module, HTTPD disabled\n");             
+   @info{"conf.httpd"} = -1                                                     
+}                                                                               
+                                                                                
+if($INC{DBI} ne undef) {                                                        
+   require DBI;                                                                 
+   load DBI;                                                                    
+} else {                                                                        
+   printf("WARNING: Missing DBI module, MYSQLDB disabled\n");                   
+   @info{"conf.mysqldb"} = -1;                                                  
+}                                                                               
+                                                                                
+if($INC{"Net/WebSocket/Server"} ne undef) {                                     
+   # See https://metacpan.org/pod/Net::WebSocket::Server                        
+   require Net::WebSocket::Server;                                              
+   load Net::WebSocket::Server;                                                 
+} else {                                                                        
+   printf("WARNING: Missing Net::WebSocket::Server module, WEBSOCKET disabled\n");
+   @info{"conf.websocket"} = -1;                                                
 }
 
-sub memorydb
-{
-   if(@info{"conf.mysqldb"} && @info{"conf.memorydb"}) {
-      die("Only conf.mysqldb or conf.memorydb may be defined as 1");
-   } elsif(@info{"conf.memorydb"}) {
-      return 1;
-   } else {
-      return 0;
-   }
-}
+sub mysqldb                                                                     
+{                                                                               
+   if(@info{"conf.mysqldb"} == 1 && @info{"conf.memorydb"} == 1) {              
+      die("Only conf.mysqldb or conf.memorydb may be defined as 1");            
+   } elsif(@info{"conf.mysqldb"} == 1) {                                        
+      return 1;                                                                 
+   } else {                                                                     
+      return 0;                                                                 
+   }                                                                            
+}                                                                               
+                                                                                
+sub memorydb                                                                    
+{                                                                               
+   if(@info{"conf.mysqldb"} == 1  && @info{"conf.memorydb"} == 1) {             
+      die("Only conf.mysqldb or conf.memorydb may be defined as 1");            
+   } elsif(@info{"conf.memorydb"} == 1) {                                       
+      return 1;                                                                 
+   } else {                                                                     
+      return 0;                                                                 
+   }                                                                            
+} 
 
 sub is_single
 {

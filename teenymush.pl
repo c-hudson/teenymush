@@ -40,27 +40,52 @@ my (%command,                  #!# commands for after player has connected
     %deleted,                  #!# deleted objects during backup
    );                          #!#
 
-sub mysqldb
-{
-   if(@info{"conf.mysqldb"} && @info{"conf.memorydb"}) {
-      die("Only conf.mysqldb or conf.memorydb may be defined as 1");
-   } elsif(@info{"conf.mysqldb"}) {
-      return 1;
-   } else {
-      return 0;
-   }
+if($INC{"URI/Escape.pm"} ne undef) {                                            
+   require URI::Escape;                                                         
+   load URI::Escape;                                                            
+} else {                                                                        
+   printf("WARNING: Missing URI::Escape module, HTTPD disabled\n");             
+   @info{"conf.httpd"} = -1                                                     
+}                                                                               
+                                                                                
+if($INC{DBI} ne undef) {                                                        
+   require DBI;                                                                 
+   load DBI;                                                                    
+} else {                                                                        
+   printf("WARNING: Missing DBI module, MYSQLDB disabled\n");                   
+   @info{"conf.mysqldb"} = -1;                                                  
+}                                                                               
+                                                                                
+if($INC{"Net/WebSocket/Server"} ne undef) {                                     
+   # See https://metacpan.org/pod/Net::WebSocket::Server                        
+   require Net::WebSocket::Server;                                              
+   load Net::WebSocket::Server;                                                 
+} else {                                                                        
+   printf("WARNING: Missing Net::WebSocket::Server module, WEBSOCKET disabled\n");
+   @info{"conf.websocket"} = -1;                                                
 }
 
-sub memorydb
-{
-   if(@info{"conf.mysqldb"} && @info{"conf.memorydb"}) {
-      die("Only conf.mysqldb or conf.memorydb may be defined as 1");
-   } elsif(@info{"conf.memorydb"}) {
-      return 1;
-   } else {
-      return 0;
-   }
-}
+sub mysqldb                                                                     
+{                                                                               
+   if(@info{"conf.mysqldb"} == 1 && @info{"conf.memorydb"} == 1) {              
+      die("Only conf.mysqldb or conf.memorydb may be defined as 1");            
+   } elsif(@info{"conf.mysqldb"} == 1) {                                        
+      return 1;                                                                 
+   } else {                                                                     
+      return 0;                                                                 
+   }                                                                            
+}                                                                               
+                                                                                
+sub memorydb                                                                    
+{                                                                               
+   if(@info{"conf.mysqldb"} == 1  && @info{"conf.memorydb"} == 1) {             
+      die("Only conf.mysqldb or conf.memorydb may be defined as 1");            
+   } elsif(@info{"conf.memorydb"} == 1) {                                       
+      return 1;                                                                 
+   } else {                                                                     
+      return 0;                                                                 
+   }                                                                            
+} 
 
 sub is_single
 {
@@ -2159,10 +2184,10 @@ sub read_atr_config
    my %updated;
 
    for my $atr (lattr(0)) {
-      if($atr =~ /^conf\.(mysql|websock|httpd)/ && @info{"conf.$1"} == -1) {
-         # skip
-      } elsif($atr =~ /^conf\./i) {
-         if(get(0,$atr) =~ /^\s*#(\d+)\s*$/) {
+      if($atr =~ /^conf\./i) {
+         if(@info{lc($atr)} == -1) {
+            # skipped, turned off by missing modules? 
+         } elsif(get(0,$atr) =~ /^\s*#(\d+)\s*$/) {
             @info{lc($atr)} = $1;
          } else {
             @info{lc($atr)} = get(0,$atr);
@@ -9981,8 +10006,6 @@ sub evaluate
 }
 #!/usr/bin/perl
 
-use URI::Escape;
-
 #
 # http_input
 #    Handle the incoming data and look for disconnects.
@@ -12621,7 +12644,6 @@ for (@Addon::EXPORT) {
 # server_start();
 #!/usr/bin/perl
 use strict;
-use DBI;
 use Carp;
 
 
@@ -13428,8 +13450,6 @@ __EOF__
 
 1;
 #!/usr/bin/perl
-
-use Net::WebSocket::Server;   # See https://metacpan.org/pod/Net::WebSocket::Server
 
 sub websock_init
 {

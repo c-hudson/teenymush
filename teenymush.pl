@@ -1,15 +1,34 @@
 #!/usr/bin/perl
-
+#
+#     o                                                   8      
+#     8                                                   8      
+#    o8P .oPYo. .oPYo. odYo. o    o ooYoYo. o    o .oPYo. 8oPYo. 
+#     8  8oooo8 8oooo8 8' `8 8    8 8' 8  8 8    8 Yb..   8    8 
+#     8  8.     8.     8   8 8    8 8  8  8 8    8   'Yb. 8    8 
+#     8  `Yooo' `Yooo' 8   8 `YooP8 8  8  8 `YooP' `YooP' 8    8 
+#                                 8
+#                            'oooP'
+#
+#                A TinyMUSH like server written in perl*^
+#
+#
+# * = No Frogs were harmed in the creation of this project.
+# ^ = Do not attempt to compile with gcc or any other C compiler. 
+#
 use strict;
 use IO::Select;
 use IO::Socket;
 use File::Basename;
 
-
-# Any variables that need to survive a reload of code should be placed
-# here. Variables that need to be accessed in other files may need to be
-# placed here as well.
-
+#
+#    Certain variables can not be re-loaded or the MUSH will forget about
+# connected users, httpd, or websocket connections. To combat this,
+# the code assumed that it would never reload the tm script, which
+# contained the required variables. Starting with the single file
+# version of TeenyMUSH, only those lines that don't contain a '#!#' will
+# be reloaded. If a line does contain a '#!#', it will be replaced with
+# an empty line during eval()ating as to preserve line number ordering.
+#
 my (%command,                  #!# commands for after player has connected
     %fun,                      #!# functions for players to use
     %offline,                  #!# commands for before player has connected
@@ -40,31 +59,41 @@ my (%command,                  #!# commands for after player has connected
     %deleted,                  #!# deleted objects during backup
    );                          #!#
 
-if($INC{"URI/Escape.pm"} ne undef) {                                            
-   require URI::Escape;                                                         
-   load URI::Escape;                                                            
-} else {                                                                        
-   printf("WARNING: Missing URI::Escape module, HTTPD disabled\n");             
-   @info{"conf.httpd"} = -1                                                     
-}                                                                               
+# check to see if the URI::Escape module loads
+eval {                                                                       
+   require URI::Escape;                                                      
+   import URI::Escape;                                               
+};                                                                 
+if($@) {                                                           
+   printf("WARNING: Missing URI::Escape module, HTTPD disabled\n");
+   @info{"conf.httpd"} = -1                                           
+}
                                                                                 
-if($INC{DBI} ne undef) {                                                        
-   require DBI;                                                                 
-   load DBI;                                                                    
-} else {                                                                        
-   printf("WARNING: Missing DBI module, MYSQLDB disabled\n");                   
-   @info{"conf.mysqldb"} = -1;                                                  
-}                                                                               
+# check to see if the DBI module loads
+eval {                                                             
+   require DBI;                                                           
+   import DBI;                                                       
+};                                                                         
+if($@) {                                                           
+   printf("WARNING: Missing DBI module, MYSQLDB disabled\n");      
+   @info{"conf.mysqldb"} = -1;                                     
+}
                                                                                 
-if($INC{"Net/WebSocket/Server"} ne undef) {                                     
-   # See https://metacpan.org/pod/Net::WebSocket::Server                        
-   require Net::WebSocket::Server;                                              
-   load Net::WebSocket::Server;                                                 
-} else {                                                                        
+# check to see if the Net::WebSocket::Server package loads
+eval {                                                             
+   # See https://metacpan.org/pod/Net::WebSocket::Server           
+   require Net::WebSocket::Server;                                        
+   import Net::WebSocket::Server;                                    
+};
+if($@) {                                                           
    printf("WARNING: Missing Net::WebSocket::Server module, WEBSOCKET disabled\n");
    @info{"conf.websocket"} = -1;                                                
 }
 
+#
+# mysqldb
+#    Return 0/1 if the MUSH is using mysql
+#
 sub mysqldb                                                                     
 {                                                                               
    if(@info{"conf.mysqldb"} == 1 && @info{"conf.memorydb"} == 1) {              
@@ -76,10 +105,17 @@ sub mysqldb
    }                                                                            
 }                                                                               
                                                                                 
+#
+# memorydb 
+#    Return 0/1 if the MUSH is using a memory based database . Default to 
+#    memory db if neither is specified.
+#
 sub memorydb                                                                    
 {                                                                               
    if(@info{"conf.mysqldb"} == 1  && @info{"conf.memorydb"} == 1) {             
       die("Only conf.mysqldb or conf.memorydb may be defined as 1");            
+   } elsif(@info{"conf.mysqldb"} == 0  && @info{"conf.memorydb"} == 0) {
+      return 1;
    } elsif(@info{"conf.memorydb"} == 1) {                                       
       return 1;                                                                 
    } else {                                                                     
@@ -87,6 +123,13 @@ sub memorydb
    }                                                                            
 } 
 
+#
+# is_single
+#    Return if TeenyMUSH is running as a single file or multiple
+#    files. Currently we check to see if the initial script is
+#    named teenymush.pl or not. Maybe the load_all_code function
+#    could check to see if multiple files are loaded or not?
+#
 sub is_single
 {
    return (basename(lc($0)) eq "teenymush.pl") ? 1 : 0;
@@ -94,7 +137,9 @@ sub is_single
 
 #
 # getfile
-#    Load a file into memory and return the contents of that file
+#    Load a file into memory and return the contents of that file.
+#    Depending upon the extention, files are loaded from different
+#    folders.
 #
 sub getfile
 {
@@ -139,6 +184,7 @@ sub load_code_in_file
    } elsif(!-e $file) {
       printf("Fatal: Could not find '%s' to load.\n",$file);
    } else {
+      # this preserves line numbers/file names  when stack traces are created
       my $data = qq[#line 1 "$file"\n] . getfile($file,\%code,$filter);
 
       @{$code{$file}}{size} = length($data);
@@ -153,21 +199,7 @@ sub load_code_in_file
       eval($data);                                                # run code
  
       if($@) {                                         # report any failures
-         if($file eq "tm_websock.pl") {
-            @info{"conf.websock"} = 0;
-            printf("    [ FAILED/websocket disabled ]\n");
-            return 1;
-         } elsif($file eq "tm_mysql.pl") {
-            @info{"conf.memorydb"} = 1;
-            @info{"conf.mysqldb"} = 0;
-            printf("    [ FAILED/mysql disabled ]\n");
-            return 1;
-         } elsif($file eq "tm_httpd.pl") {
-            @info{"conf.httpd"} = 0;
-            printf("    [ FAILED/httpd disabled ]\n");
-         } else {
-            printf("\n\nload_code fatal: '%s'\n",$@);
-         }
+         printf("\n\nload_code fatal: '%s'\n",$@);
          return 0;
       } else {
          printf("\n");
@@ -179,8 +211,7 @@ sub load_code_in_file
 #
 # load_all_code
 #    Check the current directory for any perl files to load. See if the
-#    file has changed and reload it if it has. Exclude tm_main.pl
-#    which should never be reloaded.
+#    file has changed and reload it if it has.
 #
 sub load_all_code
 {
@@ -193,8 +224,7 @@ sub load_all_code
    for my $file (readdir($dir))  {
       if(($file =~ /^tm_.*.pl$/i || 
          (lc($file) eq "teenymush.pl" && $filter eq @info{filter})) &&
-         $file !~ /(backup|test)/ && 
-         $file !~ /^tm_(main).pl$/i) {
+         $file !~ /(backup|test)/) {
          my $current = (stat($file))[9];         # should be file be reloaded?
          if(!defined $code{$file} || 
             !defined  @{$code{$file}}{mod} ||
@@ -213,14 +243,28 @@ sub load_all_code
    return join(', ',@file);                           # return succ/fail list
 }
 
+#
+# read_config
+#    Read the configuration file for TeenyMUSH. If an option is set to
+#    -1, then don't reload that option. -1 Options are considered disabled
+#    because of missing modules.
+#
 sub read_config
 {
    my $flag = shift;
-   my $count=0;
-   my $fn = "tm_config.dat";
+   my ($count,$fn)=(0,undef);
 
-   # always use .dev version for easy setup of dev db.
-   $fn .= ".dev" if(-e "$fn.dev");
+   if($0 =~ /\.([^\.]+)$/ && -e "$1.dat.dev") {
+      $fn = "$1.dat.dev";
+   } elsif($0 =~ /\.([^\.]+)$/ && -e "$1.dat") {
+      $fn = "$1.dat";
+   } elsif(-e "tm_conf.dat.dev") {
+      $fn = "tm_conf.dat.dev";
+   } else {
+      $fn = "tm_conf.dat";
+   }
+
+   return if(!-e $fn);
 
    printf("Reading Config: $fn\n") if $flag;
    for my $line (split(/\n/,getfile($fn))) {
@@ -228,15 +272,19 @@ sub read_config
       if($line =~/^\s*#/ || $line =~ /^\s*$/) {
          # comment or blank line, ignore
       } elsif($line =~ /^\s*([^ =]+)\s*=\s*#(\d+)\s*$/) {
-         @info{$1} = $2;
+         @info{$1} = $2 if @info{$1} != -1
       } elsif($line =~ /^\s*([^ =]+)\s*=\s*(.*?)\s*$/) {
-         @info{$1} = $2;
+         @info{$1} = $2 if @info{$1} != -1
       } else {
          printf("Invalid data in $fn:\n") if($count == 0);
          printf("    '%s'\n",$line);
          $count++;
       }
    }
+
+   # i'd rather this be in read_attr_conf() but the database needs to be
+   # read before we can pull attributes out of it.
+   @info{"conf.mudname"} = "TeenyMUSH" if @info{"conf.mudname"} eq undef;
 }
 
 
@@ -263,7 +311,7 @@ sub prompt
 
 #
 # get_credentials
-#    Get the database credentials if needed.
+#    Prompt the user for database credentials, if needed.
 #
 sub get_credentials
 {
@@ -289,13 +337,13 @@ sub get_credentials
 
    return if scalar keys %save == -1;
   
-   open($file,">> tm_config.dat") ||
+   open($file,">> tm_config.dat") ||                # write to tm_config.dat
      die("Could not append to tm_config.dat");
 
-   for my $key (keys %save) {
+   for my $key (keys %save) {                                   # save data
       printf($file "%s=%s\n",$key,@save{$key});
    }
-   close($file);
+   close($file);                                                     # done
 }
 
 #
@@ -339,10 +387,16 @@ sub load_new_db
    delete @info{no_db_found};
 }
 
+#
+# load_db_backup
+#    A tm_backup.sql file was found, so mysql will be invoke to reload
+#    the database from thsi file.
+#
 sub load_db_backup
 {
    my $result;
 
+   return if memorydb;
    return if(!defined @info{no_db_found} || arg("restore"));
 
    if(!-e "tm_backup.sql") {
@@ -361,29 +415,53 @@ sub load_db_backup
    }
    system("mysql -u $$db{user} -p$$db{pass} $$db{database} < " .
           "tm_backup.sql >> tm_db_load.log");
+   if(!rename("tm_backup.sql","tm_backup.sql.loaded")) {
+      printf("WARNING: Unable to rename tm_backup.sql, backup will be " .
+             "reloaded upon next run unless the file is renamed/deleted.");
+   }
 }
 
+$SIG{HUP} = sub {
+  my $files = load_all_code(0,@info{filter});
+  delete @info{engine};
+  printf("HUP signal caught, reloading: %s\n",$files ? $files : "none");
+};
+
+$SIG{'INT'} = sub {  if(memorydb) {
+                        printf("**** Program Exiting ******\n");
+                        cmd_dump(obj(0),{},"CRASH");
+                        @info{crash_dump_complete} = 1;
+                        printf("**** Dump Complete Exiting ******\n");
+                     }
+                     exit(1);
+                  };
+
 @info{version} = "TeenyMUSH 0.9";
+@info{filter} = "#!#";                                        #!# ALWAYS_LOAD
+
 read_config(1);                                               #!# load once
 get_credentials();
 
-@info{filter} = "#!#";                                        #!# ALWAYS_LOAD
 if(mysqldb) {
-   load_code_in_file("tm_mysql.pl",1);                     # only call of main
+   load_code_in_file("tm_mysql.pl",1);
 } else {
-   load_code_in_file("tm_compat.pl",1);                     # only call of main
+   load_code_in_file("tm_compat.pl",1);
 }
 load_all_code(1);                                      # initial load of code
 
 
-load_new_db();                                           # optional db load
+load_new_db();                                        # optional new db load
 load_db_backup();
 
-load_code_in_file("tm_main.pl",1);                       # only call of main
 initialize_functions();
 initialize_commands();
 server_start();                                          #!# start only once
 #!/usr/bin/perl
+#
+# tm_compat.pl
+#    Any code required for compatiblity when a file/module does not load.
+#
+
 
 sub my_commit   
 {        
@@ -393,7 +471,13 @@ sub my_commit
 sub my_rollback
 {        
    return;
-}       #!/usr/bin/perl
+}       
+#!/usr/bin/perl
+#
+# tm_functions.pl
+#    All user commands should be stored here, except for those which are
+#    not. Check tm_putitsomewherelese.pl if it isn't here.
+#
 
 
 use Text::Wrap;
@@ -443,7 +527,7 @@ sub initialize_commands
    @command{"&"}        = { help => "Set an attribute on an object",
                             fun  => sub { return &cmd_set2(@_); },
                             nsp  => 1                                       };
-   @command{reload}     = { help => "Reload any changed perl code",
+   @command{"\@reload"} = { help => "Reload any changed perl code",
                             fun  => sub { return &cmd_reload_code(@_); }    };
    @command{pose}       = { help => "Perform an action of your choosing",
                             fun  => sub { return &cmd_pose(@_); }           };
@@ -2175,10 +2259,13 @@ sub read_atr_config
       createcost           => 10,
       backup_interval      => 3600,                          # once an hour
       freefind_interval    => 84600,                           # once a day
-      login               => "Welcome to @info{version}\r\n\r\n" .
-                             "   Type the below command to customize this " .
-                             "screen after loging in as God.\r\n\r\n" .
-                             "    \@set #0/conf.login = Login screen\r\n\r\n"
+      login                => "Welcome to @info{version}\r\n\r\n" .
+                              "   Type the below command to customize this " .
+                              "screen after loging in as God.\r\n\r\n" .
+                              "    \@set #0/conf.login = Login screen\r\n\r\n",
+      badsite              => "Your site has been banned.",
+      httpd_template       => "<pre>",
+      mudname              => "TeenyMUSH"
    );
 
    my %updated;
@@ -2663,13 +2750,10 @@ sub cmd_recall
     my ($self,$prog,$txt) = @_;
     my ($qualifier,@args);
 
-    printf("%s",print_var(@db[313]));
     if(memorydb) {
        return err($self,$prog,"\@recall is only supported under mysql");
     }
  
-
-    @args[0] = $$self{obj_id};
     if($txt !~ /^\s*$/) {
        $qualifier = 'and lower(out_text) like ? ';
        @args[1] = lc('%' . $txt . '%');
@@ -4494,7 +4578,8 @@ sub list_attr
    if(memorydb) {
       for my $name (lattr($obj)) {
          if($pat eq undef || $name =~ /$pat/) {
-            if(!reserved($name) && lc($name) ne "description") {
+            if(!reserved($name) && lc($name) ne "description" &&
+               ($pat ne undef || !($$obj{obj_id} == 0 && $name =~ /^conf./))) {
                 my $attr = mget($obj,$name);
                 push(@out,reconstitute($name,
                                        $$attr{type},
@@ -4913,6 +4998,8 @@ sub cmd_reload_code
    return err($self,$prog,"Permission denied.") if(!hasflag($self,"WIZARD"));
 
    my $result = load_all_code(1,@info{filter});
+   initialize_functions();
+   initialize_commands();
 
    if($result eq undef) {
       necho(self   => $self,
@@ -5004,7 +5091,7 @@ sub who
       # only list users that start with provided text 
       if($$hash{obj_id} ne undef) {
          if(($txt ne undef && 
-            lc(substr($$hash{obj_name},0,length($txt))) eq lc($txt)) ||
+            lc(substr(name($hash,1),0,length($txt))) eq lc($txt)) ||
             $txt eq undef) {
             if(length(loc($hash)) > length($max)) {
                $max = length(loc($hash));
@@ -5674,10 +5761,18 @@ sub lattr
    }
 }
 #!/usr/bin/perl
-
+#
+# tm_ansi.pl
+#    Any routines for handling the limited support for ansi characters
+#    within TeenyMUSH.
+#
 use strict;
 use MIME::Base64;
 
+#
+# conversion table for letters to numbers used in escape codes as defined
+# by TinyMUSH, or maybe TinyMUX.
+#
 my %ansi = (
    x => 30, X => 40,
    r => 31, R => 41,
@@ -5691,6 +5786,10 @@ my %ansi = (
    h => 1
 );
 
+#
+# ansi_debug
+#    Convert an ansi string into something more readable.
+#
 sub ansi_debug
 {
     my $txt = shift;
@@ -5992,6 +6091,11 @@ sub lord
 #printf("%s\n",lord(ansi_string($a,1)));
 #printf("SUB:%s\n",ansi_substr($a,11,1));
 #!/usr/bin/perl
+#
+# tm_compat.pl
+#    Any code required for compatiblity when a file/module does not load.
+#
+
 
 sub my_commit   
 {        
@@ -6001,16 +6105,28 @@ sub my_commit
 sub my_rollback
 {        
    return;
-}       #!/usr/bin/perl
+}       
+#!/usr/bin/perl
+#
+# tm_db.pl
+#    Code specific to the memory database. The only mysql database code
+#    in here should be specific to conversion from one format to the
+#    other.
+#
+#    flag definitions are loaded here since they're stored inside the
+#    mysql database. They probably should be removed from the database
+#    since we don't need two versions of the same thing.
+
 
 use Compress::Zlib;
 use strict;
 use MIME::Base64;
 use Storable qw(dclone);
 
-# my @db;
-# my %player;
-
+# flag definitions
+#    flag name, 1 character flag name, who can set it, if its an 
+#    attribute flag (2), or an object flag (1).
+#
 my %flag = (
    ANYONE         => { letter => "+",                   type => 1 },
    GOD            => { letter => "G", perm => "GOD",    type => 1 },
@@ -6038,35 +6154,56 @@ my %flag = (
    LOG            => { letter => "l", perm => "WIZARD", type => 1 },
 );
 
+#
+# db_version
+#    Define which version of the database the mush is dumping. This
+#    should be incremented when anything changes.
+#
 sub db_version
 {
    return "1.0";
 }
 
 
+#
+# mget
+#    Get a record from the memory database. This will return the hash that
+#    contains the data. You'll need to look at the value hash item for the
+#    actual contents of the attribute. The attribute flag(s) are also
+#    accessible here.
+#   
+#    This function also honors the backup mode and @deleted by grabbing
+#    the data from either @delta (contains any changes) or @db (actual
+#    database). @deleted defines if the object was deleted while the
+#    database was in backup mode.
+#
 sub mget
 {
    my ($obj,$attr) = (obj(shift),shift);
    my $data;
 
+   # handle if object exists
    if(defined @info{backup_mode} && @info{backup_mode}) {
-      if(defined @deleted{$$obj{obj_id}}) {
-         $data = @db[$$obj{obj_id}];
-      } elsif(defined @delta[$$obj{obj_id}]) {
+      if(defined @deleted{$$obj{obj_id}}) {                # obj was deleted
+         return undef;
+      } elsif(defined @delta[$$obj{obj_id}]) {   # obj changed during backup
          $data = @delta[$$obj{obj_id}];
-      } elsif(defined @db[$$obj{obj_id}]) {
+      } elsif(defined @db[$$obj{obj_id}]) {                   # in actual db
          $data = @db[$$obj{obj_id}];
-      } else {
+      } else {                                           # obj doesn't exist
          return undef;
       }
-   } else {
+   } elsif(defined @db[$$obj{obj_id}]) {            # non-backup mode object
       $data = @db[$$obj{obj_id}];
+   } else {
+      return undef;                                      # obj doesn't exist
    }
 
-   if(!defined $$data{lc($attr)}) {
-      return undef;
+   # handle if attribute exits on object
+   if(!defined $$data{lc($attr)}) {              # check if attribute exists
+      return undef;                                                   # nope
    } else {
-      return $$data{lc($attr)};
+      return $$data{lc($attr)};                                     # exists
    }
 }
 
@@ -6082,14 +6219,20 @@ sub db_delete
 {
    my $id = obj(shift);
   
-   if(defined @info{backup_mode} && @info{backup_mode}) {
+   if(defined @info{backup_mode} && @info{backup_mode}) {  # in backup mode
       delete @delta[$id] if(defined @delta[$id]);
       @deleted{$id} = 1;
-   } elsif(defined @db[$id]) {
+   } elsif(defined @db[$id]) {                       # non-backup mode delete
       delete @db[$id];
    }
 }
 
+#
+# dbref_mutate
+#    Get an object's hash table reference and make a copy of it in @delta
+#    if it already hasn't. This should only be called if the object is
+#    going to be changed.
+#    
 sub dbref_mutate
 {
    my $obj = obj(shift);
@@ -6117,6 +6260,11 @@ sub dbref_mutate
    }
 }
 
+#
+# dbref
+#    Return the hash table entry for an object. The code should not be
+#    making changes to this data.
+#
 sub dbref
 {
    my $obj = obj(shift);
@@ -6149,17 +6297,21 @@ sub get_next_dbref
 
    if($#free > -1) {                        # prefetched list of free objects
       return pop(@free);
-   } elsif(defined @info{backup_mode} && @info{backup_mode}) {
-      if($#delta > $#db) {
-         return $#delta + 1;
+   } elsif(defined @info{backup_mode} && @info{backup_mode}) { # in backupmode
+      if($#delta > $#db) {                  # return the largest next number
+         return $#delta + 1;                # in @delt or @db
       } else {
          return $#db + 1;
       }
-   } else {
+   } else {                                      # return next number in @db
       return $#db + 1;
    }
 }
 
+#
+# can_set_flag
+#    Return if an object can set the flag in question
+#
 sub can_set_flag
 {
    my ($self,$obj,$flag) = @_;
@@ -6172,13 +6324,20 @@ sub can_set_flag
 
    my $hash = @flag{uc($flag)};
 
-   if($$hash{perm} =~ /^!/) {
+   if($$hash{perm} =~ /^!/) {       # can't have this perm flag and set flag
       return (!hasflag($self,$')) ? 1 : 0;
-   } else {
+   } else {                              # has to have this flag to set flag
       return (hasflag($self,$$hash{perm})) ? 1 : 0;
    }
 }
 
+#
+# flag_letter
+#    Return the single letter associated with the flag. Does this need a
+#    function? only when TeenyMUSH is using multiple files because of how
+#    code is reloaded. I.e. variables are not exposed to other files but
+#    functions are.
+#
 sub flag_letter
 {
    my $txt = shift;
@@ -6190,6 +6349,10 @@ sub flag_letter
    }
 }
 
+#
+# flag
+#    Is the flag actually a valid object flag or not.
+#
 sub flag
 {
    my $txt = shift;
@@ -6201,6 +6364,10 @@ sub flag
    }
 }
 
+#
+# flag_attr
+#    Is the flag actually a valid attribute flag or not.
+#
 sub flag_attr
 {
    my $txt = shift;
@@ -6212,6 +6379,19 @@ sub flag_attr
    }
 }
 
+#
+# serialize
+#    This converts an attribute into a database safe string. Attributes are
+#    also reconstituted from multiple segments into one segment as the
+#    $commands are pre-parsed.
+#
+#    This code probably should just handle the very limited number of
+#    characters that are problematic. Instead if it finds a character of
+#    concern, the whole string is mime encoded... which introduces a bit
+#    of overhead. Putting a compress() around the string could be done
+#    as well... but I havn'e gotten myself to pull the trigger on that
+#    one for concerns over speed.
+#
 sub serialize
 {
    my ($name,$attr) = @_;
@@ -6581,6 +6761,7 @@ $SIG{'INT'} = sub {  if(memorydb) {
                         @info{crash_dump_complete} = 1;
                         printf("**** Dump Complete Exiting ******\n");
                      }
+                     printf("CALLED\n");
                      exit(1);
                   };
 
@@ -10087,10 +10268,6 @@ sub http_reply
    if($msg =~ /^Huh\? \(Type \"help\" for help\.\)/) {
       return http_error($s,$fmt,@args);
    }
-   if((stat("txt/http_template.txt"))[9] != @info{template_last}) {
-      @info{template} = getfile("http_template.txt");
-      @info{template_last} = time();
-   }
 
    http_out($s,"HTTP/1.1 200 Default Request");
    http_out($s,"Date: %s",scalar localtime());
@@ -10098,7 +10275,7 @@ sub http_reply
    http_out($s,"Connection: close");
    http_out($s,"Content-Type: text/html; charset=ISO-8859-1");
    http_out($s,"");
-   http_out($s,"%s\n",@info{template});
+   http_out($s,"%s\n",@info{"conf.httpd_template"});
    http_out($s,"<body>\n");
    http_out($s,"<div id=\"Content\">\n");
    http_out($s,"<pre>%s\n</pre>\n",ansi_remove($msg));
@@ -12612,37 +12789,6 @@ sub lock_uncompile
     }
 }
 #!/usr/bin/perl
-
-# start the server.
-#    This should be only called once.
-#    It should only contain code that will never need to be reloaded.
-#    Do not put anything in here?
-#
-
-$SIG{HUP} = sub {
-  my $files = load_all_code(0,@info{filter});
-  delete @info{engine};
-  printf("HUP signal caught, reloading: %s\n",$files ? $files : "none");
-};
-
-#
-# close the loop on connections that have start times but not end times
-#
-
-if(mysqldb) {
-   sql($db,"delete from socket");
-   sql($db,"update socket_history " .
-           "   set skh_end_time = skh_start_time " .
-           " where skh_end_time is null");
-   my_commit($db);
-}
-
-for (@Addon::EXPORT) {
-  print "$_\n";
-}
-
-# server_start();
-#!/usr/bin/perl
 use strict;
 use Carp;
 
@@ -13345,6 +13491,18 @@ sub server_disconnect
 sub server_start
 {
    read_config();
+
+   #
+   # close the loop on connections that have start times but not end times
+   #
+
+   if(mysqldb) {
+      sql($db,"delete from socket");
+      sql($db,"update socket_history " .
+              "   set skh_end_time = skh_start_time " .
+              " where skh_end_time is null");
+      my_commit($db);
+   }
 
    if(memorydb) {
       my $file = newest_full(@info{"conf.mudname"} . ".FULL.DB");

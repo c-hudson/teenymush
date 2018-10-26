@@ -81,10 +81,6 @@ sub http_reply
    if($msg =~ /^Huh\? \(Type \"help\" for help\.\)/) {
       return http_error($s,$fmt,@args);
    }
-   if((stat("txt/http_template.txt"))[9] != @info{template_last}) {
-      @info{template} = getfile("http_template.txt");
-      @info{template_last} = time();
-   }
 
    http_out($s,"HTTP/1.1 200 Default Request");
    http_out($s,"Date: %s",scalar localtime());
@@ -92,7 +88,7 @@ sub http_reply
    http_out($s,"Connection: close");
    http_out($s,"Content-Type: text/html; charset=ISO-8859-1");
    http_out($s,"");
-   http_out($s,"%s\n",@info{template});
+   http_out($s,"%s\n",@info{"conf.httpd_template"});
    http_out($s,"<body>\n");
    http_out($s,"<div id=\"Content\">\n");
    http_out($s,"<pre>%s\n</pre>\n",ansi_remove($msg));

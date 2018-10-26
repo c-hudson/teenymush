@@ -445,6 +445,18 @@ sub server_start
 {
    read_config();
 
+   #
+   # close the loop on connections that have start times but not end times
+   #
+
+   if(mysqldb) {
+      sql($db,"delete from socket");
+      sql($db,"update socket_history " .
+              "   set skh_end_time = skh_start_time " .
+              " where skh_end_time is null");
+      my_commit($db);
+   }
+
    if(memorydb) {
       my $file = newest_full(@info{"conf.mudname"} . ".FULL.DB");
 

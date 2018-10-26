@@ -1,8 +1,16 @@
 #!/usr/bin/perl
-
+#
+# tm_ansi.pl
+#    Any routines for handling the limited support for ansi characters
+#    within TeenyMUSH.
+#
 use strict;
 use MIME::Base64;
 
+#
+# conversion table for letters to numbers used in escape codes as defined
+# by TinyMUSH, or maybe TinyMUX.
+#
 my %ansi = (
    x => 30, X => 40,
    r => 31, R => 41,
@@ -16,6 +24,10 @@ my %ansi = (
    h => 1
 );
 
+#
+# ansi_debug
+#    Convert an ansi string into something more readable.
+#
 sub ansi_debug
 {
     my $txt = shift;

@@ -1,4 +1,9 @@
 #!/usr/bin/perl
+#
+# tm_functions.pl
+#    All user commands should be stored here, except for those which are
+#    not. Check tm_putitsomewherelese.pl if it isn't here.
+#
 
 
 use Text::Wrap;
@@ -48,7 +53,7 @@ sub initialize_commands
    @command{"&"}        = { help => "Set an attribute on an object",
                             fun  => sub { return &cmd_set2(@_); },
                             nsp  => 1                                       };
-   @command{reload}     = { help => "Reload any changed perl code",
+   @command{"\@reload"} = { help => "Reload any changed perl code",
                             fun  => sub { return &cmd_reload_code(@_); }    };
    @command{pose}       = { help => "Perform an action of your choosing",
                             fun  => sub { return &cmd_pose(@_); }           };
@@ -1780,10 +1785,13 @@ sub read_atr_config
       createcost           => 10,
       backup_interval      => 3600,                          # once an hour
       freefind_interval    => 84600,                           # once a day
-      login               => "Welcome to @info{version}\r\n\r\n" .
-                             "   Type the below command to customize this " .
-                             "screen after loging in as God.\r\n\r\n" .
-                             "    \@set #0/conf.login = Login screen\r\n\r\n"
+      login                => "Welcome to @info{version}\r\n\r\n" .
+                              "   Type the below command to customize this " .
+                              "screen after loging in as God.\r\n\r\n" .
+                              "    \@set #0/conf.login = Login screen\r\n\r\n",
+      badsite              => "Your site has been banned.",
+      httpd_template       => "<pre>",
+      mudname              => "TeenyMUSH"
    );
 
    my %updated;
@@ -2268,13 +2276,10 @@ sub cmd_recall
     my ($self,$prog,$txt) = @_;
     my ($qualifier,@args);
 
-    printf("%s",print_var(@db[313]));
     if(memorydb) {
        return err($self,$prog,"\@recall is only supported under mysql");
     }
  
-
-    @args[0] = $$self{obj_id};
     if($txt !~ /^\s*$/) {
        $qualifier = 'and lower(out_text) like ? ';
        @args[1] = lc('%' . $txt . '%');
@@ -4099,7 +4104,8 @@ sub list_attr
    if(memorydb) {
       for my $name (lattr($obj)) {
          if($pat eq undef || $name =~ /$pat/) {
-            if(!reserved($name) && lc($name) ne "description") {
+            if(!reserved($name) && lc($name) ne "description" &&
+               ($pat ne undef || !($$obj{obj_id} == 0 && $name =~ /^conf./))) {
                 my $attr = mget($obj,$name);
                 push(@out,reconstitute($name,
                                        $$attr{type},
@@ -4518,6 +4524,8 @@ sub cmd_reload_code
    return err($self,$prog,"Permission denied.") if(!hasflag($self,"WIZARD"));
 
    my $result = load_all_code(1,@info{filter});
+   initialize_functions();
+   initialize_commands();
 
    if($result eq undef) {
       necho(self   => $self,
@@ -4609,7 +4617,7 @@ sub who
       # only list users that start with provided text 
       if($$hash{obj_id} ne undef) {
          if(($txt ne undef && 
-            lc(substr($$hash{obj_name},0,length($txt))) eq lc($txt)) ||
+            lc(substr(name($hash,1),0,length($txt))) eq lc($txt)) ||
             $txt eq undef) {
             if(length(loc($hash)) > length($max)) {
                $max = length(loc($hash));

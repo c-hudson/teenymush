@@ -6,28 +6,26 @@ of their creation. Customization of the world does not require
 modification of the internal server code. 
 
 
-   1. Download source from github. The source for this project is availible in two different formats. A single file (teenymush.pl) that contains the whole distributions or the seperate individual files. If you don't have all the required modules installed, using the multi-file distribution will allow the code to bypass those modules required for mysql, httpd, and websockets at the cost of disabling those features.
-
-
+   1. Download source from github. You'll also need the base_*.sql files if
+      you plan to use mysql with TeenyMUSH.
 ```
       Example:
-          git clone https://github.com/c-hudson/teenymush.git
-
-                                    or
-
           wget https://github.com/c-hudson/teenymush/raw/master/teenymush.pl
+          wget https://github.com/c-hudson/teenymush/raw/master/help.txt
 ```
 
 # Installation using in memory database [skip if using mysql]
-   2. Create a tm_config.dat file containing at least these three lines:
+
+   2. Create a tm_config.dat with the below three lines or let TeenyMUSH
+      go with its defaults of port 4201, name of TeenyMUSH and using the
+      memory db.
 
 ```
          port=4096
          conf.mudname=Ascii
          conf.memorydb=1
 ```
-   3. Run tm perl script or teenymush.pl script depending on if you downloaded
-      all of the files or just the single teenymush.pl script.
+   3. Run teenymush.pl script
 
    4. Login as god with a password of portrzebie
 
@@ -54,12 +52,11 @@ modification of the internal server code.
          conf.mysqldb=1
 ```
 
-   4. Run the 'tm'  or 'teenymush.pl' script, answer prompts for username,
-      password, and database name. Answer yes to loading default database,
-      unless you
+   4. Run the teenymush.pl script, answer prompts for username, password,
+      and database name. Answer yes to loading default database, unless you
       have a database backup named as tm_backup.sql.
 
-   5. Run tm perl script
+   5. Run teenymush.pl script
 
    6. Login as god with a password of portrzebie
 
@@ -101,4 +98,4 @@ conf.mysql              |  Set this to 1 to use mysql for the database
 conf.backup_interval    |  How often to dump the memorydb in seconds
 ```
 
-see http://teenymush.blogspot.in/ for more details.
+see http://ascii.dynu.net/ for more details.

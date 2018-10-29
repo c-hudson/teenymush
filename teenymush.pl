@@ -1,15 +1,16 @@
 #!/usr/bin/perl
 #
-#     o                                                   8      
-#     8                                                   8      
-#    o8P .oPYo. .oPYo. odYo. o    o ooYoYo. o    o .oPYo. 8oPYo. 
-#     8  8oooo8 8oooo8 8' `8 8    8 8' 8  8 8    8 Yb..   8    8 
-#     8  8.     8.     8   8 8    8 8  8  8 8    8   'Yb. 8    8 
-#     8  `Yooo' `Yooo' 8   8 `YooP8 8  8  8 `YooP' `YooP' 8    8 
+#     o                                                   8
+#     8                                                   8
+#    o8P .oPYo. .oPYo. odYo. o    o ooYoYo. o    o .oPYo. 8oPYo.
+#     8  8oooo8 8oooo8 8' `8 8    8 8' 8  8 8    8 Yb..   8    8
+#     8  8.     8.     8   8 8    8 8  8  8 8    8   'Yb. 8    8
+#     8  `Yooo' `Yooo' 8   8 `YooP8 8  8  8 `YooP' `YooP' 8    8
 #                                 8
 #                            'oooP'
 #
-#                A TinyMUSH like server written in perl*^
+#                A TinyMUSH like server written in perl?*^
+#                    [ Yep, impossible but true. ]
 #
 #
 # * = No Frogs were harmed in the creation of this project.
@@ -264,7 +265,10 @@ sub read_config
       $fn = "tm_conf.dat";
    }
 
-   return if(!-e $fn);
+   if(!-e $fn) {
+      @info{"conf.mudname"} = "TeenyMUSH" if @info{"conf.mudname"} eq undef;
+      return;
+   }
 
    printf("Reading Config: $fn\n") if $flag;
    for my $line (split(/\n/,getfile($fn))) {
@@ -284,6 +288,7 @@ sub read_config
 
    # i'd rather this be in read_attr_conf() but the database needs to be
    # read before we can pull attributes out of it.
+   printf("MUDNAME: '%s'\n",@info{"conf.mudname"});
    @info{"conf.mudname"} = "TeenyMUSH" if @info{"conf.mudname"} eq undef;
 }
 
@@ -307,6 +312,89 @@ sub prompt
       $result =~ s/\n|\r//g;                 # strip leading spaces/returns
    }
    return $result;
+}
+
+sub write_to_file
+{
+   my ($fn,$data,$flag) = @_;
+   my $file;
+
+   if($flag && -e $fn) {
+      die("Source file $fn already exists, not over-writing");
+   }
+ 
+   printf("Writing out: %s\n",$fn);
+
+   open($file,"> $fn") ||
+      die("Could not open $fn for writing");
+ 
+   if(ref($data) eq "ARRAY") {
+      printf($file "%s",join("\n",@$data));
+   } else {
+      printf($file "%s",$data);
+   }
+
+   close($file);
+}
+
+sub simple_getfile
+{
+   my $fn = shift;
+   my $file;
+
+   open($file,$fn) || die("Unable to read file '$fn'");
+ 
+   return join('',<$file>);
+}
+
+sub split_source_into_multiple
+{
+   my ($file,$buf,$name);
+
+   open($file,$0) ||
+      die("Could not open $0 for reading");
+
+   while(<$file>) {
+      if(/^#!\// && $. < 5) {
+         $name = "tm";
+      } elsif(/^#!\// && $name ne undef) {
+         write_to_file($name,$buf,1) if($buf ne undef && $name ne undef);
+         $name = undef;
+         $buf = undef;
+      } elsif($name eq undef && /^#\s+tm_(.*).pl\s*$/) {
+         $name = "tm_$1\.pl";
+      }
+      $buf .= $_;
+      
+   }
+   close($file);
+
+   write_to_file($name,$buf,1) if($buf ne undef && $name ne undef);
+}
+
+sub combine_source_into_single
+{
+   my $out;
+
+   $out .= simple_getfile("tm");
+   $out .= simple_getfile("tm_compat.pl");
+   $out .= simple_getfile("tm_commands.pl");
+   $out .= simple_getfile("tm_cache.pl");
+   $out .= simple_getfile("tm_ansi.pl");
+   $out .= simple_getfile("tm_db.pl");
+   $out .= simple_getfile("tm_engine.pl");
+   $out .= simple_getfile("tm_find.pl");
+   $out .= simple_getfile("tm_format.pl");
+   $out .= simple_getfile("tm_functions.pl");
+   $out .= simple_getfile("tm_httpd.pl");
+   $out .= simple_getfile("tm_internal.pl");
+   $out .= simple_getfile("tm_lock.pl");
+   $out .= simple_getfile("tm_mysql.pl");
+   $out .= simple_getfile("tm_sockets.pl");
+   $out .= simple_getfile("tm_websock.pl");
+   $out =~ s/\r\n/\n/g;
+
+   write_to_file("teenymush.pl",$out,1);
 }
 
 #
@@ -421,13 +509,23 @@ sub load_db_backup
    }
 }
 
+sub arg
+{
+   my $txt = shift;
+
+   for my $i (0 .. $#ARGV) {
+      return 1 if(@ARGV[$i] eq $txt || @ARGV[$i] eq "--$txt")
+   }
+   return 0;
+}
+
 $SIG{HUP} = sub {
   my $files = load_all_code(0,@info{filter});
   delete @info{engine};
   printf("HUP signal caught, reloading: %s\n",$files ? $files : "none");
 };
 
-$SIG{'INT'} = sub {  if(memorydb) {
+$SIG{'INT'} = sub {  if(memorydb && $#db > -1) {
                         printf("**** Program Exiting ******\n");
                         cmd_dump(obj(0),{},"CRASH");
                         @info{crash_dump_complete} = 1;
@@ -435,6 +533,14 @@ $SIG{'INT'} = sub {  if(memorydb) {
                      }
                      exit(1);
                   };
+
+if(arg("split")) {
+   split_source_into_multiple();
+   exit(0);
+} elsif(arg("single")) {
+   combine_source_into_single();
+   exit(0);
+}
 
 @info{version} = "TeenyMUSH 0.9";
 @info{filter} = "#!#";                                        #!# ALWAYS_LOAD
@@ -474,7 +580,7 @@ sub my_rollback
 }       
 #!/usr/bin/perl
 #
-# tm_functions.pl
+# tm_commands.pl
 #    All user commands should be stored here, except for those which are
 #    not. Check tm_putitsomewherelese.pl if it isn't here.
 #
@@ -5202,7 +5308,7 @@ sub cmd_sweep
 }
 #!/usr/bin/perl
 # 
-# tm_cache
+# tm_cache.pl
 #    Routines which directly impliment/modify the cache. All functions
 #    need to keep track of when they were last modified to drtermine if
 #    the data is old and can be removed.
@@ -6766,7 +6872,7 @@ $SIG{'INT'} = sub {  if(memorydb) {
                   };
 
 END {
-   if(memorydb && !defined @info{crash_dump_complete}) {
+   if(memorydb && !defined @info{crash_dump_complete} && $#db > -1) {
       printf("**** Program EXITING ******\n");
       cmd_dump(obj(0),{},"CRASH");
       printf("**** Dump Complete Exiting 2 ******\n");
@@ -6782,7 +6888,7 @@ END {
 # }
 #!/usr/bin/perl
 #
-# tm_engine
+# tm_engine.pl
 #    This file contains any functions required to handle the scheduling of
 #    running of mush commands. The hope is to balance the need for socket
 #    IO verses the need to run mush commands.
@@ -8035,7 +8141,11 @@ sub pretty
 # printf("%s\n",pretty(3,$code));
 # printf("%s\n",function_print(3,$code));
 #!/usr/bin/perl
-
+#
+# tm_functions.pl
+#    Contains all functions that can be called from within the mush by
+#    users.
+#
 use strict;
 use Carp;
 use Scalar::Util qw(looks_like_number);
@@ -10188,7 +10298,7 @@ sub evaluate
 #!/usr/bin/perl
 
 #
-# http_input
+# tm_httpd.pl
 #    Handle the incoming data and look for disconnects.
 #
 sub http_io
@@ -10388,7 +10498,7 @@ sub http_process_line
 }
 #!/usr/bin/perl
 #
-# tm_internal
+# tm_internal.pl
 #    Various misc functions that are not related to anything in particular.
 #    This is generally code that supports other bits and peices. Maybe this
 #    should be renamed to tm_misc.pl
@@ -10430,15 +10540,6 @@ sub dump_complete
    }
 }
 
-sub arg
-{
-   my $txt = shift;
-
-   for my $i (0 .. $#ARGV) {
-      return 1 if(@ARGV[$i] eq $txt || @ARGV[$i] eq "--$txt") 
-   }
-   return 0;
-}
 
 #
 # newest_full
@@ -12531,7 +12632,7 @@ sub is_flag
 }
 #!/usr/bin/perl
 #
-# mt_lock.pl
+# tm_lock.pl
 #    Evaluation of a string based lock to let people use/not use things.
 #
 
@@ -12789,6 +12890,10 @@ sub lock_uncompile
     }
 }
 #!/usr/bin/perl
+#
+# tm_mysql.pl
+#   Routines required for TeenyMUSH to access mysql.
+#
 use strict;
 use Carp;
 
@@ -13046,8 +13151,11 @@ sub fetch
 }
 
 #!/usr/bin/perl
-
-
+#
+#
+# tm_sockets.pl
+#    Code to handle accessing sockets.
+#
 
 #
 # add_last_info
@@ -13608,6 +13716,12 @@ __EOF__
 
 1;
 #!/usr/bin/perl
+#
+# tm_websock.pl
+#    Code required to access websockets from within the server. When this
+#    code is enabled, the listener from websockets is used instead of
+#    the standard INET one.
+#
 
 sub websock_init
 {

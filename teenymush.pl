@@ -159,10 +159,10 @@ sub getfile
    while(<$file>) {                                           # read all data
       s/\r//g;
       @{$$code{$fn}}{lines}++ if(ref($code) eq "HASH");
-      if($filter eq undef || $_ !~ /$filter/ || $_ =~ /$filter ALWAYS_LOAD/) {
+      if($filter eq undef || ($_ =~ /ALWAYS_LOAD/ || $_ !~ /$filter/)) {
          $out .= $_;
       } else {
-         $out .= "#!#\n";                           # preserve line numbers?
+         $out .= "#!#\n";                # preserve line numbers? ALWAYS_LOAD
       }
    }
    close($file); 
@@ -180,6 +180,7 @@ sub load_code_in_file
 {
    my ($file,$verbose,$filter) = @_;
 
+   printf("Start: %s\n",scalar localtime());
    if(is_single && basename(lc($0)) ne lc($file)) {
       # skip
    } elsif(!-e $file) {
@@ -187,6 +188,7 @@ sub load_code_in_file
    } else {
       # this preserves line numbers/file names  when stack traces are created
       my $data = qq[#line 1 "$file"\n] . getfile($file,\%code,$filter);
+      $data =~ s/\r\n/\n/g;
 
       @{$code{$file}}{size} = length($data);
       @{$code{$file}}{mod}  = (stat($file))[9];
@@ -197,7 +199,10 @@ sub load_code_in_file
 #      }
 
       $@ = '';
+
+      printf("Start eval : %s\n",scalar localtime());
       eval($data);                                                # run code
+      printf("End eval : %s\n",scalar localtime());
  
       if($@) {                                         # report any failures
          printf("\n\nload_code fatal: '%s'\n",$@);
@@ -259,10 +264,10 @@ sub read_config
       $fn = "$1.dat.dev";
    } elsif($0 =~ /\.([^\.]+)$/ && -e "$1.dat") {
       $fn = "$1.dat";
-   } elsif(-e "tm_conf.dat.dev") {
-      $fn = "tm_conf.dat.dev";
+   } elsif(-e "tm_config.dat.dev") {
+      $fn = "tm_config.dat.dev";
    } else {
-      $fn = "tm_conf.dat";
+      $fn = "tm_config.dat";
    }
 
    if(!-e $fn) {
@@ -288,7 +293,6 @@ sub read_config
 
    # i'd rather this be in read_attr_conf() but the database needs to be
    # read before we can pull attributes out of it.
-   printf("MUDNAME: '%s'\n",@info{"conf.mudname"});
    @info{"conf.mudname"} = "TeenyMUSH" if @info{"conf.mudname"} eq undef;
 }
 
@@ -548,21 +552,22 @@ if(arg("split")) {
 read_config(1);                                               #!# load once
 get_credentials();
 
-if(mysqldb) {
-   load_code_in_file("tm_mysql.pl",1);
-} else {
-   load_code_in_file("tm_compat.pl",1);
-}
-load_all_code(1);                                      # initial load of code
+if(mysqldb) {                                        #!#
+   load_code_in_file("tm_mysql.pl",1);               #!#
+} else {                                             #!#
+   load_code_in_file("tm_compat.pl",1);              #!#
+}                                                    #!#
+load_all_code(1);                                    #!# initial load of code
 
 
-load_new_db();                                        # optional new db load
-load_db_backup();
+load_new_db();                                       #!# optional new db load
+load_db_backup();                                    #!#
 
-initialize_functions();
-initialize_commands();
-server_start();                                          #!# start only once
-#!/usr/bin/perl
+initialize_functions();                              #!#
+initialize_commands();                               #!#
+server_start();                                      #!# start only once
+
+# #!/usr/bin/perl
 #
 # tm_compat.pl
 #    Any code required for compatiblity when a file/module does not load.
@@ -578,7 +583,7 @@ sub my_rollback
 {        
    return;
 }       
-#!/usr/bin/perl
+# #!/usr/bin/perl
 #
 # tm_commands.pl
 #    All user commands should be stored here, except for those which are
@@ -668,8 +673,6 @@ sub initialize_commands
                             fun  => sub { return cmd_commit(@_); }          };
    @command{"\@set"}    = { help => "Set attributes on an object",
                             fun  => sub { return cmd_set(@_); }             };
-   @command{"\@code"}   = { help => "Information on the current code base",
-                            fun  => sub { return cmd_code(@_); }            };
    @command{"\@cls"}    = { help => "Clear the console screen",
                             fun  => sub { return cmd_clear(@_); }           };
    @command{"\@create"} = { help => "Create an object",
@@ -1143,7 +1146,6 @@ sub cmd_find
 sub cmd_perl
 {
    my ($self,$prog,$txt) = @_;
-   return;
 
    if(hasflag($self,"WIZARD")) {
       eval ( $txt );  
@@ -2066,6 +2068,7 @@ sub cmd_dump
                    "CONNECTED,PLAYER,LOG",
                    "<LOG> Database finished."
                   );
+         prune_dumps("dumps","dumps",@info{"conf.mudname"} . "\..*\.tdb");
       }
       return;
    } else {
@@ -3696,56 +3699,87 @@ sub cmd_page
 sub cmd_last
 {
    my ($self,$prog,$txt) = @_;
-   my ($what,$extra, $hostname);
+   my ($target,$extra, $hostname, $count,$out);
 
-   # determine the target
-   if($txt =~ /^\s*([^ ]+)\s*$/) {
-      $what = find_player($self,$prog,$1) ||
-         return err($self,$prog,"Unknown player '%s'",$1);
-      $what = $$what{obj_id};
+   if($txt =~ /^\s*$/) {
+      if(hasflag($self,"PLAYER")) {
+         $target = $self;
+      } else {
+         return err($self,$prog,"Only players may use this command.");
+      }
    } else {
-      $what = $$self{obj_id};
+      $target = find_player($self,$prog,$txt) ||
+         return err($self,$prog,"I couldn't find that player.");
    }
 
-   if($what eq $$self{obj_id} || hasflag($self,"WIZARD")) {
-      $hostname = "skh_hostname Hostname,";
-   }
-
-   # show target's total connections
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "%s",
-                     table("  select obj_name Name," .
-                           "         $hostname " .
-                           "         skh_start_time End," .
-                           "         skh_end_time Start" .
-                           "    from socket_history skh, " .
-                           "         object obj " .
-                           "   where skh_success = 1" .
-                           "     and skh.obj_id = ? " .
-                           "     and skh.obj_id = obj.obj_id " .
-                           "order by skh_start_time desc " .
-                           "limit 10",
-                           $what
-                          )
-                   ]
-        );
+   if(memorydb) {
+      my $attr = mget($target,"obj_lastsite");
  
-   if((my $val=one_val("select count(*) value " .
-                       "  from connect " .
-                       " where obj_id = ? " .
-                       "   and con_type = 1 ",
-                       $what
-                      ))) {
+      if($attr eq undef || !defined $$attr{value} || 
+         ref($$attr{value}) ne "HASH") {
+         return err($self,$prog,"Internal error, unable to continue");
+      }
+      $out .= "Site:                         Connection Start  | " .
+              "Connection End\n";
+      $out .= "----------------------------|-------------------|" .
+              ("-" x 18) . "\n";
+
+      for my $key (sort {$b <=> $a} keys %{$$attr{value}}) {
+         last if($count++ > 6);
+         if(@{$$attr{value}}{$key} =~ /^([^,]+)\,([^,]+)\,/) {
+            $out .= sprintf("%-27s | %s | %s\n",short_hn($'),minits($key),
+               minits($1));
+         }
+      }
+
+      $out .= "----------------------------|-------------------|" .
+              ("-" x 18) . "\n";
+
       necho(self   => $self,
             prog   => $prog,
-            source => [ "Total successful connects: %s\n", $val ],
+            source => [ "%s", $out ],
            );
    } else {
+      if(owner($target) eq owner($self) || hasflag($self,"WIZARD")) {
+         $hostname = "skh_hostname Hostname,";      # optionally add hostname
+      }
+
+      # show target's total connections
       necho(self   => $self,
             prog   => $prog,
-            source => [ "Total successful connects: N/A\n" ],
+            source => [ "%s",
+                        table("  select obj_name Name," .
+                              "         $hostname " .
+                              "         skh_start_time End," .
+                              "         skh_end_time Start" .
+                              "    from socket_history skh, " .
+                              "         object obj " .
+                              "   where skh_success = 1" .
+                              "     and skh.obj_id = ? " .
+                              "     and skh.obj_id = obj.obj_id " .
+                              "order by skh_start_time desc " .
+                              "limit 10",
+                              $$target{obj_id}
+                             )
+                      ]
            );
+    
+      if((my $val=one_val("select count(*) value " .
+                          "  from connect " .
+                          " where obj_id = ? " .
+                          "   and con_type = 1 ",
+                          $$target{obj_id}
+                         ))) {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "Total successful connects: %s\n", $val ],
+              );
+      } else {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "Total successful connects: N/A\n" ],
+              );
+      }
    }
 }
 
@@ -3925,39 +3959,6 @@ sub cmd_clear
    } else {
       err($self,$prog,"Permission Denied.");
    }
-}
-
-# 
-# cmd_code
-#    display counts about the current size of the code
-#
-sub cmd_code
-{
-   my ($self,$prog)  = @_;
-
-   my ($tlines,$tsize);
-
-   necho(self   => $self,                                          # header
-         prog   => $prog,
-         source => [ " %-30s    %8s   %8s\n %s---%s---%s","File","Bytes",
-                    "Lines","-" x 32,"-" x 8,"-" x 8 ]
-        );
-   for my $key (sort {@{@code{$a}}{size} <=> @{@code{$b}}{size}} keys %code) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "| %-30s | %8s | %8s |\n",$key,@{@code{$key}}{size},
-                        @{@code{$key}}{lines}
-                      ],
-           );
-      $tlines += @{@code{$key}}{lines};
-      $tsize += @{@code{$key}}{size};
-   }
-   necho(self   => $self,                                          # trailer
-         prog   => $prog,
-         source => [ " %s+--%s+--%s|\n %-30s  | %8s | %8s |\n " .
-                     "%-30s   -%s---%s-","-" x 32,"-" x 8,"-" x 8,
-                     undef,$tsize,$tlines,undef,"-" x 8,"-" x 8 ],
-        );
 }
 
 sub cmd_commit
@@ -4410,7 +4411,13 @@ sub cmd_connect
       @{@connected_user{$$user{obj_id}}}{$$user{sock}} = $$user{sock};
 
       # --- log connnect ----------------------------------------------------#
-      if(mysqldb) {
+      if(memorydb) {
+         db_set_hash($$user{obj_id},
+                     "obj_lastsite",
+                     time(),
+                     time() . ",1,$$user{hostname}"
+                    );
+      } else {
          sql( "insert into socket " .
              "( " . 
              "    obj_id, " . 
@@ -4810,8 +4817,10 @@ sub cmd_ex
    $out .= "\n" . color("h","Created") . ": " . firsttime($target);
    if(hasflag($target,"PLAYER")) {
       if($perm) {
-         $out .= "\n".color("h","Firstsite").": " . firstsite($target) . "\n" .
-                 color("h","Lastsite") . ": " . lastsite($target);
+         $out .= "\n".color("h","Firstsite").": " . 
+                 short_hn(firstsite($target)) . "\n" .
+                 color("h","Lastsite") . ": " . 
+                 short_hn(lastsite($target));
       }
       my $last = lasttime($target);
 
@@ -5138,14 +5147,14 @@ sub nvl
 
 sub short_hn
 {
-   if(@_[0] =~ /^\s*(\d+)\.(\d+)\.(\d+)\.(\d+)\s*$/) {
-      return "$1.$2.*.*";
-   } elsif(@_[0] =~ /^\s*([0-9\.]+)\s*$/) {
+   my $addr = shift;
 
-   } elsif(@_[0] =~ /[A-Za-z]/ && @_[0] =~ /\.([^\.]+)\.([^\.]+)$/) {
+   if($addr =~ /^\s*(\d+)\.(\d+)\.(\d+)\.(\d+)\s*$/) {
+      return "$1.$2.*.*";
+   } elsif($addr =~ /[A-Za-z]/ && $addr  =~ /\.([^\.]+)\.([^\.]+)$/) {
       return "*.$1.$2";
    } else {
-      return @_[0];
+      return $addr;
    }
 }
 
@@ -5306,7 +5315,7 @@ sub cmd_sweep
          source => [ "Sweep complete." ]
         );
 }
-#!/usr/bin/perl
+# #!/usr/bin/perl
 # 
 # tm_cache.pl
 #    Routines which directly impliment/modify the cache. All functions
@@ -5866,7 +5875,7 @@ sub lattr
       return ();
    }
 }
-#!/usr/bin/perl
+# #!/usr/bin/perl
 #
 # tm_ansi.pl
 #    Any routines for handling the limited support for ansi characters
@@ -6196,23 +6205,8 @@ sub lord
 #printf("%s\n",$str);
 #printf("%s\n",lord(ansi_string($a,1)));
 #printf("SUB:%s\n",ansi_substr($a,11,1));
-#!/usr/bin/perl
-#
-# tm_compat.pl
-#    Any code required for compatiblity when a file/module does not load.
-#
 
-
-sub my_commit   
-{        
-   return;
-}
-
-sub my_rollback
-{        
-   return;
-}       
-#!/usr/bin/perl
+# #!/usr/bin/perl
 #
 # tm_db.pl
 #    Code specific to the memory database. The only mysql database code
@@ -6653,6 +6647,24 @@ sub db_set_hash
    @{$$attr{value}}{$value} = $sub;
 }
 
+sub db_remove_hash
+{
+   my ($id,$key,$value) = (obj(shift),lc(shift),lc(shift));
+
+   return if $value eq undef;
+   croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
+
+   my $obj = dbref_mutate($id);
+
+   $$obj{$key} = {} if(!defined $$obj{$key});
+   my $attr = $$obj{$key};
+   $$attr{value} = {} if(!defined $$attr{value});
+   $$attr{type} = "hash";
+
+   delete @{$$attr{value}}{$value};
+}
+
+
 sub db_sql_dump
 {
    for my $rec (@{sql("select * from object")}) {
@@ -6886,7 +6898,7 @@ END {
 #       owner => 
 #    }
 # }
-#!/usr/bin/perl
+# #!/usr/bin/perl
 #
 # tm_engine.pl
 #    This file contains any functions required to handle the scheduling of
@@ -7490,7 +7502,7 @@ sub signal_still_running
 
     unshift(@{$$prog{stack}},$cmd);
 }
-#!/usr/bin/perl
+# #!/usr/bin/perl
 #
 # tm_find.pl
 #    Generic routines to find objects from a player's perspective.
@@ -7540,7 +7552,6 @@ sub find
       return $self;
    } elsif($thing =~ /^\s*\*/) {
        my $player = lc(trim($'));
-       printf("PLAYER: '%s'\n",@player{$player});
        if(defined @player{$player}) {
           return obj(@player{$player});
        } else {
@@ -7648,7 +7659,7 @@ sub find_player
       return !$dup ? undef : obj($partial);
    }
 }
-#!/usr/bin/perl
+# #!/usr/bin/perl
 #
 # tm_format.pl
 #    This is a mini mush parser similar to what is used in the main part
@@ -8140,7 +8151,7 @@ sub pretty
 # 
 # printf("%s\n",pretty(3,$code));
 # printf("%s\n",function_print(3,$code));
-#!/usr/bin/perl
+# #!/usr/bin/perl
 #
 # tm_functions.pl
 #    Contains all functions that can be called from within the mush by
@@ -10295,7 +10306,7 @@ sub evaluate
       return $out;
    }
 }
-#!/usr/bin/perl
+# #!/usr/bin/perl
 
 #
 # tm_httpd.pl
@@ -10496,7 +10507,7 @@ sub http_process_line
       http_error($s,"Malformed Request");
    }
 }
-#!/usr/bin/perl
+# #!/usr/bin/perl
 #
 # tm_internal.pl
 #    Various misc functions that are not related to anything in particular.
@@ -10520,6 +10531,11 @@ my %days = (
    mon => 1, tue => 2, wed => 3, thu => 4, fri => 5, sat => 6, sun => 7,
 );
 
+#
+# dump_complete
+#    Determine if a dump file is complete by looking at the last 45
+#    characters in the file for a dump complete message
+#
 sub dump_complete
 {
    my $filename = shift;
@@ -10539,6 +10555,72 @@ sub dump_complete
       return 0;
    }
 }
+
+#
+# prune_dumps
+#    Delete old backups but still keep enough to resolve any issues that
+#    may accure.
+#
+#    Current rules are:
+#        Keep last 5 files,
+#        Keep any backups less then 12 hours old
+#        Keep one backup per day for a week
+#        Keep one backup per week for a month
+#        Keep one backup per month for a month
+#
+sub prune_dumps
+{
+   my ($name,$filter) = @_;
+   my ($prev,$last,$dir,%data);
+   my $count = 0;
+
+   opendir($dir,$name) ||
+      die("Unable to find directory $dir");
+
+   # sort by filename instead of timestamp
+   for my $file (readdir($dir)) {
+      if($file =~ /$filter/ && $file !~ /\.BAD$/i) {
+         if(!dump_complete("$name/$file")) {
+            move("$name/$file","$name/$file.BAD");     # rename but don't fail
+         } elsif($file =~ /(\d{2})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/) {
+             my $ts = timelocal($6,$5,$4,$3,$2-1,$1);
+             @data{$ts} = { day => $3, fn  => $file };
+         }
+      }
+   }
+   closedir($dir);
+
+   for my $file (sort {$b <=> $a} keys %data) {
+      my $hash = @data{$file};
+      if(# at least the last 5 files
+         $count++ < 5 ||
+
+         #file once per hour for a day
+         time() - $file <  43200 ||
+
+         # file once per day for a week
+         (time() - $file > 43200 && time() - $file < 604800 &&
+          $$hash{day} != $prev) ||
+
+         # file at least once per week for a month
+         (time() - $file > 604800 && time() - $file < 4687200 &&
+          $last - $file >= 604800) ||
+
+         # file at least once per month
+         (time() - $file > 4687200 && $last - $file >= 4687200)
+        ) {
+         $last = $file;
+      } else {
+         if(!unlink("$name/$$hash{fn}")) {
+            printf("Delete file dumps/$$hash{fn} during cleanup.");
+         } else {
+            printf("# Deleting $$hash{fn} as part of db backup cleanup\n");
+         }
+      }
+      $prev = $$hash{day};
+   }
+}
+
 
 
 #
@@ -11002,11 +11084,25 @@ sub ts
 {
    my $time = shift;
 
+   $time = time() if $time eq undef;
    my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) =
-                                                localtime(time);
+                                                localtime($time);
    $mon++;
 
    return sprintf("%02d:%02d@%02d/%02d",$hour,$min,$mon,$mday);
+}
+
+sub minits
+{
+   my $time = shift;
+
+   $time = time() if $time eq undef;
+   my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) =
+                                                localtime($time);
+   $mon++;
+
+   return sprintf("%02d:%02d:%02d %02d/%02d/%02d",
+                  $hour,$min,$sec,$mon,$mday,$year % 100);
 }
 
 sub filter_chars
@@ -12345,49 +12441,6 @@ sub link_exit
    }
 }
 
-#sub getfile
-#{
-#   my ($fn,$code) = @_;
-#   my($actual,$file, $out);
-#
-#   if($fn =~ /\||;/) {         # ignore bad file names and attempt to be safe
-#      return undef;
-#   } elsif($fn =~ /^[^\\|\/]+\.(pl|dat)$/i) {
-#      $actual = $fn;
-#   } elsif($fn =~ /^[^\\|\/]+$/i) {
-#      $actual = "txt\/$fn";
-#   } else {
-#      return undef;
-#   }
-#
-#   my $newmod = (stat($actual))[9];                  # find modification time
-#
-#   if(defined @info{"file_$fn"}) {                      # look at cached data
-#      my $hash = @info{"file_$fn"};
-#
-#      # use cached version if its still good
-#      return $$hash{data} if($$hash{mod} == $newmod);
-#   }
-#
-#   open($file,$actual) || return undef;
-#
-#   @{$$code{$fn}}{lines} = 0 if(ref($code) eq "HASH");
-#   while(<$file>) {                                           # read all data
-#      @{$$code{$fn}}{lines}++ if(ref($code) eq "HASH");
-#      $out .= $_;
-#   }
-#   close($file);
-#   $out =~ s/\r//g;
-#   $out =~ s/\n/\r\n/g;
-#
-#   @info{"file_$fn"} = {                                 # store cached data
-#      mod => $newmod,
-#      data => $out
-#   };
-#
-#   return $out;                                                # return data
-#}
-
 sub lastsite
 {
    my $target = obj(shift);
@@ -12630,7 +12683,7 @@ sub is_flag
       return ($count == 0) ? 0 : 1;
    }
 }
-#!/usr/bin/perl
+# #!/usr/bin/perl
 #
 # tm_lock.pl
 #    Evaluation of a string based lock to let people use/not use things.
@@ -12889,7 +12942,7 @@ sub lock_uncompile
       return $$result{lock};
     }
 }
-#!/usr/bin/perl
+# #!/usr/bin/perl
 #
 # tm_mysql.pl
 #   Routines required for TeenyMUSH to access mysql.
@@ -12905,7 +12958,7 @@ $log = {} if(ref($log) ne "HASH");
 
 #
 # get_db_credentials
-#    Load the database credentials from the tm_conf.dat file
+#    Load the database credentials from the tm_config.dat file
 #
 sub get_db_credentials
 {
@@ -13150,7 +13203,7 @@ sub fetch
    }
 }
 
-#!/usr/bin/perl
+# #!/usr/bin/perl
 #
 #
 # tm_sockets.pl
@@ -13335,7 +13388,13 @@ sub server_process_line
 #         printf("         '%s'\n",@info{sql_last_code});
          my_rollback($db);
    
-         my $msg = sprintf("%s crashed the server with: %s",name($hash),$_[1]);
+         my $msg;
+         if($_[1] =~ /^\s*connnect\s+/) {
+            $msg = sprintf("%s crashed the server with: connect blah blah",
+                name($hash),$_[1]);
+         } else {
+            $msg = sprintf("%s crashed the server with: %s",name($hash),$_[1]);
+         }
          necho(self   => $hash,
                prog   => prog($hash,$hash),
                source => [ "%s",$msg ]
@@ -13714,8 +13773,7 @@ __EOF__
    }
 }
 
-1;
-#!/usr/bin/perl
+# #!/usr/bin/perl
 #
 # tm_websock.pl
 #    Code required to access websockets from within the server. When this

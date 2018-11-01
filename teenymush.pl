@@ -180,7 +180,6 @@ sub load_code_in_file
 {
    my ($file,$verbose,$filter) = @_;
 
-   printf("Start: %s\n",scalar localtime());
    if(is_single && basename(lc($0)) ne lc($file)) {
       # skip
    } elsif(!-e $file) {
@@ -200,9 +199,7 @@ sub load_code_in_file
 
       $@ = '';
 
-      printf("Start eval : %s\n",scalar localtime());
       eval($data);                                                # run code
-      printf("End eval : %s\n",scalar localtime());
  
       if($@) {                                         # report any failures
          printf("\n\nload_code fatal: '%s'\n",$@);
@@ -2584,7 +2581,7 @@ sub cmd_switch
     my %last;
 
     my ($first,$second) = (get_segment2(shift(@list),"="));
-    $first = ansi_remove(evaluate($self,$prog,$first));
+    $first = trim(ansi_remove(evaluate($self,$prog,$first)));
     $first =~ s/[\r\n]//g;
     $first =~ tr/\x80-\xFF//d;
     unshift(@list,$second);
@@ -11839,6 +11836,7 @@ sub create_object
          db_set($id,"obj_home",$$self{obj_id});
       }
 
+      db_set($id,"obj_owner",$$self{obj_id});
       db_set($id,"obj_created_date",scalar localtime());
       if($type eq "PLAYER" || $type eq "OBJECT") {
          move($self,$prog,$id,$where);

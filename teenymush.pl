@@ -72,8 +72,8 @@ if($@) {
                                                                                 
 # check to see if the DBI module loads
 eval {                                                             
-   require DBI;                                                           
-   import DBI;                                                       
+	#   require DBI;                                                           
+	#   import DBI;                                                       
 };                                                                         
 if($@) {                                                           
    printf("WARNING: Missing DBI module, MYSQLDB disabled\n");      
@@ -203,6 +203,7 @@ sub load_code_in_file
  
       if($@) {                                         # report any failures
          printf("\n\nload_code fatal: '%s'\n",$@);
+	 write_to_file("teenymush.reload_fatal.txt",$@);
          return 0;
       } else {
          printf("\n");
@@ -1098,26 +1099,103 @@ sub cmd_delta
    printf("%s\n",print_var(\@delta));
 }
 
+# cmd_while
+#    Loop while the expression is true
+#
+sub cmd_while
+{
+   my ($self,$prog,$txt) = @_;
+   my (%last,$first);
+
+   if(defined $$prog{nomushrun}) {
+      out($prog,"#-1 \@WHILE is not a valid command to use in RUN function");
+      return;
+   }
+
+   my $cmd = $$prog{cmd_last};
+
+   if(!defined $$cmd{while_test}) {                 # initialize "loop"
+        $first = 1;
+        if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/s) {
+           ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
+           $$cmd{while_cmd} = $2;
+        } else {
+           return err($self,$prog,"usage: while (<expression>) { commands }");
+        }
+    }
+    $$cmd{while_count}++;
+
+    if($$cmd{while_count} >= 1000) {
+       printf("#*****# while exceeded maxium loop of 1000, stopped\n");
+       return err($self,$prog,"while exceeded maxium loop of 1000, stopped");
+    } elsif(test($self,$prog,$$cmd{while_test})) {
+       mushrun(self   => $self,
+               prog   => $prog,
+               runas  => $self,
+               source => 0,
+               cmd    => $$cmd{while_cmd},
+               child  => 1
+              );
+       return "RUNNING";
+    }
+}
+
+
+#
+# cmd_find
+#    Search the entire database for objects. When using a memory database,
+#    search in 100 object segments.
+#
 sub cmd_find
 {
    my ($self,$prog,$txt) = @_;
-   my @out;
+   my ($start,@out);
 
    if(memorydb) {
-      my $pat = glob2re("*$txt*");
-      my $owner = owner_id($self);
-      for(my $i=0;$i < $#db;$i++) {
-         if(valid_dbref($i) && owner_id($i) == $owner && name($i,1)=~/$pat/i) {
-            push(@out,obj_name($self,$i));
+      if(defined $$prog{nomushrun}) {
+         out($prog,"#-1 \@WHILE is not a valid command to use in RUN function");
+         return;
+      }
+
+      my $cmd = $$prog{cmd_last};
+
+      if(!defined $$cmd{find_pos}) {               # initialize "loop"
+         $$cmd{find_pos} = 0;
+         $$cmd{find_pat} = glob2re("*$txt*");
+         $$cmd{find_owner} = owner_id($self);
+      }
+
+      for($start=$$cmd{find_pos};                   # loop for 100 objects
+             $$cmd{find_pos} < $#db &&
+             $$cmd{find_pos} - $start < 100;
+             $$cmd{find_pos}++) {
+         if(valid_dbref($$cmd{find_pos}) &&             # does object match?
+            owner_id($$cmd{find_pos}) == $$cmd{find_owner} && 
+            name($$cmd{find_pos},1) =~ /$$cmd{find_pat}/i) {
+            push(@out,obj_name($self,$$cmd{find_pos}));
          }
       }
-      push(@out,"**End of List**");
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ join("\n",@out) ]
-        );
+
+      if($$cmd{find_pos} >= $#db) {                       # search is done
+         push(@out,"***End of List***");
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ join("\n",@out) ]
+           );
+         delete $$cmd{find_pos};                                 # clean up
+         delete $$cmd{find_pat};
+         delete $$cmd{find_owner};
+      } else {
+         if($#out >= -1) {
+            necho(self   => $self,
+                  prog   => $prog,
+                  source => [ join("\n",@out) ]
+              );
+         }
+         return "RUNNING";                                     # more to do
+      }
    } else {
-      necho(self   => $self,
+      necho(self   => $self,                              # search database
             prog   => $prog,
             source => [ table("select concat(obj_name, ".
                               "              '(#', ".
@@ -2065,7 +2143,7 @@ sub cmd_dump
                    "CONNECTED,PLAYER,LOG",
                    "<LOG> Database finished."
                   );
-         prune_dumps("dumps","dumps",@info{"conf.mudname"} . "\..*\.tdb");
+         prune_dumps("dumps",@info{"conf.mudname"} . "\..*\.tdb");
       }
       return;
    } else {
@@ -2270,7 +2348,7 @@ sub cmd_password
                   source => [ "Invalid old password." ],
                  );
          } else {
-            db_set($self,"password",mushhash($2));
+            db_set($self,"obj_password",mushhash($2));
             necho(self   => $self,
                   prog   => $prog,
                   source => [ "Passworld changed." ],
@@ -2441,7 +2519,7 @@ sub cmd_read
             source => [ "Done" ],
            );
    } elsif($txt =~ /^\s*help\s*$/) {                     # import help data
-      if(!open($file,"help.txt")) {
+      if(!open($file,"txt/help.txt")) {
          return necho(self   => $self,
                       prog   => $prog,
                       source => [ "Could not open help.txt for reading." ],
@@ -2637,7 +2715,7 @@ sub cmd_newpassword
 #      good_password($2) || return;
 
       if(memorydb) {
-         db_set($player,"password",mushhash($2));
+         db_set($player,"obj_password",mushhash($2));
       } else {
          sql(e($db,1),
              "update object ".
@@ -3613,7 +3691,7 @@ sub whisper
    }
 
    if(hasflag($self,"PLAYER")) { 
-      set($self,$prog,$self,"LAST_WHISPER","#$$obj{obj_id}",1);
+      set($self,$prog,$self,"OBJ_LAST_WHISPER","#$$obj{obj_id}",1);
    }
    return 1;
 }
@@ -3670,7 +3748,7 @@ sub page
    }
 
    if(hasflag($self,"PLAYER")) {
-      set($self,$prog,$self,"LAST_PAGE","#$$target{obj_id}",1);
+      set($self,$prog,$self,"OBJ_LAST_PAGE","#$$target{obj_id}",1);
    }
 }
 
@@ -4388,9 +4466,9 @@ sub cmd_connect
 
       if(invalid_player($self,$username,$pass)) {
          if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
-            ws_echo($sock,"Invalid command, try: connECT <user> <password>");
+            ws_echo($sock,"Either that player does not exist, or has a different password.");
          } else {
-            printf($sock "Invalid command, try: connecT <user> <password>\r\n");
+            printf($sock "Either that player does not exist, or has a different password.");
          }
          return;
       }
@@ -8268,9 +8346,21 @@ sub initialize_functions
    @fun{telnet_open}= sub { return &fun_telnet(@_);                };
    @fun{min}        = sub { return &fun_min(@_);                   };
    @fun{find}       = sub { return &fun_find(@_);                  };
+   @fun{convsecs}   = sub { return &fun_convsecs(@_);              };
 }
 
 initialize_functions if is_single;
+
+sub fun_convsecs
+{
+    my ($self,$prog,$txt) = @_;
+
+    if($txt =~ /^\s*(\d+)\s*$/) {
+       return scalar localtime($1);
+    } else {
+       return "#-1 Invalid seconds";
+    }
+}
 
 sub fun_find
 {
@@ -10593,25 +10683,27 @@ sub prune_dumps
          $count++ < 5 ||
 
          #file once per hour for a day
-         time() - $file <  43200 ||
+#         time() - $file <  43200 ||
 
          # file once per day for a week
-         (time() - $file > 43200 && time() - $file < 604800 &&
-          $$hash{day} != $prev) ||
+#         (time() - $file > 43200 && time() - $file < 604800 &&
+#          $$hash{day} != $prev) ||
 
          # file at least once per week for a month
-         (time() - $file > 604800 && time() - $file < 4687200 &&
-          $last - $file >= 604800) ||
+#         (time() - $file > 604800 && time() - $file < 4687200 &&
+#          $last - $file >= 604800) ||
 
          # file at least once per month
-         (time() - $file > 4687200 && $last - $file >= 4687200)
+#         (time() - $file > 4687200 && $last - $file >= 4687200)
+ 
+          $last - $file >= 604800
         ) {
          $last = $file;
       } else {
          if(!unlink("$name/$$hash{fn}")) {
-            printf("Delete file dumps/$$hash{fn} during cleanup.");
+            printf("Delete file dumps/$$hash{fn} during cleanup FAILED.");
          } else {
-            printf("# Deleting $$hash{fn} as part of db backup cleanup\n");
+		 #            printf("# Deleting $$hash{fn} as part of db backup cleanup\n");
          }
       }
       $prev = $$hash{day};
@@ -12450,11 +12542,12 @@ sub lastsite
          return undef;
       } else {
          my $list = $$attr{value};
-         my $data = $$list{(sort keys %$list)[-1]};
+         my $last = (sort {$a <=> $b} keys %$list)[-1];
 
-         if($data =~ /^\d+,\d+,(.*)$/) {
+         if($$list{$last} =~ /^\d+,\d+,(.*)$/) {
             return $1;
          } else {
+            delete @$list{$last};
             return undef;
          }
       }
@@ -13528,8 +13621,7 @@ sub server_handle_sockets
             @{@connected{$s}}{buf} .= $buf;                     # store input
           
                                                          # breakapart by line
-#            while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
-            while(@{@connected{$s}}{buf} =~ /\n/) {
+            while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
                @{@connected{$s}}{buf} = $';                # store left overs
                server_process_line(@connected{$s},$`);         # process line
 #               if(@{@connected{$s}}{raw} > 0) {

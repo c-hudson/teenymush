@@ -818,9 +818,6 @@ sub initialize_commands
    @command{"l"}        = { fun  => sub { return &cmd_look(@_); },          
                             alias => 1                                      };
    @command{"\@\@"}     = { fun  => sub { return;}                          };
-}
- 
-initialize_commands() if is_single;
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -840,6 +837,10 @@ initialize_commands() if is_single;
    delete @command{q};                                 # no alias for QUIT
    delete @command{qu};
    delete @command{qui};
+}
+ 
+initialize_commands() if is_single;
+
 # ------------------------------------------------------------------------#
 sub atr_first
 {
@@ -2934,6 +2935,9 @@ sub cmd_recall
     my ($self,$prog,$txt) = @_;
     my ($qualifier,@args);
 
+    my $attr = mget(126,"url_listen");
+
+    printf("%s",print_var($attr));
     if(memorydb) {
        return err($self,$prog,"\@recall is only supported under mysql");
     }
@@ -3697,8 +3701,8 @@ sub whisper
 }
 
 #
-# cmd_page
-#    Person to person communication reguardless of location.
+# cmd_whisper
+#    person to person communication in the same room.
 #
 sub cmd_whisper
 {
@@ -8351,6 +8355,10 @@ sub initialize_functions
 
 initialize_functions if is_single;
 
+#
+# fun_convsecs
+#    Convert number of seconds from epoch to a readable date
+#
 sub fun_convsecs
 {
     my ($self,$prog,$txt) = @_;
@@ -12128,8 +12136,8 @@ sub set
            "A-Z, 0-9, and _ : $attribute");
    } elsif($value =~ /^\s*$/) {
       if(memorydb) {
-         if(reserved($attribute)) {
-            err($self,$prog,"That attribute name is reserved.");
+         if(reserved($attribute) && !$quiet) {
+            err($self,$prog,"That attribute name is reserved -> $quiet.");
          } else {
             db_set($obj,$attribute,undef);
             if(!$quiet) {
@@ -12158,7 +12166,7 @@ sub set
       }
    } else {
       if(memorydb) {
-         if(reserved($attribute)) {
+         if(reserved($attribute) && !$quiet) {
             err($self,$prog,"That attribute name is reserved.");
          } else {
             db_set($obj,$attribute,$value);

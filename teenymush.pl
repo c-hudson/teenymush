@@ -524,6 +524,7 @@ sub arg
 $SIG{HUP} = sub {
   my $files = load_all_code(0,@info{filter});
   delete @info{engine};
+  delete @fun{keys %fun};
   printf("HUP signal caught, reloading: %s\n",$files ? $files : "none");
 };
 
@@ -1323,12 +1324,12 @@ sub cmd_give
          }
 
          if(!give_money($target,$what)) {
-            my_rollback();
+            my_rollback() if(mysqldb);
             return err($self,"Internal error, unable to give money to %s.",
                name($target));
          }
 
-         my_commit;
+         my_commit if(mysqldb);
 
          necho(self   => $self,
                prog   => $prog,
@@ -4983,7 +4984,7 @@ sub cmd_inventory
 sub cmd_look
 {
    my ($self,$prog,$txt) = @_;
-   my ($flag,$desc,$target,@exit,$out,$name);
+   my ($flag,$desc,$target,@exit,@con,$out,$name);
    my $owner = owner_id($self);
    my $perm = hasflag($self,"WIZARD");
 
@@ -5002,6 +5003,8 @@ sub cmd_look
    }
 
    if(memorydb) {
+      my $attr = get($target,"CONFORMAT");
+
       for my $obj (lcon($target)) { 
          if(!hasflag($obj,"DARK") &&
             ((hasflag($obj,"PLAYER") && hasflag($obj,"CONNECTED") ||
@@ -5010,6 +5013,8 @@ sub cmd_look
 
             if(!defined @db[$$obj{obj_id}]) {          # corrupt list, fix
                db_remove_list($target,"obj_content",$$obj{obj_id});
+            } elsif($attr ne undef) {
+               push(@con,"#" . $$obj{obj_id});
             } else {
                $out .= "\n" . color("h","Contents") . ":" if(++$flag == 1);
                if($$prog{hint} eq "WEB") {
@@ -5021,6 +5026,14 @@ sub cmd_look
             }
          }
       }
+
+      if($attr ne undef) {
+         my $prev = get_digit_variables($prog);              # save %0 .. %9
+         set_digit_variables($self,$prog,join(' ',@con)); # update to new values
+         $out .= "\n" . evaluate($self,$prog,$attr);
+         set_digit_variables($self,$prog,$prev);          # restore %0 .. %9
+      }
+     
       for my $obj (lexits($target)) { 
          if($obj ne undef && !hasflag($obj,"DARK")) {
             if($$prog{hint} eq "WEB") {
@@ -7322,8 +7335,7 @@ sub spin
           printf("%s",code("long"));
        };
 
-#      ualarm(800_000);                                # die at 8 milliseconds
-       ualarm(30_000_000);                              # die at 8 milliseconds
+       ualarm(5_000_000);                              # die at 8 milliseconds
 
 #      printf("PIDS: '%s'\n",join(',',keys %{@info{engine}}));
       for my $pid (sort { $a cmp $b } keys %{@info{engine}}) {
@@ -7351,9 +7363,7 @@ sub spin
             $$program{stack} = [];                          # and add new one
             my $stack = $$program{stack};
 
-            ualarm(30_000_000);                        # die at 8 milliseconds
             my $result = spin_run(\%last,$program,$cmd,$command);   # run cmd
-            ualarm(0);
 
             shift(@$command) if($result ne "RUNNING");
 
@@ -7401,6 +7411,7 @@ sub spin
 #            printf("# $pid Total calls: %s\n",$$prog{calls});
          }
       }
+       ualarm(0);
    };
 #   printf("Count: $count\n");
 #   printf("Spin: finish -> $count\n");
@@ -8351,10 +8362,27 @@ sub initialize_functions
    @fun{min}        = sub { return &fun_min(@_);                   };
    @fun{find}       = sub { return &fun_find(@_);                  };
    @fun{convsecs}   = sub { return &fun_convsecs(@_);              };
+   @fun{max}        = sub { return &fun_max(@_);                   };
 }
 
 initialize_functions if is_single;
 
+sub fun_max
+{
+   my ($self,$prog,@list) = @_;
+   my $max;
+
+   for my $i (@list) {
+      my $num = ($i =~ /^\s*(\d+)\s*$/) ? $1 : 0;
+      $max = $i if($i > $max || $max eq undef);
+   }
+
+   if($max eq undef) {
+      return "#-1 FUNCTION (MAX) EXPECTS BETWEEN 1 AND 100 ARGUMENTS";
+   } else {
+      return $max;
+   }
+}
 #
 # fun_convsecs
 #    Convert number of seconds from epoch to a readable date
@@ -11912,6 +11940,7 @@ sub create_object
       my $id = get_next_dbref();
       db_delete($id);
       db_set($id,"obj_name",$name);
+      db_set($id,"obj_created_by",$$user{hostname});
       if($pass ne undef && $type eq "PLAYER") {
          db_set($id,"obj_password",mushhash($pass));
       }
@@ -11930,6 +11959,8 @@ sub create_object
 
       if($type eq "PLAYER") {
          db_set($id,"obj_home",$where);
+         db_set($id,"obj_money",@info{"conf.starting_money"});
+         db_set($id,"obj_firstsite",$where);
          @player{lc($name)} = $id;
          printf("Addiing: %s => '%s'\n",lc($name),$id);
       } else {
@@ -12105,7 +12136,7 @@ sub give_money
    my $money = money($target);
 
    if(memorydb) {
-      db_set($owner,"money",$money + $amount);
+      db_set($owner,"obj_money",$money + $amount);
    } else {
       sql("update object " .
           "   set obj_money = ? ".
@@ -13446,7 +13477,7 @@ sub server_process_line
    } elsif(defined $$data{raw} && $$data{raw} == 2) {
      add_telnet_data($data,$input);
    } else {
-      eval {                                                  # catch errors
+#      eval {                                                  # catch errors
          local $SIG{__DIE__} = sub {
             printf("----- [ Crash Report@ %s ]-----\n",scalar localtime());
             printf("User:     %s\nCmd:      %s\n",name($user),$_[0]);
@@ -13478,7 +13509,7 @@ sub server_process_line
                &{@offline{$cmd}}($hash,prog($user,$user),$arg);  # invoke cmd
             }
          }
-      };
+#      };
 
       if($@) {                                # oops., you sunk my battle ship
 #         printf("# %s crashed the server with: %s\n%s",name($hash),$_[1],$@); 
@@ -13556,7 +13587,7 @@ sub get_free_port
 #
 sub server_handle_sockets
 {
-   eval {
+#   eval {
          local $SIG{__DIE__} = sub {
             printf("----- [ Crash Report@ %s ]-----\n",scalar localtime());
             printf("User:     %s\nCmd:      %s\n",name($user),$_[0]);
@@ -13643,7 +13674,7 @@ sub server_handle_sockets
 
      spin();
 
-   };
+#   };
    if($@){
       printf("Server Crashed, minimal details [main_loop]\n");
 

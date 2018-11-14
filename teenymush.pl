@@ -58,6 +58,7 @@ my (%command,                  #!# commands for after player has connected
     %player,                   #!# player list for quick lookup
     @free,                     #!# free objects list
     %deleted,                  #!# deleted objects during backup
+    %flag,                     #!# flag definition
    );                          #!#
 
 # check to see if the URI::Escape module loads
@@ -564,6 +565,7 @@ load_db_backup();                                    #!#
 
 initialize_functions();                              #!#
 initialize_commands();                               #!#
+initialize_flags();                               #!#
 server_start();                                      #!# start only once
 
 # #!/usr/bin/perl
@@ -840,7 +842,6 @@ sub initialize_commands
    delete @command{qui};
 }
  
-initialize_commands() if is_single;
 
 # ------------------------------------------------------------------------#
 sub atr_first
@@ -2677,22 +2678,28 @@ sub cmd_switch
           my $pat = glob2re(ansi_remove($txt));
 
           if($first =~ /$pat/) {
+             my $prev = get_digit_variables($prog);
+             set_digit_variables($self,$prog,"m",$1,$2,$3,$4,$5,$6,$7,$8,$9);
              return mushrun(self   => $self,
                             prog   => $prog,
                             runas  => $self,
                             source => 0,
                             cmd    => $cmd,
                            );
+             set_digit_variables($self,$prog,"m",$prev);
           }
        } else {
           @list[0] = $1 if(@list[0] =~ /^\s*{(.*)}\s*$/);
           @list[0] =~ s/\r|\n//g;
+          my $prev = get_digit_variables($prog);
+          set_digit_variables($self,$prog,"m",$1,$2,$3,$4,$5,$6,$7,$8,$9);
           return mushrun(self   => $self,
                          prog   => $prog,
                          runas  => $self,
                          source => 0,
                          cmd    => @list[0],
                         );
+          set_digit_variables($self,$prog,"m",$prev);
        }
     }
 }
@@ -2829,11 +2836,6 @@ sub cmd_telnet
             source => [ "Connection started to: %s:%s\n",$1,$2 ],
             debug  => 1,
            );
-      
-         necho(self   => $self,
-                      prog   => $prog,
-                      source => [ 1  ],
-                     );
       return 1;
    } else {
       necho(self   => $self,
@@ -5029,9 +5031,9 @@ sub cmd_look
 
       if($attr ne undef) {
          my $prev = get_digit_variables($prog);              # save %0 .. %9
-         set_digit_variables($self,$prog,join(' ',@con)); # update to new values
+         set_digit_variables($self,$prog,"",join(' ',@con)); # update to new
          $out .= "\n" . evaluate($self,$prog,$attr);
-         set_digit_variables($self,$prog,$prev);          # restore %0 .. %9
+         set_digit_variables($self,$prog,"",$prev);        # restore %0 .. %9
       }
      
       for my $obj (lexits($target)) { 
@@ -5207,6 +5209,7 @@ sub cmd_reload_code
    my $result = load_all_code(1,@info{filter});
    initialize_functions();
    initialize_commands();
+   initialize_flags();
 
    if($result eq undef) {
       necho(self   => $self,
@@ -5516,7 +5519,7 @@ sub atr_case
      return undef;
    } elsif(memorydb) {
       my $attr = mget($obj,$atr);
-      if(!defined $$attr{flag} || !defined @{$$attr{flag}}{case}) {
+      if(!defined $$attr{flag} || !defined @{$$attr{flag}}{CASE}) {
          return 0;
       } else {
          return 1;
@@ -6319,32 +6322,35 @@ use Storable qw(dclone);
 #    flag name, 1 character flag name, who can set it, if its an 
 #    attribute flag (2), or an object flag (1).
 #
-my %flag = (
-   ANYONE         => { letter => "+",                   type => 1 },
-   GOD            => { letter => "G", perm => "GOD",    type => 1 },
-   WIZARD         => { letter => "W", perm => "GOD",    type => 1 },
-   PLAYER         => { letter => "P", perm => "GOD",    type => 1 },
-   ROOM           => { letter => "R", perm => "GOD",    type => 1 },
-   EXIT           => { letter => "e", perm => "GOD",    type => 1 },
-   OBJECT         => { letter => "o", perm => "GOD",    type => 1 },
-   LISTENER       => { letter => "M", perm => "!GUEST", type => 1 },
-   SOCKET_PUPPET  => { letter => "S", perm => "WIZARD", type => 1 },
-   PUPPET         => { letter => "p", perm => "!GUEST", type => 1 },
-   GUEST          => { letter => "g", perm => "WIZARD", type => 1 },
-   SOCKET_INPUT   => { letter => "I", perm => "WIZARD", type => 1 },
-   DARK           => { letter => "D", perm => "!GUEST", type => 1 },
-   CASE           => { letter => "C", perm => "!GUEST", type => 2 },
-   NOSPOOF        => { letter => "N", perm => "!GUEST", type => 1 },
-   VERBOSE        => { letter => "v", perm => "!GUEST", type => 1 },
-   MONITOR        => { letter => "M", perm => "WIZARD", type => 1 },
-   SQL            => { letter => "Q", perm => "WIZARD", type => 1 },
-   ABODE          => { letter => "A", perm => "!GUEST", type => 1 },
-   LINK_OK        => { letter => "L", perm => "!GUEST", type => 1 },
-   ENTER_OK       => { letter => "E", perm => "!GUEST", type => 1 },
-   VISUAL         => { letter => "V", perm => "!GUEST", type => 1 },
-   ANSI           => { letter => "X", perm => "!GUEST", type => 1 },
-   LOG            => { letter => "l", perm => "WIZARD", type => 1 },
-);
+sub initialize_flags
+{
+   delete @flag{keys %flag};
+
+   @flag{ANYONE}         = { letter => "+",                   type => 1 };
+   @flag{GOD}            = { letter => "G", perm => "GOD",    type => 1 };
+   @flag{WIZARD}         = { letter => "W", perm => "GOD",    type => 1 };
+   @flag{PLAYER}         = { letter => "P", perm => "GOD",    type => 1 };
+   @flag{ROOM}           = { letter => "R", perm => "GOD",    type => 1 };
+   @flag{EXIT}           = { letter => "e", perm => "GOD",    type => 1 };
+   @flag{OBJECT}         = { letter => "o", perm => "GOD",    type => 1 };
+   @flag{LISTENER}       = { letter => "M", perm => "!GUEST", type => 1 };
+   @flag{SOCKET_PUPPET}  = { letter => "S", perm => "WIZARD", type => 1 };
+   @flag{PUPPET}         = { letter => "p", perm => "!GUEST", type => 1 };
+   @flag{GUEST}          = { letter => "g", perm => "WIZARD", type => 1 };
+   @flag{SOCKET_INPUT}   = { letter => "I", perm => "WIZARD", type => 1 };
+   @flag{DARK}           = { letter => "D", perm => "!GUEST", type => 1 };
+   @flag{CASE}           = { letter => "C", perm => "!GUEST", type => 2 };
+   @flag{NOSPOOF}        = { letter => "N", perm => "!GUEST", type => 1 };
+   @flag{VERBOSE}        = { letter => "v", perm => "!GUEST", type => 1 };
+   @flag{MONITOR}        = { letter => "M", perm => "WIZARD", type => 1 };
+   @flag{SQL}            = { letter => "Q", perm => "WIZARD", type => 1 };
+   @flag{ABODE}          = { letter => "A", perm => "!GUEST", type => 1 };
+   @flag{LINK_OK}        = { letter => "L", perm => "!GUEST", type => 1 };
+   @flag{ENTER_OK}       = { letter => "E", perm => "!GUEST", type => 1 };
+   @flag{VISUAL}         = { letter => "V", perm => "!GUEST", type => 1 };
+   @flag{ANSI}           = { letter => "X", perm => "!GUEST", type => 1 };
+   @flag{LOG}            = { letter => "l", perm => "WIZARD", type => 1 };
+};
 
 #
 # db_version
@@ -6564,7 +6570,7 @@ sub flag_attr
 {
    my $txt = shift;
 
-   if(defined @flag{lc($txt)} && @{@flag{lc($txt)}}{type} == 2) {
+   if(defined @flag{uc($txt)} && @{@flag{uc($txt)}}{type} == 2) {
       return 1;
    } else {
       return 0;
@@ -6640,6 +6646,19 @@ sub reserved
 }
 
 
+sub db_attr_exist
+{
+   my ($id,$key) = (obj(shift),lc(shift));
+
+   my $obj = dbref($id);
+
+   if($obj eq undef || !defined $$obj{$key}) {
+      return 0;
+   } else {
+      return 1;
+   }
+}
+
 sub db_set
 {
    my ($id,$key,$value) = (obj(shift),lc(shift),shift);
@@ -6658,7 +6677,7 @@ sub db_set
    my $attr = $$obj{$key};
 
    # listen/command
-   if(!reserved($attr) && $value =~ /([\$\^\!])(.+?)(?<![\\])([:])/) {
+   if(!reserved($attr) && $value =~ /^([\$\^\!])(.+?)(?<![\\])([:])/) {
       my ($type,$pat,$seg) = ($1,$2,$');
       $pat =~ s/\\:/:/g;
       $$attr{type} = $type;
@@ -6667,12 +6686,15 @@ sub db_set
       $$attr{value} = $seg;
    } else {                                                # non-listen/command
       $$attr{value} = $value;                             # set attribute value
+      delete @$attr{type};
+      delete @$attr{glob};
+      delete @$attr{regexp};
    }
 }
 
 sub db_set_flag
 {
-   my ($id,$key,$flag) = (obj(shift),lc(shift),shift);
+   my ($id,$key,$flag,$value) = (obj(shift),lc(shift),shift,shift);
 
    return if $flag eq undef;
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
@@ -6686,7 +6708,11 @@ sub db_set_flag
 
    $$attr{flag} = {} if(!defined $$attr{flag});
 
-   @{$$attr{flag}}{$flag} = 1;
+   if($value eq undef) {
+      delete @{$$attr{flag}}{$flag};
+   } else {
+      @{$$attr{flag}}{$flag} = 1;
+   }
 }
 
 sub db_set_list
@@ -6823,7 +6849,7 @@ sub db_sql_dump
                          "   and flg.fde_flag_id = fde.fde_flag_id " .
                          "   and fde_type = 2"
                    )}) {
-      db_set_flag($$rec{obj_id},$$rec{atr_name},$$rec{fde_name});
+      db_set_flag($$rec{obj_id},$$rec{atr_name},$$rec{fde_name},1);
    }
 
    for my $rec (@{sql("select * from content")}) {
@@ -6892,10 +6918,10 @@ sub db_process_line
       $$state{obj} = $1;
    } elsif($$state{obj} ne undef && $line =~ /^\s*([^ \/:]+):([^:]*):M:/) {
       db_set($$state{obj},$1,decode_base64($'));
-      db_set_flag($$state{obj},$1,$2) if($2 ne undef);
+      db_set_flag($$state{obj},$1,$2,1) if($2 ne undef);
    } elsif($$state{obj} ne undef && $line =~ /^\s*([^ \/:]+):([^:]*):A:/) {
       db_set($$state{obj},$1,$');
-      db_set_flag($$state{obj},$1,$2) if($2 ne undef);
+      db_set_flag($$state{obj},$1,$2,1) if($2 ne undef);
       $$state{loc} = $' if($1 eq "obj_location");
    } elsif($$state{obj} ne undef && $line =~ /^\s*([^ \/:]+):([^:]*):L:/) {
       my ($attr,$list) = ($1,$');
@@ -7207,7 +7233,7 @@ sub mushrun
     }
 
     if(defined $arg{wild}) {
-       set_digit_variables($arg{self},$arg{prog},@{$arg{wild}}); # copy %0..%9
+       set_digit_variables($arg{self},$arg{prog},"",@{$arg{wild}}); # copy %0-%9
     }
     
     delete @{$arg{self}}{child};
@@ -7223,39 +7249,31 @@ sub mushrun
 
 sub set_digit_variables
 {
-   my ($self,$prog) = (shift,shift);
+   my ($self,$prog,$sub) = (shift,shift,shift);
    my $hash;
 
 
    if(ref($_[0]) eq "HASH") {
       my $new = shift;
       for my $i (0 .. 9) {
-#         if($self ne undef) {
-#            @{$$prog{var}}{$i} = evaluate($self,$prog,$$new{$i});
-#         } else {
-            @{$$prog{var}}{$i} = $$new{$i};
-#         }
+         @{$$prog{var}}{$sub . $i} = $$new{$i};
       }
    } else {
       my @var = @_;
 
       for my $i (0 .. 9 ) {
-#         if($self ne undef) {
-#            @{$$prog{var}}{$i} = evaluate($self,$prog,$var[$i]);
-#         } else {
-            @{$$prog{var}}{$i} = $var[$i];
-#         }
+         @{$$prog{var}}{$sub . $i} = $var[$i];
       }
    }
 }
 
 sub get_digit_variables
 {
-    my $prog = shift;
+    my ($prog,$sub) = (shift,shift);
     my $result = {};
   
     for my $i (0 .. 9) {
-       $$result{$i} =  @{$$prog{var}}{$i};
+       $$result{$sub . $i} =  @{$$prog{var}}{$sub . $i};
     }
     return $result;
 }
@@ -8259,15 +8277,15 @@ use Compress::Zlib;
 # executing the function. The sub-hash defines exactly which argument
 # should be not evaluated ( starts at 1 not 0 )
 #
-my %exclude = 
-(
-   iter      => { 2 => 1 },
-   parse     => { 2 => 1 },
-   setq      => { 2 => 1 },
-   switch    => { all => 1 },
-#   u         => { 2 => 1, 3 => 1, 4 => 1, 5 => 1, 6 => 1, 7 => 1, 8 => 1,
-#                  9 => 1, 10 => 1 },
-);
+#my %exclude = 
+#(
+#   iter      => { 2 => 1 },
+#   parse     => { 2 => 1 },
+#   setq      => { 2 => 1 },
+#   switch    => { all => 1 },
+##   u         => { 2 => 1, 3 => 1, 4 => 1, 5 => 1, 6 => 1, 7 => 1, 8 => 1,
+##                  9 => 1, 10 => 1 },
+#);
 
 sub initialize_functions
 {
@@ -8363,9 +8381,24 @@ sub initialize_functions
    @fun{find}       = sub { return &fun_find(@_);                  };
    @fun{convsecs}   = sub { return &fun_convsecs(@_);              };
    @fun{max}        = sub { return &fun_max(@_);                   };
+   @fun{controls}   = sub { return &fun_controls(@_);              };
 }
 
-initialize_functions if is_single;
+sub fun_controls
+{
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,1,2) ||
+     return "#-1 FUNCTION (CONTROLS) EXPECTS 2 ARGUMENTS";
+
+   my $obj = find($self,$prog,evaluate($self,$prog,shift)) ||
+      return "#-1 ARG1 NOT FOUND";
+
+   my $target = find($self,$prog,evaluate($self,$prog,shift)) || 
+      return "#-1 ARG2 NOT FOUND";
+
+   return controls($obj,$target);
+}
 
 sub fun_max
 {
@@ -8373,8 +8406,12 @@ sub fun_max
    my $max;
 
    for my $i (@list) {
-      my $num = ($i =~ /^\s*(\d+)\s*$/) ? $1 : 0;
-      $max = $i if($i > $max || $max eq undef);
+      my $number = evaluate($self,$prog,$i);
+
+      if($number !~ /^\s*(\d+)\s*$/) { # treat like zero
+         $number = 0;
+      }
+      $max = $number if($number > $max || $max eq undef);
    }
 
    if($max eq undef) {
@@ -8389,60 +8426,35 @@ sub fun_max
 #
 sub fun_convsecs
 {
-    my ($self,$prog,$txt) = @_;
+    my ($self,$prog) = (shift,shift);
+ 
+    good_args($#_,1) ||
+       return "#-1 FUNCTION (CONVSECS) EXPECTS 1 ARGUMENT";
+
+    my $txt = evaluate($self,$prog,shift);
 
     if($txt =~ /^\s*(\d+)\s*$/) {
        return scalar localtime($1);
     } else {
-       return "#-1 Invalid seconds";
+       return "#-1 INVALID SECONDS";
     }
 }
 
 sub fun_find
 {
-    my ($self,$prog,$txt) = @_;
+    my ($self,$prog) = (shift,shift);
 
-    my $obj = find($self,$prog,$txt);
+    good_args($#_,1) ||
+       return "#-1 FUNCTION (CONVSECS) EXPECTS 1 ARGUMENT";
 
-    printf("FUN_FIND: '%s'\n",$obj);
+    my $obj = find($self,$prog,evaluate($self,$prog,shift));
+
     if($obj ne undef) {
        return $$obj{obj_id};
     } else {
-       return "UNFOUND";
+       return "#-1 UNFOUND OBJECT";
     }
 }
-# starting point
-sub fun_ansi
-{
-   my ($self,$prog,$codes,$txt) = (obj(shift),shift,shift,shift);
-   my ($hilite,$pre);
-
-   my %ansi = (
-      x => 30, X => 40,
-      r => 31, R => 41,
-      g => 32, G => 42,
-      y => 33, Y => 43,
-      b => 34, B => 44,
-      m => 35, M => 45,
-      c => 36, C => 46,
-      w => 37, W => 47,
-      u => 4,  i => 7,
-      h => 1
-   );
-
-   $txt =~ s/ //g;
-#   $hilite = 1 if($codes =~ /h/);
-
-   for my $ch (split(//,$codes)) {
-      if(defined @ansi{$ch} && $hilite) {
-         $pre .= "\e[@ansi{$ch};1m";
-      } elsif(defined @ansi{$ch} && !$hilite) {
-         $pre .= "\e[@ansi{$ch}m";
-      }
-   }
-   return $pre . $txt . "\e[0m";
-}
-
 
 sub fun_min
 {
@@ -8453,13 +8465,12 @@ sub fun_min
      return "#-1 FUNCTION (MIN) EXPECTS 1 AND 100 ARGUMENTS";
 
    while($#_ >= 0) {
-      if($_[0] !~ /^\s*-{0,1}\d+\s*$/) {           # emulate mush behavior
+      my $txt = evaluate($self,$prog,shift);
+
+      if($txt !~ /^\s*-{0,1}\d+\s*$/) {           # emulate mush behavior
          $min = 0 if ($min > 0 || $min eq undef);
-         shift;
-      } elsif($min eq undef || $min > $_[0]) {
-         $min = shift;
-      } else {
-         shift;
+      } elsif($min eq undef || $min > $txt) {
+         $min = $txt;
       }
    }
    return $min;
@@ -8471,15 +8482,19 @@ sub fun_fold
    my ($count,$atr,$last,$zero,$one);
 
    good_args($#_,2,3,4) ||
-     return "#-1 FUNCTION (FOLD) EXPECTS 2 TO 3 ARGUMENTS $#_";
-   my ($atr,$list,$base,$idelim) = (shift,shift,shift);
+     return "#-1 FUNCTION (FOLD) EXPECTS 2 TO 3 ARGUMENTS";
+
+   my $atr = evaluate($self,$prog,shift);
+   my $list = evaluate($self,$prog,shift);
+   my $base = evaluate($self,$prog,shift);
+   my $idelim = evaluate($self,$prog,shift);
 
    my $prev = get_digit_variables($prog);
 
    my $atr = fun_get($self,$prog,$atr);
    return $atr if($atr eq undef || $atr =~ /^#-1 /);
 
-   my (@list) = safe_split(evaluate($self,$prog,$list),$idelim);
+   my (@list) = safe_split($list,$idelim);
    while($#list >= 0) {
       if($count eq undef && $base ne undef) {
          ($zero,$one) = ($base,shift(@list));
@@ -8489,12 +8504,12 @@ sub fun_fold
          ($zero,$one) = ($last,shift(@list));
       }
 
-      set_digit_variables($self,$prog,$zero,$one);
+      set_digit_variables($self,$prog,"",$zero,$one);
       $last  = evaluate($self,$prog,$atr);
       $count++;
    }
 
-   set_digit_variables($self,$prog,$prev);
+   set_digit_variables($self,$prog,"",$prev);
 
    return $last;
 }
@@ -8508,7 +8523,7 @@ sub fun_idle
    good_args($#_,1) ||
      return "#-1 FUNCTION (IDLE) EXPECTS 1 ARGUMENT";
 
-   my $name = shift;
+   my $name = evaluate($self,$prog,shift);
 
    my $player = find_player($self,$prog,$name) ||
      return -2;
@@ -8538,21 +8553,24 @@ sub fun_idle
 sub fun_ucstr
 {
    my ($self,$prog,$txt) = (obj(shift),shift);
-   my $result;
+   my @out;
 
-   my $str = ansi_init(join(',',@_));
-   for my $i (0 .. $#{$$str{ch}}) {
-      @{$$str{ch}}[$i] = uc(@{$$str{ch}}[$i]);
+   while($#_ >= 0) {
+      my $str = ansi_init(evaluate($self,$prog,shift));
+
+      for my $i (0 .. $#{$$str{ch}}) {
+         @{$$str{ch}}[$i] = uc(@{$$str{ch}}[$i]);
+      }
+      push(@out,ansi_string($str,1));
    }
-
-   return ansi_string($str,1);
+   return join(',',@out);
 }
 
 sub fun_sort
 {
    my ($self,$prog,$txt) = (obj(shift),shift);
 
-   return join(' ',sort split(" ",shift));
+   return join(' ',sort split(" ",evaluate($self,$prog,shift)));
 }
 
 sub fun_base64
@@ -8562,7 +8580,8 @@ sub fun_base64
    good_args($#_,2) ||
      return "#-1 FUNCTION (BASE64) EXPECTS 2 ARGUMENT ($#_)";
 
-   my ($type,$txt) = (shift, evaluate($self,$prog,shift));
+   my $type = evaluate($self,$prog,shift);
+   my $txt = evaluate($self,$prog,shift);
 
    if(length($type) == 0) {
       return "#-1 FIRST ARGUMENT MUST BE Encode OR DECODE";
@@ -8602,28 +8621,38 @@ sub fun_uncompress
    good_args($#_,1) ||
      return "#-1 FUNCTION (COMPRESS) EXPECTS 1 ARGUMENT";
 
-   my $txt = valuate($self,$prog,shift);
+   my $txt = evaluate($self,$prog,shift);
 
    return uncompress($txt);
 }
 
 sub fun_reverse
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog) = (shift,shift);
 
-   return reverse $txt;
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (REVERSE) EXPECTS 1 ARGUMENT";
+
+   return reverse evaluate($self,$prog,shift);
 }
 
 sub fun_revwords
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog) = (shift,shift);
 
-   return join(' ',reverse split(/\s+/,$txt));
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (REVWORDS) EXPECTS 1 ARGUMENT";
+
+   return join(' ',reverse split(/\s+/,evaluate($self,$prog,shift)));
 }
 
 sub fun_telnet
 {
-   my ($self,$prog,$txt) = (obj(shift),shift);
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (TELNET_OPEN) EXPECTS 1 ARGUMENT";
+
    my $txt = evaluate($self,$prog,shift);
 
    if($txt =~ /^#-1 Connection Closed$/i ||
@@ -8637,7 +8666,12 @@ sub fun_telnet
 
 sub fun_rand
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (RAND) EXPECTS 1 ARGUMENT";
+
+   my $txt = evaluate($self,$prog,shift);
 
    if($txt =~ /^\s*(\d+)\s*$/) {
       if($1 < 1) {
@@ -8676,11 +8710,14 @@ sub var_restore
 
 sub fun_lexits
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog) = (obj(shift),shift);
    my @result;
 
-   my $target = find($self,$prog,$txt);
-   return "#-1 NOT FOUND" if($target eq undef);
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (LEXITS) EXPECTS 1 ARGUMENT";
+
+   my $target = find($self,$prog,evaluate($self,$prog,shift)) ||
+      return "#-1 NOT FOUND";
 
    for my $exit (lexits($target)) {
       push(@result,"#" . $$exit{obj_id});
@@ -8823,8 +8860,13 @@ sub graph_connected
 
 sub fun_run
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog) = (shift,shift);
    my (%none, $hash, %tmp, $match, $cmd,$arg);
+
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (RUN) REQUIRES 1 ARGUMENT";
+
+   my $txt = evaluate($self,$prog,shift);
 
    my $command = { runas => $self };
    if($txt  =~ /^\s*([^ \/]+)(\s*)/) {        # split cmd from args
@@ -8981,12 +9023,12 @@ sub fun_setinter
    my ($self,$prog) = (shift,shift);
    my (%list, %out);
 
-   for my $i (split(/ /,@_[0])) {
+   for my $i (split(/ /,evaluate($self,$prog,@_[0]))) {
        $i =~ s/^\s+|\s+$//g;
        @list{$i} = 1;
    }
 
-   for my $i (split(/ /,@_[1])) {
+   for my $i (split(/ /,evalute($self,$prog,@_[1]))) {
       $i =~ s/^\s+|\s+$//g;
       @out{$i} = 1 if(defined @list{$i});
   }
@@ -8999,12 +9041,29 @@ sub fun_lwho
    my ($self,$prog) = (shift,shift);
    my @who;
 
+   good_args($#_,0,1) ||
+      return "#-1 FUNCTION (LWHO) EXPECTS 0 OR 1 ARGUMENTS-$#_";
+
+   my $flag = evaluate($self,$prog,shift);
+
+   if($flag ne undef && $flag !~ /^\s*(0|1)\s*$/) {
+      return "#-1 ARGUMENT 1 SHOULD BE EITHER 0 OR 1"; 
+   }
+   
    for my $key (keys %connected) {
       my $hash = @connected{$key};
       if($$hash{raw} != 0||!defined $$hash{obj_id}||$$hash{obj_id} eq undef) {
          next;
       }
-      push(@who,"#" . @{@connected{$key}}{obj_id});
+      if($flag) {
+         push(@who,
+              "#" . 
+              @{@connected{$key}}{obj_id} . ":" .
+              @{@connected{$key}}{port}
+             );
+      } else {
+         push(@who,"#" . @{@connected{$key}}{obj_id});
+      }
    }
    return join(' ',@who);
 }
@@ -9013,17 +9072,21 @@ sub fun_lwho
 sub fun_lcstr
 {
    my ($self,$prog) = (shift,shift);
+   my @out;
 
    good_args($#_,1) ||
      return "#-1 FUNCTION (LCSTR) EXPECTS 1 ARGUMENT ($#_)";
 
-   my $str = ansi_init(join(',',@_));
+   while($#_ >= 0) {
+      my $str = ansi_init(evaluate($self,$prog,shift));
 
-   for my $i (0 .. $#{$$str{ch}}) {
-      @{$$str{ch}}[$i] = lc(@{$$str{ch}}[$i]);
+      for my $i (0 .. $#{$$str{ch}}) {
+         @{$$str{ch}}[$i] = lc(@{$$str{ch}}[$i]);
+      }
+      push(@out,ansi_string($str,1));
    }
 
-   return ansi_string($str,1);
+   return join(',',@out);
 }
 
 sub fun_home
@@ -9033,10 +9096,17 @@ sub fun_home
    good_args($#_,0,1) ||
       return "#-1 FUNCTION (HOME) EXPECT 0 OR 1 ARGUMENT";
 
-   my $target = find($self,$prog,shift);
-   return "#-1 NOT FOUND" if($target eq undef);
+   if(@_[0] eq undef) {
+      return home($self);
+   }
 
-   return "#" . home($target);
+   my $target = find($self,$prog,evaluate($self,$prog,shift));
+
+   if($target eq undef) {
+      return "#-1 NOT FOUND";
+   } else {
+      return "#" . home($target);
+   }
 }
 
 #
@@ -9049,7 +9119,7 @@ sub fun_capstr
    good_args($#_,1) ||
      return "#-1 FUNCTION (SQUISH) EXPECTS 1 ARGUMENT ($#_)";
 
-    return ucfirst(shift);
+    return ucfirst(evaluate($self,$prog,shift));
 }
 
 #
@@ -9065,6 +9135,8 @@ sub fun_squish
    good_args($#_,1) ||
      return "#-1 FUNCTION (SQUISH) EXPECTS 1 ARGUMENT ($#_)";
 
+   my $txt = evaluate($self,$prog,shift);
+
    $txt =~ s/^\s+|\s+$//g;
    $txt =~ s/\s+/ /g;
    return $txt;
@@ -9077,7 +9149,8 @@ sub fun_eq
    good_args($#_,2) ||
       return "#-1 FUNCTION (EQ) EXPECTS 2 ARGUMENTS";
 
-   my ($one,$two) = @_;
+   my $one = evaluate($self,$prog,shift);
+   my $two = evaluate($self,$prog,shift);
 
    $one =~ s/^\s+|\s+$//g;
    $two =~ s/^\s+|\s+$//g;
@@ -9088,7 +9161,10 @@ sub fun_loc
 {
    my ($self,$prog,$txt) = @_;
 
-   my $target = find($self,$prog,$txt);
+   good_args($#_,2) ||
+      return "#-1 FUNCTION (LOC) EXPECTS 1 ARGUMENT";
+
+   my $target = find($self,$prog,evaluate($self,$prog,shift));
 
    if($target eq undef) {
       return "#-1 NOT FOUND";
@@ -9106,8 +9182,8 @@ sub fun_hasflag
    good_args($#_,2) ||
       return "#-1 FUNCTION (HASFLAG) EXPECTS 2 ARGUMENTS";
 
-   if((my $target = find($self,$prog,$_[0])) ne undef) {
-      return hasflag($target,$_[1]);
+   if((my $target = find($self,$prog,evaluate($self,$prog,shift))) ne undef) {
+      return hasflag($target,shift);
    } else {
       return "#-1 Unknown Object";
    }
@@ -9119,7 +9195,11 @@ sub fun_gt
 
    good_args($#_,2) ||
       return "#-1 FUNCTION (GT) EXPECTS 2 ARGUMENTS";
-   return (@_[0] > @_[1]) ? 1 : 0;
+
+   my $one = evaluate($self,$prog,shift);
+   my $two = evaluate($self,$prog,shift);
+
+   return ($one > $two) ? 1 : 0;
 }
 
 sub fun_gte
@@ -9128,7 +9208,11 @@ sub fun_gte
 
    good_args($#_,2) ||
       return "#-1 FUNCTION (GTE) EXPECTS 2 ARGUMENTS";
-   return (@_[0] >= @_[1]) ? 1 : 0;
+
+   my $one = evaluate($self,$prog,shift);
+   my $two = evaluate($self,$prog,shift);
+
+   return ($one >= $two) ? 1 : 0;
 }
 
 sub fun_lt
@@ -9137,7 +9221,11 @@ sub fun_lt
 
    good_args($#_,2) ||
       return "#-1 FUNCTION (LT) EXPECTS 2 ARGUMENTS";
-   return (@_[0] < @_[1]) ? 1 : 0;
+
+   my $one = evaluate($self,$prog,shift);
+   my $two = evaluate($self,$prog,shift);
+
+   return ($one < $two) ? 1 : 0;
 }
 
 sub fun_lte
@@ -9146,15 +9234,20 @@ sub fun_lte
 
    good_args($#_,2) ||
       return "#-1 FUNCTION (LT) EXPECTS 2 ARGUMENTS";
-   return (@_[0] <= @_[1]) ? 1 : 0;
+
+   my $one = evaluate($self,$prog,shift);
+   my $two = evaluate($self,$prog,shift);
+
+   return ($one <= $two) ? 1 : 0;
 }
 
 sub fun_or
 {
    my ($self,$prog) = (shift,shift);
 
-   for my $i (0 .. $#_) {
-      return 1 if($_[$i]);
+   while($#_ >= 0) {
+      my $val = evaluate($self,$prog,shift);
+      return 1 if($val);
    }
    return 0;
 }
@@ -9167,7 +9260,9 @@ sub fun_isnum
    good_args($#_,1) ||
       return "#-1 FUNCTION (ISNUM) EXPECTS 1 ARGUMENT";
 
-   return looks_like_number(ansi_remove($_[0])) ? 1 : 0;
+   my $val = evaluate($self,$prog,shift);
+
+   return looks_like_number(ansi_remove($val)) ? 1 : 0;
 }
 
 sub fun_lnum
@@ -9177,17 +9272,19 @@ sub fun_lnum
    good_args($#_,1) ||
       return "#-1 FUNCTION (LNUM) EXPECTS 1 ARGUMENT";
 
-   return "#-1 ARGUMENT MUST BE NUMBER" if(!looks_like_number($_[0]));
+   my $num = evaluate($self,$prog,shift);
+   return "#-1 ARGUMENT MUST BE NUMBER" if(!looks_like_number($num));
 
-   return join(' ',0 .. ($_[0]-1));
+   return join(' ',0 .. ($num - 1));
 }
 
 sub fun_and
 {
    my ($self,$prog) = (shift,shift);
 
-   for my $i (0 .. $#_) {
-      return 0 if($_[$i] eq 0);
+   while($#_ >= 0) {
+      my $num = evaluate($self,$prog,shift);
+      return 0 if($num eq 0);
    }
    return 1;
 }
@@ -9199,7 +9296,7 @@ sub fun_not
    good_args($#_,1) ||
       return "#-1 FUNCTION (NOT) EXPECTS 1 ARGUMENTS";
 
-   return (! $_[0] ) ? 1 : 0;
+   return (! evaluate($self,$prog,shift)) ? 1 : 0;
 }
 
 
@@ -9207,10 +9304,11 @@ sub fun_words
 {
    my ($self,$prog) = (shift,shift);
 
-   my ($txt,$delim) = @_;
-
    good_args($#_,1,2) ||
       return "#-1 FUNCTION (WORDS) EXPECTS 1 OR 2 ARGUMENTS";
+
+   my $txt = evaluate($self,$prog,shift);
+   my $delim = evaluate($self,$prog,shift);
 
    return scalar(safe_split(ansi_remove($txt),
                             ($delim eq undef) ? " " : $delim
@@ -9251,6 +9349,8 @@ sub fun_center
    } elsif($size eq 0) { 
       return "#-1 SECOND ARGUMENT MUST NOT BE ZERO";
    }
+   my $txt = evaluate($self,$prog,shift);
+   my $size = evaluate($self,$prog,shift);
 
    $txt = ansi_substr($txt,0,$size);
 
@@ -9267,12 +9367,11 @@ sub fun_switch
 {
    my ($self,$prog) = (shift,shift);
 
-   my $first = ansi_remove(evaluate($self,$prog,shift));
+   my $first = trim(single_line(ansi_remove(evaluate($self,$prog,shift))));
 
    while($#_ >= 0) {
       if($#_ >= 1) {
-         my $txt = ansi_remove(evaluate($self,$prog,shift));
-         my $pat = glob2re($txt);
+         my $pat = glob2re(evaluate($self,$prog,shift));
          if($first =~ /$pat/) {
             return evaluate($self,$prog,@_[0]);
          } else {
@@ -9308,12 +9407,16 @@ sub fun_index
 {
    my ($self,$prog) = (shift,shift);
 
-   my ($txt,$delim,$first,$size) = @_;
+   good_args($#_,4) ||
+      return "#-1 FUNCTION (INDEX) EXPECTS 4 ARGUMENTS";
+
+   my $txt = evaluate($self,$prog,shift);
+   my $delim = evaluate($self,$prog,shift);
+   my $first = evaluate($self,$prog,shift);
+   my $size = evaluate($self,$prog,shift);
    my $i = 1;
 
-   if(!good_args($#_,4)) {
-      return "#-1 FUNCTION (INDEX) EXPECTS 4 ARGUMENTS";
-   } elsif(!looks_like_number($first)) {
+   if(!looks_like_number($first)) {
       return "#-1 THIRD ARGUMENT MUST BE A NUMERIC VALUE";
    } elsif(!looks_like_number($size)) {
       return "#-1 THIRD ARGUMENT MUST BE A NUMERIC VALUE";
@@ -9363,11 +9466,14 @@ sub fun_after
       return "#-1 Function (AFTER) EXPECTS 1 or 2 ARGUMENTS";
    }
 
-   my $loc = index(@_[0],@_[1]);
+   my $txt = evaluate($self,$prog,shift);
+   my $after = evaluate($self,$prog,shift);
+
+   my $loc = index($txt,$after);
    if($loc == -1) {
       return undef;
    } else {
-      my $result = substr(evaluate($self,$prog,@_[0]),$loc + length(@_[1]));
+      my $result = substr(evaluate($self,$prog,$txt),$loc + length($after));
       $result =~ s/^\s+//g;
       return $result;
    }
@@ -9375,14 +9481,15 @@ sub fun_after
 
 sub fun_rest
 {
-   my ($self,$prog,$txt,$delim) = @_;
+   my ($self,$prog) = (shift,shift);
 
-   if($#_ != 2 && $#_ != 3) {
+   good_args($#_,1 .. 2) ||
       return "#-1 Function (REST) EXPECTS 1 or 2 ARGUMENTS";
-   }
 
+   my $txt = evaluate($self,$prog,shift);  
+   my $delim = evaluate($self,$prog,shift);  
    $delim = " " if($delim eq undef);
-   my $loc = index(evaluate($self,$prog,$txt),$delim);
+   my $loc = index($txt,$delim);
 
    if($loc == -1) {
       return $txt;
@@ -9397,10 +9504,12 @@ sub fun_first
 {
    my ($self,$prog) = (shift,shift);
 
-   my ($txt,$delim) = @_;
-   if($#_ != 0 && $#_ != 1) {
+
+   good_args($#_,1,2) ||
       return "#-1 Function (FIRST) EXPECTS 1 or 2 ARGUMENTS";
-   }
+
+   my $txt = evaluate($self,$prog,shift);
+   my $delim = evaluate($self,$prog,shift);
 
    if($delim eq undef || $delim eq " ") {
       $txt =~ s/^\s+|\s+$//g;
@@ -9445,18 +9554,20 @@ sub fun_last
 
 sub fun_before
 {
-   my ($self,$prog,$txt,$delim) = @_;
+   my ($self,$prog) = (shift,shift);
 
-   if($#_ != 3 && $#_ != 3) {
+   good_args($#_,1,2) ||
       return "#-1 Function (BEFORE) EXPECTS 1 or 2 ARGUMENTS";
-   }
  
+   my $txt = evaluate($self,$prog,shift);
+   my $delim = evaluate($self,$prog,shift);
+
    my $loc = index($txt,$delim);
 
    if($loc == -1) {
       return undef;
    } else {
-      my $result = substr(evaluate($self,$prog,$txt),0,$loc);
+      my $result = substr($txt,0,$loc);
       $result =~ s/\s+$//;
       return $result;
    }
@@ -9524,7 +9635,7 @@ sub fun_add
    return "#-1 Add requires at least one argument" if $#_ < 0;
 
    for my $i (0 .. $#_) {
-      $result += @_[$i];
+      $result += evaluate($self,$prog,@_[$i]);
    }
    return $result;
 }
@@ -9605,7 +9716,7 @@ sub fun_num
    good_args($#_,1) ||
       return "#-1 FUNCTION (NUM) EXPECTS 1 ARGUMENT";
 
-   my $result = find($self,$prog,$_[0]);
+   my $result = find($self,$prog,evaluate($self,$prog,$_[0]));
  
    if($result eq undef) {
       return "#-1";
@@ -9633,12 +9744,12 @@ sub fun_name
    good_args($#_,1) ||
       return "#-1 FUNCTION (NAME) EXPECTS 1 ARGUMENT";
 
-   my $result = find($self,$prog,$_[0]);
+   my $target = find($self,$prog,evaluate($self,$prog,$_[0]));
  
-   if($result eq undef) {
+   if($target eq undef) {
       return "#-1";
    } else {
-     return name($result);
+     return name($target);
    }
 }
 
@@ -9670,11 +9781,11 @@ sub fun_u
 {
    my ($self,$prog) = (shift,shift);
 
-   my $txt = shift;
+   my $txt = evaluate($self,$prog,shift);
    my ($obj,$attr);
 
    my $prev = get_digit_variables($prog);                   # save %0 .. %9
-   set_digit_variables($self,$prog,@_);              # update to new values
+   set_digit_variables($self,$prog,"",@_);           # update to new values
 
    if($txt =~ /\//) {                    # input in object/attribute format?
       ($obj,$attr) = (find($self,$prog,$`,"LOCAL"),$');
@@ -9694,7 +9805,7 @@ sub fun_u
    $data =~ s/\n|\r//g;
 
    my $result = evaluate($self,$prog,$data);
-   set_digit_variables($self,$prog,$prev);                # restore %0 .. %9
+   set_digit_variables($self,$prog,"",$prev);            # restore %0 .. %9
    return $result;
 }
 
@@ -9732,22 +9843,23 @@ sub fun_v
 {
    my ($self,$prog,$txt) = (shift,shift,shift);
 
-   return evaluate($self,$prog,get($self,$txt));
+   return get($self,evaluate($self,$prog,$txt));
 }
 
 sub fun_setq
 {
    my ($self,$prog) = (shift,shift);
 
-   my ($register,$value) = @_;
-
    good_args($#_,2) ||
       return "#-1 FUNCTION (SETQ) EXPECTS 2 ARGUMENTS";
 
-   $register =~ s/^\s+|\s+$//g;
-   $value =~ s/^\s+|\s+$//g;
+   my $register = trim(evaluate($self,$prog,shift));
 
-   my $result = evaluate($self,$prog,$value);
+   if($register !~ /^\s*(0|1|2|3|4|5|6|7|8|9)\s*$/) {
+      return "#-1 INVALID GLOBAL REGISTER"
+   }
+
+   my $result = trim(evaluate($self,$prog,shift));
    @{$$prog{var}}{"setq_$register"} = $result;
    return undef;
 }
@@ -9756,12 +9868,14 @@ sub fun_r
 {
    my ($self,$prog) = (shift,shift);
 
-   my ($register) = @_;
-
    good_args($#_,1) ||
       return "#-1 FUNCTION (R) EXPECTS 1 ARGUMENTS";
 
-   $register =~ s/^\s+|\s+$//g;
+   my $register = trim(evaluate($self,$prog,shift));
+
+   if($register !~ /^\s*(0|1|2|3|4|5|6|7|8|9)\s*$/) {
+      return "#-1 INVALID GLOBAL REGISTER"
+   }
    
    if(defined @{$$prog{var}}{"setq_$register"}) {
       return @{$$prog{var}}{"setq_$register"};
@@ -9774,7 +9888,12 @@ sub fun_extract
 {
    my ($self,$prog) = (shift,shift);
 
-   my ($txt,$first,$length,$idelim,$odelim) = @_;
+   my $txt    = evaluate($self,$prog,shift);
+   my $first  = evaluate($self,$prog,shift);
+   my $length = evaluate($self,$prog,shift);
+   my $idelim = evaluate($self,$prog,shift);
+   my $odelim = evaluate($self,$prog,shift);
+
    my (@list,$last);
    $idelim = " " if($idelim eq undef);
    $odelim = " " if($odelim eq undef);
@@ -9784,7 +9903,7 @@ sub fun_extract
       return "#-1 EXTRACT EXPECTS NUMERIC VALUE FOR SECOND ARGUMENT";
    } elsif($length !~ /^\s*\d+\s*$/) {
       return "#-1 EXTRACT EXPECTS NUMERIC VALUE FOR THIRD ARGUMENT";
-   } 
+   }
    $first--;
 
    my $text = $txt;
@@ -9793,6 +9912,7 @@ sub fun_extract
    @list = safe_split($text,$idelim);
    return join($odelim,@list[$first .. ($first+$last)]);
 }
+
 
 sub fun_remove
 {
@@ -9845,8 +9965,15 @@ sub fun_rjust
 
 sub fun_ljust
 {
-   my ($self,$prog,$txt,$size,$fill) = @_;
+   my ($self,$prog) = (shift,shift);
 
+
+   good_args($#_,2,3) ||
+      return "#-1 FUNCTION (LJUST) EXPECTS 2 OR 3 ARGUMENTS";
+
+   my $txt = evaluate($self,$prog,shift);
+   my $size = evaluate($self,$prog,shift);
+   my $fill = evaluate($self,$prog,shift);
    $fill = " " if($fill =~ /^$/);
 
    if($size =~ /^\s*$/) {
@@ -9854,7 +9981,7 @@ sub fun_ljust
    } elsif($size !~ /^\s*(\d+)\s*$/) {
       return "#-1 ljust expects a numeric value for the second argument";
    } else {
-      my $sub = ansi_substr($txt,0,$size);
+      my $sub = ansi_substr(evaluate($self,$prog,$txt),0,$size);
       return $sub . ($fill x ($size - ansi_length($sub)));
    }
 }
@@ -9901,11 +10028,14 @@ sub fun_substr
 {
    my ($self,$prog) = (shift,shift);
 
-   my ($txt,$start,$end) = @_; 
+   good_args($#_,2,3) ||
+      return "#-1 Substr expects 2 - 3 arguments";
 
-   if(!($#_ == 2 || $#_ == 3)) {
-      return "#-1 Substr expects 2 - 3 arguments but found " . ($#_+1);
-   } elsif($start !~ /^\s*\d+\s*/) {
+   my $txt = evaluate($self,$prog,shift);
+   my $start = evaluate($self,$prog,shift);
+   my $end = evaluate($self,$prog,shift);
+
+   if($start !~ /^\s*\d+\s*/) {
       return "#-1 Substr expects a numeric value for second argument";
    } elsif($end !~ /^\s*\d+\s*/) {
       return "#-1 Substr expects a numeric value for third argument";
@@ -9973,57 +10103,55 @@ sub get_socket
 sub fun_input
 {
    my ($self,$prog) = (obj(shift),shift);
-   my $txt = evaluate($self,$prog,shift);
-
    
-    if(!defined $$prog{telnet_sock} && !defined $$prog{socket_buffer}) {
-       return "#-1 Connection Closed";
-    } elsif(defined $$prog{telnet_sock} && !defined $$prog{socket_buffer}) {
-       $$prog{idle} = 1;                                    # hint to queue
-       return "#-1 No data found";
-    }
+   if(!defined $$prog{telnet_sock} && !defined $$prog{socket_buffer}) {
+      return "#-1 Connection Closed";
+   } elsif(defined $$prog{telnet_sock} && !defined $$prog{socket_buffer}) {
+      $$prog{idle} = 1;                                    # hint to queue
+      return "#-1 No data found";
+   }
 
-    my $input = $$prog{socket_buffer};
+   my $input = $$prog{socket_buffer};
 
-    # check if there is any buffered data and return it.
-    # if not, the socket could have closed
-    if($#$input == -1) { 
-       if(defined $$prog{telnet_sock} &&
-          defined @connected{$$prog{telnet_sock}}) {
-          $$prog{idle} = 1;                                 # hint to queue
-          return "#-1 No data found";                  # wait for more data?
-       } else {
-          return "#-1 Connection closed";                    # socket closed
-       }
-    } else {
-       my $data = shift(@$input);                # return buffered data
+   # check if there is any buffered data and return it.
+   # if not, the socket could have closed
+   if($#$input == -1) { 
+      if(defined $$prog{telnet_sock} &&
+         defined @connected{$$prog{telnet_sock}}) {
+         $$prog{idle} = 1;                                 # hint to queue
+         return "#-1 No data found";                  # wait for more data?
+      } else {
+         return "#-1 Connection closed";                    # socket closed
+      }
+   } else {
+      my $data = shift(@$input);                # return buffered data
 #       $data =~ s/\\/\\\\/g;
 #       $data =~ s/\//\\\//g;
-       $data =~ s/’/'/g;
-       $data =~ s/―/-/g;
-       $data =~ s/`/`/g;
-       $data =~ s/‘/`/g;
-       $data =~ s/‚/,/g;
-       $data =~ s/⚡/`/g;
-       $data =~ s/↑ /N /g;
-       $data =~ s/↓ /S /g;
-       $data =~ s/↘ /SE /g;
-       $data =~ s/→ /E /g;
-       my $ch = chr(226) . chr(134) . chr(152);
-       $data =~ s/$ch/SE/g;
-       my $ch = chr(226) . chr(134) . chr(147);
-       $data =~ s/$ch/S/g;
-       my $ch = chr(226) . chr(134) . chr(145);
-       $data =~ s/$ch/N/g;
-       my $ch = chr(226) . chr(134) . chr(146);
-       $data =~ s/$ch/E/g;
-       my $ch = chr(226) . chr(134) . chr(151);
-       $data =~ s/$ch/NE/g;
-       my $ch = chr(226) . chr(134) . chr(150);
-       $data =~ s/$ch/NW/g;
- 
-       return $data;
-    }
+      $data =~ s/’/'/g;
+      $data =~ s/―/-/g;
+      $data =~ s/`/`/g;
+      $data =~ s/‘/`/g;
+      $data =~ s/‚/,/g;
+      $data =~ s/⚡/`/g;
+      $data =~ s/↑ /N /g;
+      $data =~ s/↓ /S /g;
+      $data =~ s/↘ /SE /g;
+      $data =~ s/→ /E /g;
+      my $ch = chr(226) . chr(134) . chr(152);
+      $data =~ s/$ch/SE/g;
+      my $ch = chr(226) . chr(134) . chr(147);
+      $data =~ s/$ch/S/g;
+      my $ch = chr(226) . chr(134) . chr(145);
+      $data =~ s/$ch/N/g;
+      my $ch = chr(226) . chr(134) . chr(146);
+      $data =~ s/$ch/E/g;
+      my $ch = chr(226) . chr(134) . chr(151);
+      $data =~ s/$ch/NE/g;
+      my $ch = chr(226) . chr(134) . chr(150);
+      $data =~ s/$ch/NW/g;
+
+      return $data;
+   }
 }
 
 sub fun_flags
@@ -10046,12 +10174,15 @@ sub fun_flags
 #
 sub fun_space
 {
-    my ($self,$prog,$count) = @_;
+    my ($self,$prog) = (shift,shift);
+    
+    good_args($#_,0,1) ||
+       return "#-1 Space expects 0 or 1 values";
+
+    my $count = evaluate($self,$prog,shift);
 
     if($count =~ /^\s*$/) {
        $count = 1;
-    } elsif($#_ != 1 && $#_ != 2) {
-       return "#-1 Space expects 0 or 1 numeric value but found " . ($#_ +1);
     } elsif($count !~ /^\s*\d+\s*/) {
        return undef;
     }
@@ -10189,17 +10320,27 @@ sub fun_lattr
 #
 sub fun_iter
 {
-   my ($self,$prog,$values,$txt,$idelim,$odelim) = @_;
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,2 .. 4) ||
+     return "#-1 FUNCTION (ITER) EXPECTS 2 AND 4 ARGUMENTS-$#_";
+
+   my ($list,$txt) = ($_[0],$_[1]);
+   my $idelim = evaluate($self,$prog,$_[2]);
+   $idelim = " " if($idelim eq undef);
+   my $odelim = ($#_ < 3) ? " " : evaluate($self,$prog,$_[3]);
+
    my @result;
 
-   for my $item (safe_split(evaluate($self,$prog,$values),$idelim)) {
-       my $new = $txt; 
+   for my $item (safe_split(evaluate($self,$prog,$list),$idelim)) {
+       my $new = $txt;
        $new =~ s/##/$item/g;
        push(@result,evaluate($self,$prog,$new));
    }
 
-   return join(($odelim eq undef) ? " " : $odelim,@result);
+   return join($odelim,@result);
 }
+
 
 #
 # escaped
@@ -10257,15 +10398,15 @@ sub parse_function
    if(($type == 1 && @array[0] =~ /^ *]/) ||
       ($type == 2 && @array[0] =~ /^\s*$/)) {
       @array[0] = $';                              # strip ending ] if there
-      for my $i (1 .. $#array) {                            # eval arguments
-         # evaluate args before passing them to function
-
-         if(!(defined @exclude{$fun} && (defined @{@exclude{$fun}}{$i} ||
-            defined @{@exclude{$fun}}{all}))) {
-            @array[$i] = evaluate($self,$prog,@array[$i]);
-#            @array[$i] = @array[$i];
-         }
-      }
+#      for my $i (1 .. $#array) {                            # eval arguments
+#         # evaluate args before passing them to function
+#
+#         if(!(defined @exclude{$fun} && (defined @{@exclude{$fun}}{$i} ||
+#            defined @{@exclude{$fun}}{all}))) {
+#            @array[$i] = evaluate($self,$prog,@array[$i]);
+##            @array[$i] = @array[$i];
+#         }
+#      }
       return \@array;
    } else {
       return undef;
@@ -10809,7 +10950,7 @@ sub generic_action
 #    Convert a global pattern into a regular expression
 #
 sub glob2re {
-    my ($pat) = ansi_remove(shift);
+    my ($pat) = trim(single_line(ansi_remove(shift)));
 
     return "^\s*\$" if $pat eq undef;
     $pat =~ s{(\W)}{
@@ -10999,7 +11140,7 @@ sub evaluate_substitutions
    my ($self,$prog,$t) = @_;
    my ($out,$seq);
 
-   while($t =~ /(\\|%[brtn#0-9]|%v[0-9]|%w[0-9]|%=<[^>]+>|%\{[^}]+\})/i) {
+   while($t =~ /(\\|%m[0-9]|%[brtn#0-9]|%v[0-9]|%w[0-9]|%=<[^>]+>|%\{[^}]+\})/i) {
       ($seq,$t)=($1,$');                                   # store variables
       $out .= $`;
 
@@ -11016,6 +11157,8 @@ sub evaluate_substitutions
          $out .= "#" . @{$$prog{created_by}}{obj_id};
       } elsif(lc($seq) eq "%n") {                          # current dbref
          $out .= name($$prog{created_by});
+      } elsif($seq =~ /^%m([0-9])$/) {
+         $out .= @{$$prog{var}}{"m$1"} if(defined $$prog{var});
       } elsif($seq =~ /^%([0-9])$/ || $seq =~ /^%\{([^}]+)\}$/) {  # temp vars
          if($1 eq "hostname") {
             $out .= $$user{raw_hostname};
@@ -11171,6 +11314,7 @@ sub handle_listener
 
       for my $hash (latr_regexp($obj,2)) {
          if(atr_case($obj,$$hash{atr_name})) {
+            $$hash{atr_regexp} =~ s/^\(\?msix/\(\?msx/; # make case sensitive
             if($msg =~ /$$hash{atr_regexp}/) {
                mushrun(self   => $self,
                        runas => $obj,
@@ -11585,9 +11729,7 @@ sub valid_dbref
    if(memorydb) {
       if($$id{obj_id} =~ /^\s*(\d+)\s*$/) {
          if(defined @info{backup_mode} && @info{backup_mode}) {
-            if(defined @db[$1] || defined @delta[$1]) {
-               return 1;
-            }
+            return (defined @db[$1] || defined @delta[$1]) ? 1 : 0
          } else {
             return (defined @db[$$id{obj_id}]) ? 1 : 0;
          }
@@ -11752,97 +11894,118 @@ sub set_atr_flag
     my ($remove,$count);
     $flag = uc(trim($flag));
 
-    $who = "CREATE_USER" if($flag eq "PLAYER" && $who eq undef);
-    ($flag,$remove) = ($',1) if($flag =~ /^\s*!\s*/);         # remove flag 
-    
-
-    # lookup flag info
-    my $hash = one($db,
-        "select fde1.fde_flag_id, " .
-        "       fde1.fde_name, " .
-        "       fde2.fde_name fde_permission_name," .
-        "       fde1.fde_permission" .
-        "       from flag_definition fde1," .
-        "            flag_definition fde2 " .
-        " where fde1.fde_permission = fde2.fde_flag_id " .
-        "   and fde1.fde_type = 2 " .
-        "   and fde1.fde_name=trim(upper(?))",
-        $flag
-       );
-
-    if($hash eq undef || !defined $$hash{fde_flag_id} ||
-       $$hash{fde_name} eq "ANYONE") {       # unknown flag?
-       return "#-1 Unknown Flag. ($flag)";
-    }
-
-    if(!perm($object,$$hash{fde_name})) {
-       return "#-1 Permission Denied.";
-    }
-
-    if($override || $$hash{fde_permission_name} eq "ANYONE" ||
-       ($$hash{fde_permission} >= 0 && 
-        hasflag($user,$$hash{fde_permission_name})
-       )) {
-
-       # check if the flag is already set
-
-       my $atr_id = one_val($db,
-                     "select atr.atr_id value " .
-                     "  from attribute atr left join  " .
-                     "       (flag flg) on (flg.atr_id = atr.atr_id) " .
-                     " where atr.obj_id = ? " .
-                     "   and atr_name = upper(?) ",
-                     $$object{obj_id},
-                     $atr
-                    );
-
-       if($atr_id eq undef) {
-          return "#-1 Unknown attribute on object";
+    if(memorydb) {
+       if($flag =~ /^\s*!\s*(.+?)\s*$/) {
+          ($remove,$flag) = (1,$1);
        }
-
-       # see if flag is already set
-       my $flag_id = one_val($db,
-                             "select ofg_id value " .
-                             "  from flag " .
-                             " where atr_id = ? " .
-                             "   and fde_flag_id = ?",
-                             $atr_id,
-                             $$hash{fde_flag_id}
-                            );
-                               
-       # add flag to the object/user
-       if($flag_id ne undef && $remove) {
-          sql($db,
-              "delete from flag " .
-              " where ofg_id= ? ",
-              $flag_id
-             );
-          my_commit;
-
-          set_cache_atrflag($object,$atr,$flag);
-          return "Flag Removed.";
-       } elsif($remove) {
-          return "Flag not set.";
-       } elsif($flag_id ne undef) {
-          return "Already Set.";
+       if(!$override && !can_set_flag($object,$object,$flag)) {
+          return "#-1 Permission Denied.";
+       } elsif(!db_attr_exist($object,$atr)) {
+          return "#-1 UNKNOWN ATTRIBUTE.";
        } else {
-          sql($db,
-              "insert into flag " .
-              "   (obj_id,ofg_created_by,ofg_created_date,fde_flag_id,atr_id)" .
-              "values " .
-              "   (?,?,now(),?,?)",
-              $$object{obj_id},
-              $who,
-              $$hash{fde_flag_id},
-              $atr_id);
-          my_commit;
-          return "#-1 Flag note removed [Internal Error]" if($$db{rows} != 1);
-          set_cache_atrflag($object,$atr,$flag);
+          db_set_flag($$object{obj_id},$atr,$flag,$remove ? undef : 1);
           return "Set.";
        }
     } else {
-       return "#-1 Permission Denied."; 
-    }
+
+       $who = "CREATE_USER" if($flag eq "PLAYER" && $who eq undef);
+       ($flag,$remove) = ($',1) if($flag =~ /^\s*!\s*/);         # remove flag 
+       
+   
+       # lookup flag info
+       my $hash = one($db,
+           "select fde1.fde_flag_id, " .
+           "       fde1.fde_name, " .
+           "       fde2.fde_name fde_permission_name," .
+           "       fde1.fde_permission" .
+           "       from flag_definition fde1," .
+           "            flag_definition fde2 " .
+           " where fde1.fde_permission = fde2.fde_flag_id " .
+           "   and fde1.fde_type = 2 " .
+           "   and fde1.fde_name=trim(upper(?))",
+           $flag
+          );
+   
+       if($hash eq undef || !defined $$hash{fde_flag_id} ||
+          $$hash{fde_name} eq "ANYONE") {       # unknown flag?
+          return "#-1 Unknown Flag. ($flag)";
+       }
+   
+       if(!perm($object,$$hash{fde_name})) {
+          return "#-1 Permission Denied.";
+       }
+   
+       if($override || $$hash{fde_permission_name} eq "ANYONE" ||
+          ($$hash{fde_permission} >= 0 && 
+           hasflag($user,$$hash{fde_permission_name})
+          )) {
+   
+          # check if the flag is already set
+   
+          my $atr_id = one_val($db,
+                        "select atr.atr_id value " .
+                        "  from attribute atr left join  " .
+                        "       (flag flg) on (flg.atr_id = atr.atr_id) " .
+                        " where atr.obj_id = ? " .
+                        "   and atr_name = upper(?) ",
+                        $$object{obj_id},
+                        $atr
+                       );
+   
+          if($atr_id eq undef) {
+             return "#-1 Unknown attribute on object";
+          }
+   
+          # see if flag is already set
+          my $flag_id = one_val($db,
+                                "select ofg_id value " .
+                                "  from flag " .
+                                " where atr_id = ? " .
+                                "   and fde_flag_id = ?",
+                                $atr_id,
+                                $$hash{fde_flag_id}
+                               );
+                                  
+          # add flag to the object/user
+          if($flag_id ne undef && $remove) {
+             sql($db,
+                 "delete from flag " .
+                 " where ofg_id= ? ",
+                 $flag_id
+                );
+             my_commit;
+   
+             set_cache_atrflag($object,$atr,$flag);
+             return "Flag Removed.";
+          } elsif($remove) {
+             return "Flag not set.";
+          } elsif($flag_id ne undef) {
+             return "Already Set.";
+          } else {
+             sql($db,
+                 "insert into flag " .
+                 "   (obj_id, " .
+                 "    ofg_created_by, " .
+                 "    ofg_created_date, " .
+                 "    fde_flag_id, " .
+                 "    atr_id)" .
+                 "values " .
+                 "   (?,?,now(),?,?)",
+                 $$object{obj_id},
+                 $who,
+                 $$hash{fde_flag_id},
+                 $atr_id);
+             my_commit;
+             if($$db{rows} != 1) {
+                return "#-1 Flag note removed [Internal Error]";
+             }
+             set_cache_atrflag($object,$atr,$flag);
+             return "Set.";
+          }
+       } else {
+          return "#-1 Permission Denied."; 
+       }
+   }
 } 
 
 sub perm

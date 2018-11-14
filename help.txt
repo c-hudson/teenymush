@@ -310,8 +310,10 @@ Example:                |  Output
 command:
 
    @find
+   @find <name>
 
-Lists all the objects that you own.
+Lists all the objects that you own or just those who's name contains
+<name>.
 & @password
 command:
 
@@ -335,3 +337,31 @@ command:
       @mail adrick = testing
       @mail 1
       @mail/delete 1
+& @name
+command:
+
+   @name <object> = <new_name>
+
+   This changes the name of an <object> to <new_name>. Names may contain
+   ansi color codes and use of a seperate @moniker is not required.
+& @switch
+command:
+
+   @switch <string>=<test>,<command>,<test>,<command>,...,<default_command>
+
+   If <string> matches <test>, the command following the <test> is run.
+   Only the first match is concerned. If no matches are made, then the
+   <default_command> is run if it exists.
+
+   <test> may include * wild cards and the what was matched by the wildcard
+   maybe retrieved using %m0 - %m9.
+
+   For readability, the <default_command> may have an optional  preceeding
+   <test> of DEFAULT.
+
+Example:                                               |  Output
+===========================================================================
+@switch abc=*b*,say %m0,*e*,say def,DEFAULT,say !match |  You say, "a"
+@switch def=*b*,say %m0,*e*,say def,DEFAULT,say !match |  You say, "def"
+@switch ghi=*b*,say %m0,*d*,say def,DEFAULT,say !match |  You say, "!match"
+@switch ghi=*b*,say %m0,*d*,say def,say !match         |  You say, "!match"

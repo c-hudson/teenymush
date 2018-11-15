@@ -353,8 +353,9 @@ command:
    Only the first match is concerned. If no matches are made, then the
    <default_command> is run if it exists.
 
-   <test> may include * wild cards and the what was matched by the wildcard
-   maybe retrieved using %m0 - %m9.
+   <test> may include * wild cards. Text matched by the wildcard maybe
+   retrieved using %m0 - %m9. The <test> may also include > and < for
+   greater and less then comparisons.
 
    For readability, the <default_command> may have an optional  preceeding
    <test> of DEFAULT.

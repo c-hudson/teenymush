@@ -2673,11 +2673,21 @@ sub cmd_switch
           shift(@list);
        }
        if($#list >= 1) {
-          my ($txt,$cmd) = (evaluate($self,$prog,shift(@list)),shift(@list));
+          my $txt = ansi_remove(evaluate($self,$prog,shift(@list)));
+          my $pat = glob2re($txt);
+          my $cmd = shift(@list);
           $txt =~ s/^\s+|\s+$//g;
-          my $pat = glob2re(ansi_remove($txt));
 
-          if($first =~ /$pat/) {
+          if($txt =~ /^\s*(<|>)\s*/) {
+             if($1 eq ">" && $first > $' || $1 eq "<" && $first < $') {
+                return mushrun(self   => $self,
+                               prog   => $prog,
+                               runas  => $self,
+                               source => 0,
+                               cmd    => $cmd,
+                              );
+             }
+          } elsif($first =~ /$pat/) {
              my $prev = get_digit_variables($prog);
              set_digit_variables($self,$prog,"m",$1,$2,$3,$4,$5,$6,$7,$8,$9);
              return mushrun(self   => $self,
@@ -2846,13 +2856,10 @@ sub cmd_telnet
    }
 }
 
-#
-# send data to a connected @telnet socket. If the socket is pending,
-# the socket will "pause" the @send till it times out or connects.
-#
-sub cmd_send
+
+sub find_socket
 {
-    my ($self,$prog,$txt) = (obj(shift),shift);
+    my ($self,$prog) = (obj(shift),shift);
     my $sock;
 
     if(!hasflag($self,"WIZARD")) {                            # wizard only
@@ -2866,15 +2873,30 @@ sub cmd_send
           for my $key (keys %connected) {
              if($$self{obj_id} eq @{@connected{$key}}{obj_id} &&
                 defined @{@connected{$key}}{prog}) {
-                $sock = @{@connected{$key}}{sock};
+                return @{@connected{$key}}{sock};
              }
           }
        }
     } elsif(hasflag($self,"SOCKET_INPUT") && defined $$prog{telnet_sock}) {
-       $sock = $$prog{telnet_socket};
+       return $$prog{telnet_socket};
     }
+    return undef;
+}
 
-    # socket has not connected, try again later
+#
+# send data to a connected @telnet socket. If the socket is pending,
+# the socket will "pause" the @send till it times out or connects.
+#
+sub cmd_send
+{
+    my ($self,$prog,$txt) = (obj(shift),shift);
+    my $sock;
+
+    hasflag($self,"WIZARD") ||                             # wizard only
+       return err($self,$prog,"Permission Denied.");
+
+    my $sock = find_socket($self,$prog);
+
     if($sock eq undef) {
        return err($self,$prog,"Telnet connection needs to be opened first");
     } elsif(@{@connected{$sock}}{pending} == 2) {
@@ -2899,38 +2921,20 @@ sub cmd_send
 
 sub cmd_close
 {
-    my ($self,$prog,$txt) = @_;
+    my ($self,$prog) = @_;
 
-    if(!hasflag($self,"WIZARD")) {
+    hasflag($self,"WIZARD") ||
        return err($self,$prog,"Permission Denied.");
-    } elsif($txt =~ /^\s*([^ ]+)\s*=/) {
-       my $hash = one($db,
-                        "select * " .
-                        "  from socket ".
-                        " where lower(sck_tag) = lower(?) ",
-                        $1
-                   );
 
-       if($hash eq undef) {
-          necho(self   => $self,
-                prog   => $prog,
-                source => [ "Unknown socket '%s' requested",$1 ],
-               );
-       } elsif(!defined @connected{$$hash{sck_socket}}) {
-          necho(self   => $self,
-                prog   => $prog,
-                source => [ "Socket '%s' has closed.",$1 ],
-               );
-       } else {
-          my $sock=@{@connected{$$hash{sck_socket}}}{sock};
-          printf($sock "%s\r\n",evaluate($self,$prog,$'));
-       }
-    } else {
-       necho(self   => $self,
-             prog   => $prog,
-             source => [ "Usage: \@send <socket>=<data>" ]
-            );
-    }
+    my $sock = find_socket($self,$prog) ||
+       return err($self,$prog,"No sockets open.");
+
+    server_disconnect($sock);
+    
+    necho(self   => $self,
+          prog   => $prog,
+          source => [ "Socket Closed." ],
+         );
 }
 
 sub cmd_recall
@@ -5032,7 +5036,7 @@ sub cmd_look
       if($attr ne undef) {
          my $prev = get_digit_variables($prog);              # save %0 .. %9
          set_digit_variables($self,$prog,"",join(' ',@con)); # update to new
-         $out .= "\n" . evaluate($self,$prog,$attr);
+         $out .= "\n" . evaluate($target,$prog,$attr);
          set_digit_variables($self,$prog,"",$prev);        # restore %0 .. %9
       }
      
@@ -7781,25 +7785,6 @@ use Text::Wrap;
 $Text::Wrap::huge = 'overflow';
 my $max = 78;
 
-sub code
-{
-   my $type = shift;
-   my @stack;
-
-#   if(Carp::shortmess =~ /#!\/usr\/bin\/perl/) {
-
-   if(!$type || $type eq "short") {
-      for my $line (split(/\n/,Carp::shortmess)) {
-         if($line =~ /at ([^ ]+) line (\d+)\s*$/) {
-            push(@stack,"$2");
-         }
-      }
-      return join(',',@stack);
-   } else {
-      return Carp::shortmess;
-   }
-}
-
 #
 # these commands are handled differently then other commands.
 #
@@ -9371,14 +9356,27 @@ sub fun_switch
 
    while($#_ >= 0) {
       if($#_ >= 1) {
-         my $pat = glob2re(evaluate($self,$prog,shift));
-         if($first =~ /$pat/) {
-            return evaluate($self,$prog,@_[0]);
-         } else {
-            shift;
+         my $txt = trim(single_line(ansi_remove(evaluate($self,$prog,shift))));
+         my $pat = glob2re($txt);
+         my $cmd = shift;
+
+         if($txt =~ /^\s*(<|>)\s*/) {
+             if($1 eq ">" && $first > $' || $1 eq "<" && $first < $') {
+                return evaluate($self,$prog,$cmd);
+             }
+         } elsif($first =~ /$pat/) {
+             my $prev = get_digit_variables($prog);
+             set_digit_variables($self,$prog,"m",$1,$2,$3,$4,$5,$6,$7,$8,$9);
+             my $result = evaluate($self,$prog,$cmd);
+             set_digit_variables($self,$prog,"m",$prev);
+             return $result;
          }
       } else {
-         return evaluate($self,$prog,shift);
+         my $prev = get_digit_variables($prog);
+         set_digit_variables($self,$prog,"m",$1,$2,$3,$4,$5,$6,$7,$8,$9);
+         my $result = evaluate($self,$prog,shift);
+         set_digit_variables($self,$prog,"m",$prev);
+         return $result;
       }
    }
 }
@@ -9673,7 +9671,6 @@ sub fun_edit
    my $from = ansi_remove(evaluate($self,$prog,shift));
    my $to   = evaluate($self,$prog,shift);
    my $size = ansi_length($from);
-   my $size = length($from);
 
    for(my $i = 0, $start=0;$i <= $#{$$txt{ch}};$i++) {
       if(ansi_substr($txt,$i,$size) eq $from) {
@@ -9782,17 +9779,20 @@ sub fun_u
    my ($self,$prog) = (shift,shift);
 
    my $txt = evaluate($self,$prog,shift);
-   my ($obj,$attr);
+   my ($obj,$attr,@arg);
 
    my $prev = get_digit_variables($prog);                   # save %0 .. %9
-   set_digit_variables($self,$prog,"",@_);           # update to new values
+
+   for my $i (0 .. $#_) {
+      @arg[$i] = evaluate($self,$prog,$_[$i]);
+   } 
+   set_digit_variables($self,$prog,"",@arg);          # update to new values
 
    if($txt =~ /\//) {                    # input in object/attribute format?
       ($obj,$attr) = (find($self,$prog,$`,"LOCAL"),$');
    } else {                                  # nope, just contains attribute
       ($obj,$attr) = ($self,$txt);
    }
-   my $foo = $$obj{obj_name};
 
    if($obj eq undef) {
       return "#-1 Unknown object";
@@ -9949,7 +9949,14 @@ sub fun_remove
 
 sub fun_rjust
 {
-   my ($self,$prog,$txt,$size,$fill) = @_;
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,2,3) ||
+      return "#-1 FUNCTION (RJUST) EXPECTS 2 OR 3 ARGUMENTS";
+
+   my $txt = evaluate($self,$prog,shift);
+   my $size = evaluate($self,$prog,shift);
+   my $fill = evaluate($self,$prog,shift);
 
    $fill = " " if($fill =~ /^$/);
 
@@ -10052,13 +10059,14 @@ sub fun_right
    good_args($#_,2) ||
      return "#-1 FUNCTION (RIGHT) EXPECTS 2 ARGUMENT";
 
-   my ($txt,$size) = (shift,shift);
+   my $txt = evaluate($self,$prog,shift);
+   my $size = evaluate($self,$prog,shift);
 
    if($size !~ /^\s*\d+\s*/) {
      return "#-1 FUNCTION (RIGHT) EXPECTS 2 ARGUMENT TO BE NUMERIC";
    }
 
-   return substr($txt,length($txt) - $size);
+   return ansi_substr($txt,length($txt) - $size,$size);
 }
 
 sub fun_left
@@ -10068,31 +10076,14 @@ sub fun_left
    good_args($#_,2) ||
      return "#-1 FUNCTION (RIGHT) EXPECTS 2 ARGUMENT";
 
-   my ($txt,$size) = (shift,shift);
+   my $txt = evaluate($self,$prog,shift);
+   my $size = evaluate($self,$prog,shift);
 
    if($size !~ /^\s*\d+\s*/) {
      return "#-1 FUNCTION (RIGHT) EXPECTS 2 ARGUMENT TO BE NUMERIC";
    }
 
-   return substr($txt,0,$size);
-}
-
-#
-# get_socket
-#    Return the socket associated for a named mush socket
-#    
-sub get_socket
-{
-   my $txt = trim(uc(shift));
-
-   for my $key (keys %connected) {
-      if(defined $connected{$key}->{sock} &&
-         @connected{$key}->{socket} eq $txt) {
-         return @connected{$key}->{sock};
-      }
-   }
-
-   return undef;
+   return ansi_substr($txt,0,$size);
 }
 
 #
@@ -10156,7 +10147,12 @@ sub fun_input
 
 sub fun_flags
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,1) ||
+     "#-1 FUNCTION (FLAGS) EXPECTS 1 ARGUMENTS";
+
+   my $txt = evaluate($self,$prog,shift);
 
    # verify arguments
    return "#-1" if($txt =~ /^\s*$/);
@@ -10198,11 +10194,13 @@ sub fun_repeat
 {
    my ($self,$prog) = (shift,shift);
 
-    my ($txt,$count) = @_;
+    good_args($#_,2) ||
+       return "#-1 FUNCTION (REPEAT) EXPECTS 2 ARGUMENTS";
 
-    if($#_ != 1) {
-       return "#-1 Repeat expects 2 arguments but found " . ($#_ +1);
-    } elsif($count !~ /^\s*\d+\s*/) {
+    my $txt = evaluate($self,$prog,shift);
+    my $count = evaluate($self,$prog,shift);
+
+    if($count !~ /^\s*\d+\s*/) {
        return "#-1 Repeat expects numeric value for the second arguement";
     }
     return $txt x $count;
@@ -10241,18 +10239,12 @@ sub fun_timezone
 sub fun_cat
 {
    my ($self,$prog) = (shift,shift);
-
-   my @data = @_;
    my $out;
 
-   for my $i (0 .. $#data) {
-      if($i == 0) {
-         $out .= @data[$i];
-      } else {
-         $out .= " " . @data[$i];
-      }
-   }
-   return $out;
+   good_args($#_,1 .. 100) ||
+      return "#-1 FUNCTION (CAT) EXPECTS BETWEEN 1 AND 100 ARGS";
+
+   return join(" ",@_);
 }
 
 
@@ -10275,9 +10267,9 @@ sub mysql_pattern
 sub fun_lattr
 {
    my ($self,$prog) = (shift,shift);
-   my $txt = shift;
    my ($obj,$atr,@list);
 
+   my $txt = evaluate($self,$prog,shift);
    if($txt =~ /\s*\/\s*/) {                               # input has a slash 
       ($obj,$atr) = ($`, $');
    } elsif($txt =~ /^\s*$/) {                                      # no input
@@ -10370,13 +10362,14 @@ sub escaped
 #
 sub fun_lookup
 {
-   my ($self,$prog) = (shift,shift);
+   my ($self,$prog,$name,$before,$flag) = (shift,shift,lc(shift),shift,shift);
 
-   if(!defined @fun{lc($_[0])}) {
-      printf("undefined function '%s'\n",@_[0]);
+   if(!defined @fun{$name} && !$flag) {
+      printf("undefined function '%s'\n",$name);
+      printf("                   '%s'\n",ansi_debug($before));
       printf("%s",code("long"));
    }
-   return (defined @fun{lc($_[0])}) ? lc($_[0]) : "huh";
+   return (defined @fun{$name}) ? $name: "huh";
 }
 
 
@@ -10517,7 +10510,7 @@ sub evaluate
    # handle string containing a single non []'ed function
    #
    if($txt =~ /^\s*([a-zA-Z_0-9]+)\((.*)\)\s*$/s) {
-      my $fun = fun_lookup($self,$prog,$1,$txt);
+      my $fun = fun_lookup($self,$prog,$1,undef,1);
       if($fun ne "huh") {                   # not a function, do not evaluate
          my $result = parse_function($self,$prog,$fun,"$2)",2);
          if($result ne undef) {
@@ -10539,9 +10532,9 @@ sub evaluate
    #
    # pick functions out of string when enclosed in []'s 
    #
-   while($txt =~ /([\\]*)\[([a-zA-Z_0-9]+)\(/s) {
+   while($txt =~ /([\\]*)\[([a-zA-Z_0-9]+)\(/s && ord(substr($`,-1)) ne 27) {
       my ($esc,$before,$after,$unmod) = ($1,$`,$',$2);
-      my $fun = fun_lookup($self,$prog,$unmod,$txt);
+      my $fun = fun_lookup($self,$prog,$unmod,$before);
       $out .= evaluate_substitutions($self,$prog,$before);
       $out .= "\\" x (length($esc) / 2);
 

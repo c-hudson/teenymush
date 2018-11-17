@@ -43,7 +43,6 @@ my (%command,                  #!# commands for after player has connected
     $websock,                  #!# websocket listener
     %http,                     #!# http socket list
     %code,                     #!# loaded perl files w/mod times
-    $db,                       #!# main database connection
     $log,                      #!# database connection for logs
     %info,                     #!# misc info storage
     $user,                     #!# current user details
@@ -73,8 +72,8 @@ if($@) {
                                                                                 
 # check to see if the DBI module loads
 eval {                                                             
-	#   require DBI;                                                           
-	#   import DBI;                                                       
+   require DBI;                                                           
+   import DBI;                                                       
 };                                                                         
 if($@) {                                                           
    printf("WARNING: Missing DBI module, MYSQLDB disabled\n");      
@@ -409,21 +408,21 @@ sub get_credentials
    my ($file,%save);
 
    return if memorydb;
-   if($$db{user} =~ /^\s*$/) {
-      $$db{user} = prompt("Enter database user: ");
-      @save{user} = $$db{user};
+   if(@info{user} =~ /^\s*$/) {
+      @info{user} = prompt("Enter database user: ");
+      @save{user} = @info{user};
    }
-   if($$db{pass} =~ /^\s*$/) {
-      $$db{pass} = prompt("Enter database password: ");
-      @save{pass} = $$db{pass};
+   if(@info{pass} =~ /^\s*$/) {
+      @info{pass} = prompt("Enter database password: ");
+      @save{pass} = @info{pass};
    }
-   if($$db{database} =~ /^\s*$/) {
-      $$db{database} = prompt("Enter database name: ");
-      @save{database} = $$db{database};
+   if(@info{database} =~ /^\s*$/) {
+      @info{database} = prompt("Enter database name: ");
+      @save{database} = @info{database};
    }
-   if($$db{host} =~ /^\s*$/) {
-      $$db{host} = prompt("Enter database host: ");
-      @save{host} = $$db{host};
+   if(@info{host} =~ /^\s*$/) {
+      @info{host} = prompt("Enter database host: ");
+      @save{host} = @info{host};
    }
 
    return if scalar keys %save == -1;
@@ -460,7 +459,8 @@ sub load_new_db
    printf("##############################################################\n");
    @info{no_db_found} = 1;
 
-   printf("\nDatabase: %s@%s on %s\n\n",$$db{user},$$db{database},$$db{host});
+   printf("\nDatabase: %s@%s on %s\n\n",
+          @info{user},@info{database},$info{host});
    while($result ne "y" && $result ne "yes") {
        $result = prompt("No database found, load default database [yes/no]?");
 
@@ -469,11 +469,11 @@ sub load_new_db
        }
    }
    printf("Default database creation log: tm_db_create.log");
-   system("mysql -u $$db{user} -p$$db{pass} $$db{database} " .
+   system("mysql -u @info{user} -p{pass} {database} " .
           "< base_structure.sql >> tm_db_create.log");
-   system("mysql -u $$db{user} -p$$db{pass} $$db{database} " .
+   system("mysql -u @info{user} -p@info{pass} {database} " .
           " < base_objects.sql >> tm_db_create.log");
-   system("mysql -u $$db{user} -p$$db{pass} $$db{database} " .
+   system("mysql -u @info{user} -p@info{pass} @info{database} " .
           " < base_inserts.sql >> tm_db_create.log");
    delete @info{no_db_found};
 }
@@ -504,7 +504,7 @@ sub load_db_backup
           return;
        }
    }
-   system("mysql -u $$db{user} -p$$db{pass} $$db{database} < " .
+   system("mysql -u @info{user} -p@info{pass} @info{database} < " .
           "tm_backup.sql >> tm_db_load.log");
    if(!rename("tm_backup.sql","tm_backup.sql.loaded")) {
       printf("WARNING: Unable to rename tm_backup.sql, backup will be " .
@@ -1071,7 +1071,7 @@ sub cmd_compile
        atr_first($$hash{atr_pattern}),
        $$hash{atr_id});
 
-      if($$db{rows} != 1 ) {
+      if(@info{rows} != 1 ) {
          necho(self   => $self,
                prog   => $prog,
                source => [ "Could not compile %s", $$hash{atr_id} ]
@@ -1318,14 +1318,14 @@ sub cmd_give
          }
 
          if(!hasflag($self,"WIZARD") && !give_money($self,-$what)) {
-            my_rollback();
+            my_rollback;
             return err($self,$prog,"Internal error, unable to give money to ".
                "%s.",
                name($target));
          }
 
          if(!give_money($target,$what)) {
-            my_rollback() if(mysqldb);
+            my_rollback if(mysqldb);
             return err($self,"Internal error, unable to give money to %s.",
                name($target));
          }
@@ -2358,20 +2358,24 @@ sub cmd_password
                  );
          }
       } else {                                                      # mysql
-         if(one($db,"select obj_password ".              # verify old password
-                    "  from object " .
-                    " where obj_id = ? " .
-                    "   and obj_password = password(?)",
-                    $$self{obj_id},
-                    $1
+         if(one("select obj_password ".              # verify old password
+                "  from object " .
+                " where obj_id = ? " .
+                "   and obj_password = password(?)",
+                $$self{obj_id},
+                $1
                )) {
-            sql(e($db,1),                                 # verify succeeded
-                "update object ".                   # update to new password
+            sql("update object ".                   # update to new password
                 "   set obj_password = password(?) " . 
                 " where obj_id = ?" ,
                 $2,
                 $$self{obj_id}
                );
+            if(@info{rows} != 1) {
+               return err($self,$prog,
+                          "Internal error, unable to update password" 
+                         );
+            }
             necho(self   => $self,
                   prog   => $prog,
                   source => [ "Your password has been updated." ],
@@ -2736,13 +2740,15 @@ sub cmd_newpassword
       if(memorydb) {
          db_set($player,"obj_password",mushhash($2));
       } else {
-         sql(e($db,1),
-             "update object ".
+         sql("update object ".
              "   set obj_password = password(?) " . 
              " where obj_id = ?" ,
              $2,
              $$player{obj_id}
             );
+         if(@info{rows} != 1) {
+            return err($self,$prog,"Internal error, unable to update password");
+         }
       }
       necho(self   => $self,
             prog   => $prog,
@@ -2817,8 +2823,7 @@ sub cmd_telnet
       $readable->add($sock);
 
       if(mysqldb) {
-          sql(e($db,1),
-              "insert into socket " . 
+          sql("insert into socket " . 
               "(   obj_id, " .
               "    sck_start_time, " .
               "    sck_type, " . 
@@ -2834,6 +2839,9 @@ sub cmd_telnet
                    $1,
                    $2
              );
+            if(@info{rows} != 1) {
+               return err($self,$prog,"Unable to insert into socket data");
+            }
             my_commit;
       }
       @info{io} = {} if(!defined @info{io});
@@ -3575,8 +3583,7 @@ sub cmd_name
          db_set($target,"cname",$cname);
       } else {
 
-         sql($db,
-             "update object " .
+         sql("update object " .
              "   set obj_name = ?, " .
              "       obj_cname = ? " .
              " where obj_id = ?",
@@ -3587,7 +3594,7 @@ sub cmd_name
     
          set_cache($target,"obj_name");
 
-         if($$db{rows} != 1) {
+         if(@info{rows} != 1) {
             err($self,$prog,"Internal error, name not updated.");
          } else {
             my_commit;
@@ -4056,7 +4063,7 @@ sub cmd_commit
    } elsif(memorydb) {
       return err($self,$prog,"\@commit is only for mysql databases");
    } else {
-      my_commit($db);
+      my_commit;
       necho(self   => $self,
             prog   => $prog,
             source => [ "You force a commit to the database" ],
@@ -4535,7 +4542,7 @@ sub cmd_connect
              1
             );
    
-         my_commit($db);
+         my_commit;
       }
 
       # --- Provide users visual feedback / MOTD --------------------------#
@@ -4690,7 +4697,7 @@ sub cmd_set
          }
          set($self,$prog,$target,evaluate($self,$prog,$attr),$value);
       }
-      my_commit($db) if(mysqldb);
+      my_commit() if(mysqldb);
 
    } elsif($txt =~ /^\s*([^ =\\]+?)\s*= *(.*?) *$/s) { # flag?
       ($target,$flag) = (find($self,$prog,$1),$2);
@@ -4792,7 +4799,7 @@ sub list_attr
          }
       }
    } else {
-      for my $hash (@{sql($db,
+      for my $hash (@{sql(
           "   select atr_name, " .
           "          atr_value, " .
           "          atr_pattern, " .
@@ -5055,7 +5062,7 @@ sub cmd_look
       }
    } elsif(!hasflag($target,"ROOM") ||
       (hasflag($target,"ROOM") && !hasflag($target,"DARK"))) {
-      for my $hash (@{sql($db,
+      for my $hash (@{sql(
           "select   group_concat(distinct fde_letter " .
           "                      order by fde_order " .
           "                      separator '') flags, " .
@@ -5384,7 +5391,7 @@ sub cmd_sweep
          prog   => $prog,
          source => [ "Sweeping location..." ]
         );
-   for my $obj (sql2("select obj.* " .
+   for my $obj (sql("select obj.* " .
                     "  from content c1,  " .
                     "       content c2,  " .
                     "       flag flg, " .
@@ -5611,7 +5618,7 @@ sub lcon
       }
    } elsif(!incache($object,"lcon")) {
        my @list;
-       for my $obj (@{sql($db,
+       for my $obj (@{sql(
                           "select con.obj_id " .
                           "  from content con, " .
                           "       flag flg, ".
@@ -5647,8 +5654,7 @@ sub lexits
       }
    } elsif(!incache($object,"lexits")) {
        my @list;
-       for my $obj (@{sql($db,
-                          "select con.obj_id " .
+       for my $obj (@{sql("select con.obj_id " .
                           "  from content con, " .
                           "       flag flg, ".
                           "       flag_definition fde " .
@@ -5764,7 +5770,7 @@ sub flag_list
       }
    } elsif(!incache($obj,"FLAG_LIST_$flag")) {
       my (@list,$array);
-      for my $hash (@{sql($db,"select * from ( " .
+      for my $hash (@{sql("select * from ( " .
                               "select fde_name, fde_letter, fde_order" .
                               "  from flag flg, flag_definition fde " .
                               " where flg.fde_flag_id = fde.fde_flag_id " .
@@ -5853,7 +5859,7 @@ sub hasflag
    } elsif(!incache($target,"FLAG_$flag")) {
       if($flag eq "WIZARD") {
          my $owner = owner_id($target);
-         $val = one_val($db,"select if(count(*) > 0,1,0) value " .  
+         $val = one_val("select if(count(*) > 0,1,0) value " .  
                             "  from flag flg, flag_definition fde " .  
                             " where flg.fde_flag_id = fde.fde_flag_id " .
                             "   and atr_id is null ".
@@ -5865,7 +5871,7 @@ sub hasflag
          # let owner cache object know its value was used for this object
          $cache{$owner}->{FLAG_DEPENDANCY}->{$$target{obj_id}} = 1;
       } else {
-         $val = one_val($db,"select if(count(*) > 0,1,0) value " .
+         $val = one_val("select if(count(*) > 0,1,0) value " .
                             "  from flag flg, flag_definition fde " .
                             " where flg.fde_flag_id = fde.fde_flag_id " .
                             "   and atr_id is null ".
@@ -7453,7 +7459,7 @@ sub spin
          printf("   #%s: %s\n",@{@last{user}}{obj_id},@{@last{cmd}}{cmd});
       }
    } elsif($@) {                               # oops., you sunk my battle ship
-      my_rollback($db);
+      my_rollback;
 
       my $msg = sprintf("%s CRASHed the server with: %s",name($user),
           @{@last{cmd}}{cmd});
@@ -10292,8 +10298,7 @@ sub fun_lattr
          push(@list,uc($attr)) if($pat eq undef || $attr =~ /$pat/i);
       }
    } else {
-      for my $attr (@{sql($db,                  # query db for attribute names
-                          "  select atr_name " .
+      for my $attr (@{sql("  select atr_name " .   # query for attribute names
                           "    from attribute " .
                           "   where obj_id = ? " .
                           "     and atr_name like upper(?) " .
@@ -10726,8 +10731,7 @@ sub http_process_line
          printf("   %s\@web [%s]\n",$addr,$msg);
 
          if(mysqldb && $msg !~ /^\s*favicon\.ico\s*$/i) {
-            sql(e($db,1),
-                "insert into socket_history ".
+            sql("insert into socket_history ".
                 "( obj_id, " .
                 "  skh_hostname, " .
                 "  skh_start_time, " .
@@ -10743,6 +10747,9 @@ sub http_process_line
                 substr($msg,0,254),
                 2
                );
+            if(@info{rows} != 1) {
+               printf("Unable to add data to socket_history\n");
+            }
          }
 
          # html/js/css should be a static file, so just return the file
@@ -10969,7 +10976,7 @@ sub io
 
    return if($$self{obj_id} eq undef);
 
-   my $tmp = $$db{rows};
+   my $tmp = @info{rows};
    sql("insert into io" .
        "(" .
        "   io_type, ".
@@ -10987,7 +10994,7 @@ sub io
        $$self{obj_id},
        loc($self)
       );
-   $$db{rows} = $tmp;
+   @info{rows} = $tmp;
    my_commit;
 }
 
@@ -11179,10 +11186,10 @@ sub text
    my ($sql,@args) = @_;
    my $out; # = "---[ Start ]---\n";                              # add header
 
-   for my $hash (@{sql($db,$sql,@args)}) {                      # run query
-      $out .= $$hash{text} . "\n";                             # add output
+   for my $hash (@{sql($sql,@args)}) {                            # run query
+      $out .= $$hash{text} . "\n";                                # add output
    }
-   # $out .= "---[  End  ]---";                                  # add footer
+   # $out .= "---[  End  ]---";                                   # add footer
    return $out;
 }
 
@@ -11214,7 +11221,7 @@ sub table
    # determine the max column length for each column, and store the
    # output of the sql so it doesn't have to be run twice.
 #   echo($user,"%s",$sql);
-   for my $hash (@{sql($db,$sql,@args)}) {
+   for my $hash (@{sql($sql,@args)}) {
       push(@data,$hash);                                     # store results
       for my $key (keys %$hash) {
          if(length($$hash{$key}) > $max{$key}) {         # determine  if max
@@ -11396,12 +11403,11 @@ sub log_output
 
    $txt =~ s/([\r\n]+)$//g;
 
-   my $tmp = $$db{rows}; # its easy to try to necho() data before testing
-                         # against $$db{rows}, which  will clear $$db{rows}.
-                         # so we'll revert it after the below sql() call.
+   my $tmp = @info{rows}; # its easy to try to necho() data before testing
+                          # against $$db{rows}, which  will clear $$db{rows}.
+                          # so we'll revert it after the below sql() call.
 
-   sql($db,                                     #store output in output table
-       "insert into io" .
+   sql("insert into io" .                      #store output in output table
        "(" .
        "   io_data, " .
        "   io_type, ".
@@ -11424,25 +11430,7 @@ sub log_output
        $$dst{obj_id},
        loc($dst),
       );
-#    sql($db,                                     #store output in output table
-#        "insert into output" .
-#        "(" .
-#        "   out_text, " .
-#        "   out_source, ".
-#        "   out_location, ".
-#        "   out_destination ".
-#        ") values ( ".
-#        "   ?, " .
-#        "   ?, " .
-#        "   ?, " .
-#        "   ? " .
-#        ")",
-#        substr($txt,0,63999),
-#        $$src{obj_id},
-#        $loc,
-#        $$dst{obj_id}
-#       );
-   $$db{rows} = $tmp;
+   @info{rows} = $tmp;
    my_commit;
 }
 
@@ -11635,21 +11623,6 @@ sub echo_nolog
 #   }
 }
 
-#
-# e
-#    set the number of rows the sql should return, so that sql()
-#    can error out if the wrong amount of data is returned. This
-#    may be a silly way of doing this.
-#
-sub e
-{
-   my ($db,$expect) = @_;
-
-   $$db{expect} = $expect;
-   return $db;
-}
-
-
 sub echo_flag
 {
    my ($self,$prog,$flags,$fmt,@args) = @_;
@@ -11783,7 +11756,7 @@ sub set_flag
        ($flag,$remove) = ($',1) if($flag =~ /^\s*!\s*/);         # remove flag
    
        # lookup flag info
-       my $hash = one($db,
+       my $hash = one(
            "select fde1.fde_flag_id, " .
            "       fde1.fde_name, " .
            "       fde2.fde_name fde_permission_name," .
@@ -11812,7 +11785,7 @@ sub set_flag
           )) {
    
           # check if the flag is already set
-          my $count = one_val($db,"select count(*) value from flag ".
+          my $count = one_val("select count(*) value from flag ".
                                   " where obj_id = ? " .
                                   "   and fde_flag_id = ?" .
                                   "   and atr_id is null ",
@@ -11821,7 +11794,7 @@ sub set_flag
    
           # add flag to the object/user
           if($count > 0 && $remove) {
-             sql($db,"delete from flag " .
+             sql("delete from flag " .
                      " where obj_id = ? " .
                      "   and fde_flag_id = ?",
                      $$obj{obj_id},
@@ -11851,8 +11824,7 @@ sub set_flag
                                     $$obj{obj_name} ]
                      );
              }
-             sql($db,
-                 "insert into flag " .
+             sql("insert into flag " .
                  "   (obj_id,ofg_created_by,ofg_created_date,fde_flag_id)" .
                  "values " .
                  "   (?,?,now(),?)",
@@ -11860,7 +11832,7 @@ sub set_flag
                  $who,
                  $$hash{fde_flag_id});
              my_commit;
-             if($$db{rows} != 1) {
+             if(@info{rows} != 1) {
                 return "#-1 Flag not removed [Internal Error]";
              }
              remove_flag_cache($obj,$flag);
@@ -11906,7 +11878,7 @@ sub set_atr_flag
        
    
        # lookup flag info
-       my $hash = one($db,
+       my $hash = one(
            "select fde1.fde_flag_id, " .
            "       fde1.fde_name, " .
            "       fde2.fde_name fde_permission_name," .
@@ -11935,7 +11907,7 @@ sub set_atr_flag
    
           # check if the flag is already set
    
-          my $atr_id = one_val($db,
+          my $atr_id = one_val(
                         "select atr.atr_id value " .
                         "  from attribute atr left join  " .
                         "       (flag flg) on (flg.atr_id = atr.atr_id) " .
@@ -11950,8 +11922,7 @@ sub set_atr_flag
           }
    
           # see if flag is already set
-          my $flag_id = one_val($db,
-                                "select ofg_id value " .
+          my $flag_id = one_val("select ofg_id value " .
                                 "  from flag " .
                                 " where atr_id = ? " .
                                 "   and fde_flag_id = ?",
@@ -11961,8 +11932,7 @@ sub set_atr_flag
                                   
           # add flag to the object/user
           if($flag_id ne undef && $remove) {
-             sql($db,
-                 "delete from flag " .
+             sql("delete from flag " .
                  " where ofg_id= ? ",
                  $flag_id
                 );
@@ -11975,8 +11945,7 @@ sub set_atr_flag
           } elsif($flag_id ne undef) {
              return "Already Set.";
           } else {
-             sql($db,
-                 "insert into flag " .
+             sql("insert into flag " .
                  "   (obj_id, " .
                  "    ofg_created_by, " .
                  "    ofg_created_date, " .
@@ -11989,7 +11958,7 @@ sub set_atr_flag
                  $$hash{fde_flag_id},
                  $atr_id);
              my_commit;
-             if($$db{rows} != 1) {
+             if(@info{rows} != 1) {
                 return "#-1 Flag note removed [Internal Error]";
              }
              set_cache_atrflag($object,$atr,$flag);
@@ -12010,7 +11979,7 @@ sub perm
 
    $perm =~ s/@//;
    my $owner = owner($$target{obj_id});
-   my $result = one_val($db,
+   my $result = one_val(
                   "select min(fpr_permission) value " .
                   "  from flag_permission fpr1, ".
                   "       flag flg1 " .
@@ -12053,7 +12022,7 @@ sub destroy_object
        $$obj{obj_id}
       );
 
-   if($$db{rows} != 1) {
+   if(@info{rows} != 1) {
       my_rollback;
       return 0;
    }  else {
@@ -12142,8 +12111,7 @@ sub create_object
                        "limit 1"
                       );
       if($id ne undef) {
-         sql($db,
-             " insert into object " .
+         sql(" insert into object " .
              "    (obj_id,obj_name,obj_password,obj_owner,obj_created_by," .
              "     obj_created_date, obj_home " .
              "    ) ".
@@ -12151,8 +12119,7 @@ sub create_object
              "   (?, ?,password(?),?,?,now(),?)",
              $id,$name,$pass,$owner,$who,$where);
       } else {
-         sql($db,
-             " insert into object " .
+         sql(" insert into object " .
              "    (obj_name,obj_password,obj_owner,obj_created_by," .
              "     obj_created_date, obj_home " .
              "    ) ".
@@ -12162,18 +12129,18 @@ sub create_object
       }
    }
 
-   if($$db{rows} != 1) {                           # oops, nothing happened
+   if(@info{rows} != 1) {                           # oops, nothing happened
       necho(self => $self,
             prog => $prog,
             source => [ "object #%s was not created", $id ]
            );
-      my_rollback($db);
+      my_rollback;
       return undef;
    }
 
    if($id eq undef) {                             # grab newly created id
-      $id = one_val($db,"select last_insert_id() obj_id") ||
-          return my_rollback($db);
+      $id = one_val("select last_insert_id() obj_id") ||
+          return my_rollback;
    }
 
    my $out = set_flag($self,$prog,$id,$type,1);
@@ -12194,7 +12161,7 @@ sub create_object
 
 sub curval
 {
-   return one_val($db,"select last_insert_id() value");
+   return one_val("select last_insert_id() value");
 }
 
 #
@@ -12261,7 +12228,7 @@ sub inuse_player_name
    if(memorydb) {
       return defined @player{lc($name)} ? 1 : 0;
    } else {
-      my $result = one_val($db,
+      my $result = one_val(
                      "select if(count(*) = 0,0,1) value " .
                      "  from object obj, flag flg, flag_definition fde " .
                      " where obj.obj_id = flg.obj_id " .
@@ -12300,7 +12267,7 @@ sub give_money
           $money + $amount,
           $$owner{obj_id});
 
-      return undef if($$db{rows} != 1);
+      return undef if(@info{rows} != 1);
       set_cache($target,"obj_money",$money + $amount);
    }
 
@@ -12335,8 +12302,7 @@ sub set
             }
          }
       } else {
-         sql($db,
-             "delete " .
+         sql("delete " .
              "  from attribute " .
              " where atr_name = ? " .
              "   and obj_id = ? ",
@@ -12450,15 +12416,15 @@ sub get
         return undef;
       }
    } else {
-      if((my $hash = one($db,"select atr_value, " .
-                             "       atr_pattern, ".
-                             "       atr_pattern_type ".
-                             "  from attribute " .
-                             " where obj_id = ? " .
-                             "   and atr_name = upper( ? )",
-                             $$obj{obj_id},
-                             $attribute
-                            ))) {
+      if((my $hash = one("select atr_value, " .
+                         "       atr_pattern, ".
+                         "       atr_pattern_type ".
+                         "  from attribute " .
+                         " where obj_id = ? " .
+                         "   and atr_name = upper( ? )",
+                         $$obj{obj_id},
+                         $attribute
+                        ))) {
          if($$hash{atr_pattern} ne undef && !$flag) {
             my $type;                            # rebuild full attribute value
             if($$hash{atr_pattern_type} == 1) {
@@ -12593,13 +12559,13 @@ sub move
 
       # look up destination object
       # remove previous location record for object
-      sql($db,"delete from content " .                  # remove previous loc
-              " where obj_id = ?",
-              $$target{obj_id});
+      sql("delete from content " .                      # remove previous loc
+          " where obj_id = ?",
+          $$target{obj_id});
 
       # insert current location record for object
-      my $result = sql(e($db,1),                              # set new location
-          "INSERT INTO content (obj_id, ".
+      my $result = sql(
+          "INSERT INTO content (obj_id, ".               # set new location
           "                     con_source_id, ".
           "                     con_created_by, ".
           "                     con_created_date, ".
@@ -12619,7 +12585,7 @@ sub move
       if(hasflag($loc,"ROOM")) {
          set($self,$prog,$loc,"LAST_INHABITED",scalar localtime(),1);
       }
-      my_commit($db);
+      my_commit;
       return 1;
    }
 }
@@ -12667,7 +12633,7 @@ sub set_home
           $$obj{obj_id}
          );
 
-      if($$db{rows} != 1) {
+      if(@info{rows} != 1) {
          return err($self,$prog,"Internal Error, unable to set home");
       } else {
          my_commit;
@@ -12684,8 +12650,7 @@ sub link_exit
                      $$exit{obj_id});
 
    if($count > 0) {
-      one($db,
-          "update content " .
+      one("update content " .
           "   set con_dest_id = ?," .
           "       con_updated_by = ? , ".
           "       con_updated_date = now() ".
@@ -12694,8 +12659,7 @@ sub link_exit
           obj_name($self,$self,1),
           $$exit{obj_id});
    } else {
-      one($db,                                     # set new location
-          "INSERT INTO content (obj_id, ".
+      one("INSERT INTO content (obj_id, ".                # set new location
           "                     con_source_id, ".
           "                     con_dest_id, ".
           "                     con_created_by, ".
@@ -12715,7 +12679,7 @@ sub link_exit
       );
    }
 
-   if($$db{rows} == 1) {
+   if(@info{rows} == 1) {
       set_cache($src,"lexits");
       set_cache($exit,"con_source_id");
       my_commit;
@@ -12747,8 +12711,7 @@ sub lastsite
          }
       }
    } else {
-      return one_val($db,
-                     "SELECT skh_hostname value " .
+      return one_val("SELECT skh_hostname value " .
                      "  from socket_history skh " .
                      "     join (select max(skh_id) skh_id  ".
                      "             from socket_history  ".
@@ -12774,8 +12737,7 @@ sub lasttime
          return scalar localtime((sort keys %$list)[-1]);
       }
    } else {
-      my $last = one_val($db,
-                         "select ifnull(max(skh_end_time), " .
+      my $last = one_val("select ifnull(max(skh_end_time), " .
                          "              max(skh_start_time) " .
                          "             ) value " .
                          "  from socket_history " .
@@ -12795,8 +12757,7 @@ sub firstsite
    } elsif(memorydb) {
       return get($target,"obj_created_by");
    } else {
-      return one_val($db,
-                     "SELECT skh_hostname value " .
+      return one_val("SELECT skh_hostname value " .
                      "  from socket_history skh " .
                      "     join (select min(skh_id) skh_id  ".
                      "             from socket_history  ".
@@ -12885,8 +12846,7 @@ sub quota_left
   if(hasflag($obj,"WIZARD")) {
      return 99999999;
   } else {
-     return one_val($db,
-                    "select max(obj_quota) - count(*) + 1 value " .
+     return one_val("select max(obj_quota) - count(*) + 1 value " .
                     "  from object " .
                     " where obj_owner = ?" .
                     "    or obj_id = ?",
@@ -12927,8 +12887,7 @@ sub isatrflag
    if(memorydb) {
       return flag_attr($txt);
    } else {
-      return one_val($db,
-                     "select count(*) value " .
+      return one_val("select count(*) value " .
                      "  from flag_definition " .
                      " where fde_name = upper(trim(?)) " .
                      "   and fde_type = 2",
@@ -13237,11 +13196,6 @@ use strict;
 use Carp;
 
 
-$db = {} if(ref($db) ne "HASH");
-$log = {} if(ref($log) ne "HASH");
-# delete @$db{keys %$db};
-# delete @$log{keys %$log};
-
 #
 # get_db_credentials
 #    Load the database credentials from the tm_config.dat file
@@ -13255,8 +13209,7 @@ sub get_db_credentials
    for my $line (split(/\n/,getfile($fn))) {
       $line =~ s/\r|\n//g;
       if($line =~ /^\s*(user|pass|database)\s*=\s*([^ ]+)\s*$/) {
-         $$db{$1} = $2;
-         $$log{$1} = $2;
+         @info{$1} = $2;
       }
    }
 }
@@ -13270,12 +13223,11 @@ get_db_credentials;
 #
 sub sql
 {
-   my $con = (ref($_[0]) eq "HASH") ? shift : $db;
    my ($sql,@args) = @_;
    my (@result,$sth);
    @info{sqldone} = 0;
 
-   delete @$con{rows};
+   delete @info{rows};
 
 #   if($sql !~ /^insert into io/) {
 #     printf("SQL: '%s' -> '%s'\n",$sql,join(',',@args));
@@ -13292,19 +13244,20 @@ sub sql
    @info{sql_last_code} = code();
 
    # connected/reconnect to DB if needed
-   if(!defined $$con{db} || !$$con{db}->ping) {
-      $$con{host} = "localhost" if(!defined $$con{host});
-      $$con{db} = DBI->connect("DBI:mysql:database=$$con{database}:" .
-                             "host=$$con{host}",
-                             $$con{user},
-                             $$con{pass},
-                             {AutoCommit => 0, RaiseError => 1,
-                               mysql_auto_reconnect => 1}
-                            ) 
-                            or die "Can't connect to database: $DBI::errstr\n";
+   if(!defined @info{db_handle} || !@info{db_handle}->ping) {
+      @info{host} = "localhost" if(!defined @info{host});
+      @info{db_handle} = DBI->connect("DBI:mysql:database=@info{database}:" .
+                                      "host=@info{host}",
+                                      @info{user},
+                                      @info{pass},
+                                      {AutoCommit => 0, RaiseError => 1,
+                                        mysql_auto_reconnect => 1}
+                                      ) 
+                                      or die "Can't connect to database: " .
+                                         $DBI::errstr;
    }
 
-   $sth = @$con{db}->prepare($sql) ||
+   $sth = @info{db_handle}->prepare($sql) ||
       die("Could not prepair sql: $sql");
 
    for my $i (0 .. $#args) {
@@ -13314,19 +13267,8 @@ sub sql
    if(!$sth->execute( )) {
       die("Could not execute sql");
    }
-   @$con{rows} = $sth->rows;
+   @info{rows} = $sth->rows;
 
-   # produce an error if expectations are not met
-   if(defined @$con{expect}) {
-      if(@$con{expect} != $sth->rows) {
-         delete @$con{expect};
-         die("Expected @$con{expect} rows but got " . $sth->rows . 
-             " when running SQL: $sql");
-      } else {
-         delete @$con{expect};
-      }
-   }
- 
    # do not fetch results from inserts / deletes 
    if($sql !~ /^\s*(insert|delete|update) /i) {
       while(my $ref = $sth->fetchrow_hashref()) {
@@ -13342,95 +13284,16 @@ sub sql
 }
 
 #
-# sql
-#    Connect / Reconnect to the database and run some sql.
-#
-sub sql2
-{
-   my $con = (ref($_[0]) eq "HASH") ? shift : $db;
-   my ($sql,@args) = @_;
-   my (@result,$sth);
-
-   delete @$con{rows};
-#   # reconnect if we've been idle for an hour. Shouldn't be needed?
-#   if(time() - $$db{last} > 3600) {
-#      eval {
-#         @$con{db}->disconnect;
-#      };
-#      delete @$con{db};
-#   }
-#   $$db{last} = time();
-
-   #
-   # clean up the sql a little
-   #  keep track of last sql that was run for debug purposes.
-   #
-   $sql =~ s/\s{2,999}/ /g;
-   @info{sql_last} = $sql;
-   @info{sql_last_args} = join(',',@args);
-#   if($sql =~ /flag_permission/i) {
-#   printf("SQL: '%s'\n",$sql);
-#   printf("     '%s'\n",$info{sql_last_args});
-#   }
-
-   # connected/reconnect to DB if needed
-   if(!defined $$con{db} || !$$con{db}->ping) {
-      $$con{host} = "localhost" if(!defined $$con{host});
-      $$con{db} = DBI->connect("DBI:mysql:database=$$con{database}:" .
-                             "host=$$con{host}",
-                             $$con{user},
-                             $$con{pass},
-                             {AutoCommit => 0, RaiseError => 1,
-                               mysql_auto_reconnect => 1}
-                            ) 
-                            or die "Can't connect to database: $DBI::errstr\n";
-   }
-
-   $sth = @$con{db}->prepare($sql) ||
-      die("Could not prepair sql: $sql");
-
-   for my $i (0 .. $#args) {
-      $sth->bind_param($i+1,$args[$i]);
-   }
-
-   $sth->execute( ) || die("Could not execute sql");
-   @$con{rows} = $sth->rows;
-
-   # produce an error if expectations are not met
-   if(defined @$con{expect}) {
-      if(@$con{expect} != $sth->rows) {
-         delete @$con{expect};
-         die("Expected @$con{expect} rows but got " . $sth->rows . 
-             " when running SQL: $sql");
-      } else {
-         delete @$con{expect};
-      }
-   }
- 
-   # do not fetch results from inserts / deletes 
-   if($sql !~ /^\s*(insert|delete|update) /i) {
-      while(my $ref = $sth->fetchrow_hashref()) {
-         push(@result,$ref);
-      }
-   }
-
-   # clean up and return the results
-   $sth->finish();
-   return @result;
-}
-
-#
 # one_val
 #    fetch the first entry in value column on a select that returns only
 #    one row.
 #
 sub one_val
 {
-   my $con = (ref($_[0]) eq "HASH") ? shift : $db;
    my ($sql,@args) = @_;
 
-   my $array = sql($con,$sql,@args);
-   return ($$con{rows} == 1) ? @{$$array[0]}{value} : undef;
+   my $array = sql($sql,@args);
+   return (@info{rows} == 1) ? @{$$array[0]}{value} : undef;
 }
 
 #
@@ -13438,18 +13301,13 @@ sub one_val
 #
 sub one
 {
-   my $con = (ref($_[0]) eq "HASH") ? shift : $db;
    my ($sql,@args) = @_;
+   my $array = sql($sql,@args);
 
-#   printf("SQL: '%s'\n",$sql);
-   my $array = sql($con,$sql,@args);
-#   printf("ONE: '%s'\n",$$con{rows});
-#   printf("#ARRAY#: '%s'\n",join(',',@$array));
-
-   if($$con{rows} == 1) {
+   if(@info{rows} == 1) {
       return $$array[0];
-   } elsif($$con{rows} == 2 && $sql =~ /ON DUPLICATE/i) {
-      $$con{rows} = 1;
+   } elsif(@info{rows} == 2 && $sql =~ /ON DUPLICATE/i) {
+      @info{rows} = 1;
       return $$array[0];
    } else {
       return undef;
@@ -13458,19 +13316,12 @@ sub one
 
 sub my_commit
 {
-   my $con = (ref($_[0]) eq "HASH") ? shift : $db;
-   $$con{db}->commit;
+   @info{db_handle}->commit;
 }
 
 sub my_rollback
 {
-   my $con = (ref($_[0]) eq "HASH") ? shift : $db;
-   my ($fmt,@args) = @_;
-
-   if(mysqldb) {
-      @$con{db}->rollback;
-      return undef;
-   }
+   @info{db_handle}->rollback;
 }
 
 sub fetch
@@ -13483,7 +13334,7 @@ sub fetch
    if(memorydb) {
       return $obj;
    } else {
-      my $hash=one($db,"select * from object where obj_id = ?",$$obj{obj_id}) ||
+      my $hash=one("select * from object where obj_id = ?",$$obj{obj_id}) ||
          return undef;
       return $hash;
    }
@@ -13534,8 +13385,7 @@ sub add_site_restriction
    my $sock = shift;
 
    if(mysqldb) {
-       my $hash=one($db,
-                    "select ifnull(min(ste_type),4) ste_type" .
+       my $hash=one("select ifnull(min(ste_type),4) ste_type" .
                     "  from site ".
                     " where (lower(?) like lower(ste_pattern) ".
                     "    or lower(?) like lower(ste_pattern))" .
@@ -13672,7 +13522,7 @@ sub server_process_line
 #         printf("LastSQL: '%s'\n",@info{sql_last});
 #         printf("         '%s'\n",@info{sql_last_args});
 #         printf("         '%s'\n",@info{sql_last_code});
-         my_rollback($db);
+         my_rollback;
    
          my $msg;
          if($_[1] =~ /^\s*connnect\s+/) {
@@ -13877,12 +13727,11 @@ sub server_disconnect
               );
 
          if(mysqldb) {
-            sql($db,                             # delete socket table row
-                "delete from socket " .
+            sql("delete from socket " .             # delete socket table row
                 " where sck_socket = ? ",
                 $id
                );
-            my_commit($db);
+            my_commit;
          }
       } elsif(defined $$hash{connect_time}) {                # Player Socket
 
@@ -13896,27 +13745,24 @@ sub server_disconnect
          }
 
          if(mysqldb) {
-            my $sck_id = one_val($db,                        # find socket id
-                                 "select sck_id value " .
+            my $sck_id = one_val("select sck_id value " .     # find socket id
                                  "  from socket " .
                                  " where sck_socket = ?" ,
                                  $id
                                 );
 
             if($sck_id ne undef) {
-                sql($db,                               # log disconnect time
-                    "update socket_history " .
+                sql("update socket_history " .           # log disconnect time
                     "   set skh_end_time = now() " .
                     " where sck_id = ? ",
                      $sck_id
                    );
    
-                sql($db,                          # delete socket table row
-                    "delete from socket " .
+                sql("delete from socket " .         # delete socket table row
                     " where sck_id = ? ",
                     $sck_id
                    );
-                my_commit($db);
+                my_commit;
             }
          }
 
@@ -13949,11 +13795,11 @@ sub server_start
    #
 
    if(mysqldb) {
-      sql($db,"delete from socket");
-      sql($db,"update socket_history " .
+      sql("delete from socket");
+      sql("update socket_history " .
               "   set skh_end_time = skh_start_time " .
               " where skh_end_time is null");
-      my_commit($db);
+      my_commit;
    }
 
    if(memorydb) {

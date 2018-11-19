@@ -7872,13 +7872,6 @@ sub fmt_balanced_split
       return ($#depth != -1) ? undef : @stack;
    }
 }
-sub trim
-{
-   my $txt = shift;
-
-   $txt =~ s/^\s*|\s*$//g;
-   return $txt;
-}
 
 #
 # dprint
@@ -9019,7 +9012,7 @@ sub fun_setinter
        @list{$i} = 1;
    }
 
-   for my $i (split(/ /,evalute($self,$prog,@_[1]))) {
+   for my $i (split(/ /,evaluate($self,$prog,@_[1]))) {
       $i =~ s/^\s+|\s+$//g;
       @out{$i} = 1 if(defined @list{$i});
   }
@@ -9824,12 +9817,12 @@ sub fun_get
    my ($obj,$atr);
 
    if($txt =~ /\//) {
-      ($obj,$atr) = ($`,$');
+      ($obj,$atr) = (evaluate($self,$prog,$`),evaluate($self,$prog,$'));
    } else {
-      ($obj,$atr) = ($txt,@_[0]);
+      ($obj,$atr) = (evaluate($self,$prog,$txt),evaluate($self,$prog,@_[0]));
    }
 
-   my $target = find($self,$prog,evaluate($self,$prog,$obj));
+   my $target = find($self,$prog,$obj);
 
    if($target eq undef ) {
       return "#-1 Unknown object";
@@ -13369,7 +13362,7 @@ sub trim
 {
    my $txt = shift;
 
-   $txt =~ s/^\s+|\s+$//g;
+   $txt =~ s/^ +| +$//g;
    return $txt;
 }
 
@@ -13522,7 +13515,7 @@ sub server_process_line
 #         printf("LastSQL: '%s'\n",@info{sql_last});
 #         printf("         '%s'\n",@info{sql_last_args});
 #         printf("         '%s'\n",@info{sql_last_code});
-         my_rollback;
+         my_rollback if mysqldb;
    
          my $msg;
          if($_[1] =~ /^\s*connnect\s+/) {
@@ -13890,9 +13883,9 @@ __EOF__
 
    # main loop;
    while(1) {
-#      eval {
+      eval {
          server_handle_sockets();
-#      };
+      };
       if($@){
          printf("Server Crashed, minimal details [main_loop]\n");
          if(mysqldb) {

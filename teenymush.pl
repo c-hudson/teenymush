@@ -20,6 +20,7 @@ use strict;
 use IO::Select;
 use IO::Socket;
 use File::Basename;
+use Net::HTTPS::NB;
 
 #
 #    Certain variables can not be re-loaded or the MUSH will forget about
@@ -62,8 +63,10 @@ my (%command,                  #!# commands for after player has connected
 
 # check to see if the URI::Escape module loads
 eval {                                                                       
-   require URI::Escape;                                                      
-   import URI::Escape;                                               
+   if(@info{"conf.httpd"} != -1) {
+      require URI::Escape;                                                      
+      import URI::Escape;                                               
+   }
 };                                                                 
 if($@) {                                                           
    printf("WARNING: Missing URI::Escape module, HTTPD disabled\n");
@@ -72,8 +75,10 @@ if($@) {
                                                                                 
 # check to see if the DBI module loads
 eval {                                                             
-   require DBI;                                                           
-   import DBI;                                                       
+   if(@info{"conf.mysqldb"} != -1) {
+      require DBI;                                                           
+      import DBI;                                                       
+   }
 };                                                                         
 if($@) {                                                           
    printf("WARNING: Missing DBI module, MYSQLDB disabled\n");      
@@ -82,13 +87,27 @@ if($@) {
                                                                                 
 # check to see if the Net::WebSocket::Server package loads
 eval {                                                             
-   # See https://metacpan.org/pod/Net::WebSocket::Server           
-   require Net::WebSocket::Server;                                        
-   import Net::WebSocket::Server;                                    
+   if(@info{"conf.websocket"} != -1) {
+      # See https://metacpan.org/pod/Net::WebSocket::Server           
+      require Net::WebSocket::Server;                                        
+      import Net::WebSocket::Server;                                    
+   }
 };
 if($@) {                                                           
    printf("WARNING: Missing Net::WebSocket::Server module, WEBSOCKET disabled\n");
    @info{"conf.websocket"} = -1;                                                
+}
+
+eval {                                                             
+   if(@info{"conf.url"} != -1) {
+      # See https://metacpan.org/pod/Net::WebSocket::Server           
+      require Net::HTTPS::NB;
+      import Net::HTTPS::NB;
+   }
+};
+if($@) {                                                           
+   printf("WARNING: Missing Net::HTTPS::NB module, url() disabled\n");
+   @info{"conf.url"} = -1;                                                
 }
 
 #
@@ -2441,22 +2460,24 @@ sub read_atr_config
    my ($self,$prog) = @_;
 
    my %default = (
-      money_name_plural    => "Pennies",
-      money_name_singular  => "Penny",
-      paycheck             => 50,
-      starting_money       => 150,
-      linkcost             => 1,
-      digcost              => 10,
-      createcost           => 10,
-      backup_interval      => 3600,                          # once an hour
-      freefind_interval    => 84600,                           # once a day
-      login                => "Welcome to @info{version}\r\n\r\n" .
-                              "   Type the below command to customize this " .
-                              "screen after loging in as God.\r\n\r\n" .
-                              "    \@set #0/conf.login = Login screen\r\n\r\n",
-      badsite              => "Your site has been banned.",
-      httpd_template       => "<pre>",
-      mudname              => "TeenyMUSH"
+      money_name_plural         => "Pennies",
+      money_name_singular       => "Penny",
+      paycheck                  => 50,
+      starting_money            => 150,
+      linkcost                  => 1,
+      digcost                   => 10,
+      createcost                => 10,
+      backup_interval           => 3600,                          # once an hour
+      freefind_interval         => 84600,                           # once a day
+      function_invocation_limit => 2500,
+      login                     => "Welcome to @info{version}\r\n\r\n" .
+                                   "   Type the below command to customize " .
+                                   "this screen after loging in as God." .
+                                   "\r\n\r\n    \@set #0/conf.login = " .
+                                   "Login screen\r\n\r\n",
+      badsite                   => "Your site has been banned.",
+      httpd_template            => "<pre>",
+      mudname                   => "TeenyMUSH"
    );
 
    my %updated;
@@ -4099,7 +4120,16 @@ sub cmd_help
    if(memorydb) {
       # initalize help variable if needed
       cmd_read($self,$prog,"help") if(scalar keys %help == 0);
-      $help = @help{lc(trim($txt))};
+
+      if(defined @help{lc(trim($txt))}) {
+         $help = @help{lc(trim($txt))};
+      } elsif(defined @help{"@" . lc(trim($txt))}) {
+         $help = @help{"@" . lc(trim($txt))};
+      } elsif(defined @help{lc(trim($txt)). "()"}) {
+         $help = @help{lc(trim($txt)) . "()"};
+      } elsif($txt =~ /\(\s*\)\s*$/ && defined @help{lc(trim($`))}) {
+         $help = @help{lc(trim($`))};
+      }
    } else {
       $help = one_val("select hlp_data value" .
                          "  from help " . 
@@ -5530,7 +5560,7 @@ sub atr_case
      return undef;
    } elsif(memorydb) {
       my $attr = mget($obj,$atr);
-      if(!defined $$attr{flag} || !defined @{$$attr{flag}}{CASE}) {
+      if(!defined $$attr{flag} || !defined @{$$attr{flag}}{case}) {
          return 0;
       } else {
          return 1;
@@ -5570,7 +5600,8 @@ sub latr_regexp
                ($type == 3 && $$attr{type} eq "!")) { 
                push(@result,{ atr_regexp => $$attr{regexp},
                               atr_value  => $$attr{value},
-                              atr_name   => $name
+                              atr_name   => $name,
+                              atr_owner  => $$obj{obj_id}
                             }
                    );
             }
@@ -5588,7 +5619,8 @@ sub latr_regexp
                    }) { 
          push(@result, { atr_regexp => $$atr{atr_regexp},
                          atr_value  => $$atr{atr_value},
-                         atr_name   => $$atr{atr_name}
+                         atr_name   => $$atr{atr_name},
+                         atr_owner  => $$obj{obj_id}
                        }
              );
       }
@@ -7059,7 +7091,8 @@ sub run_container_commands
                     source => 0,
                     cmd    => single_line($$hash{atr_value}),
                     wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ],
-                    from   => "ATTR"
+                    from   => "ATTR",
+                    attr   => $hash
                    );
             $match=1;                             # signal mush command found
          }
@@ -7149,6 +7182,9 @@ sub mushrun
       $arg{pid} = $info{pid};
    }
 
+   if(defined @arg{attr} && defined @arg{prog}) {
+      @{@arg{prog}}{attr} = @arg{attr};
+   }
 
    # prevent RUN() from adding commands to the queue
    if(defined @{@arg{prog}}{output} &&
@@ -7226,7 +7262,7 @@ sub mushrun
           unshift(@$stack,{runas  => $arg{runas},
                            cmd    => $i,
                            source => 0,
-                           multi  => ($multi eq undef) ? 0 : 1
+                           multi  => ($multi eq undef) ? 0 : 1,
                           }
                  );
        }
@@ -7424,6 +7460,29 @@ sub spin
          }
          if($#$command == -1) { # program is done 
             my $prog = shift(@$thread);
+
+            if($$prog{function} > 20 || $$prog{command} > 20) {
+               if(defined $$prog{attr}) {
+                   printf("Cost: #%s/%s => %.3f pennies in " .
+                          "%.3fs [%sc/%sf]\n",
+                          @{$$prog{attr}}{atr_owner},
+                          @{$$prog{attr}}{atr_name},
+                          ($$prog{command} + ($$prog{function} / 10)) / 64,
+                          $$prog{function_duration} + $$prog{command_duration},
+                          $$prog{command},$$prog{function}
+                         );
+#                   for my $key (grep {/^command_/i} keys %$prog) {
+#                      printf("   %s -> %s\n",,substr($key,8),$$prog{$key});
+#                   }
+               } else {
+                   printf("Cost: %s.%s commands in %.3fs\n",
+                          $$prog{command},
+                          $$prog{function},
+                          $$prog{function_duration} + $$prog{command_duration},
+                         );
+               }
+            }
+
             if($$prog{hint} eq "WEBSOCKET") {
                my $msg = join("",@{@$prog{output}});
                $prog->{sock}->send_utf8(ansi_remove($msg));
@@ -7443,7 +7502,7 @@ sub spin
    };
 #   printf("Count: $count\n");
 #   printf("Spin: finish -> $count\n");
-   printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count > 1;
+#   printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count > 1;
 #   printf("      total: '%s'\n",$total) if $count > 1;
 
 
@@ -7514,9 +7573,18 @@ sub run_internal
            );
    }
    
-   my $result = &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,trim($arg),\%switch);
+
+   
+   my $start = Time::HiRes::gettimeofday();
+   my $result = &{@{$$hash{$cmd}}{fun}}($$command{runas},
+                                        $prog,
+                                        trim($arg),
+                                        \%switch
+                                       );
+   $$prog{command_duration} += Time::HiRes::gettimeofday() - $start;
+   $$prog{command}++;
+#   $$prog{"command_$cmd"}++;
    return $result;
-   return &{@{$$hash{$cmd}}{fun}}($$command{runas},$prog,trim($arg),\%switch);
 }
 
 sub spin_run
@@ -8366,6 +8434,73 @@ sub initialize_functions
    @fun{convsecs}   = sub { return &fun_convsecs(@_);              };
    @fun{max}        = sub { return &fun_max(@_);                   };
    @fun{controls}   = sub { return &fun_controls(@_);              };
+   @fun{invocation} = sub { return &fun_invocation(@_);            };
+   @fun{url}        = sub { return &fun_url(@_);                   };
+}
+
+sub fun_url
+{
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
+   my ($host,$path);
+
+   if(@info{"conf.url"} == -1) {
+      return "#-1 FUNCTION (URL) DISABLED, MISSING MODULE";
+   }
+      
+   my $puppet = hasflag($self,"SOCKET_PUPPET");
+   my $input = hasflag($self,"SOCKET_INPUT");
+   if(!$input && !$puppet) {
+      return err($self,$prog,"Permission DENIED.");
+   } elsif(defined $$prog{telnet_sock}) {
+      return err($self,$prog,"A telnet connection is already open");
+   } elsif($txt =~ /^https:\/\/([^\/]+)\//) {
+      ($host,$path) = ($1,$');
+   } else {
+      my $host = $txt;
+   }
+
+   my $sock = Net::HTTPS::NB->new(Host => $host);
+
+   $sock->blocking(0);
+   $$prog{telnet_sock} = $sock;
+
+   return 0 if !$sock;
+
+   $sock->write_request(GET => "/$path");
+
+   @connected{$sock} = {
+      obj_id    => $$self{obj_id},
+      sock      => $sock,
+      raw       => 1,
+      hostname  => $1,
+      port      => 80,
+      loggedin  => 0,
+      opened    => time(),
+      enactor   => $self,
+      prog      => $prog,
+   };
+
+   if($puppet) {
+      @{@connected{$sock}}{raw} = 1;
+   } elsif($input) {
+      @{@connected{$sock}}{raw} = 2;
+   }
+
+   $readable->add($sock);
+
+   @info{io} = {} if(!defined @info{io});
+
+   @info{io}->{$sock} = {};
+   @info{io}->{$sock}->{buffer} = [];
+
+   return 1;
+}
+
+
+
+sub fun_invocation
+{
+   return "#-1 FUNCTION INVOCATION LIMIT HIT";
 }
 
 sub fun_controls
@@ -9842,7 +9977,7 @@ sub fun_v
 {
    my ($self,$prog,$txt) = (shift,shift,shift);
 
-   return get($self,evaluate($self,$prog,$txt));
+   return evaluate($self,$prog,get($self,evaluate($self,$prog,$txt)));
 }
 
 sub fun_setq
@@ -10092,8 +10227,19 @@ sub fun_left
 # 
 sub fun_input
 {
-   my ($self,$prog) = (obj(shift),shift);
-   
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
+  
+
+   if($txt =~ /^\s*last\s*$/i) {
+      if(hasflag($self,"WIZARD")) {
+         return necho(self => $self,
+                      prog => $prog,
+                      source => [ "%s", @info{connected_raw}  ],
+                     );
+      } else {
+         return "#-1 PERMISSION DENIED";
+      }
+   }
    if(!defined $$prog{telnet_sock} && !defined $$prog{socket_buffer}) {
       return "#-1 Connection Closed";
    } elsif(defined $$prog{telnet_sock} && !defined $$prog{socket_buffer}) {
@@ -10381,6 +10527,10 @@ sub parse_function
 {
    my ($self,$prog,$fun,$txt,$type) = @_;
 
+   if($$prog{function}++ > @info{"conf.function_invocation_limit"}) {
+      return undef; # "#-1 FUNCTION INVOCATION LIMIT HIT";
+   }
+
    my @array = balanced_split($txt,",",$type);
    return undef if($#array == -1);
 
@@ -10389,15 +10539,6 @@ sub parse_function
    if(($type == 1 && @array[0] =~ /^ *]/) ||
       ($type == 2 && @array[0] =~ /^\s*$/)) {
       @array[0] = $';                              # strip ending ] if there
-#      for my $i (1 .. $#array) {                            # eval arguments
-#         # evaluate args before passing them to function
-#
-#         if(!(defined @exclude{$fun} && (defined @{@exclude{$fun}}{$i} ||
-#            defined @{@exclude{$fun}}{all}))) {
-#            @array[$i] = evaluate($self,$prog,@array[$i]);
-##            @array[$i] = @array[$i];
-#         }
-#      }
       return \@array;
    } else {
       return undef;
@@ -10514,7 +10655,10 @@ sub evaluate
          if($result ne undef) {
             shift(@$result);
             printf("undefined function: '%s'\n",$fun) if($fun eq "huh");
+
+            my $start = Time::HiRes::gettimeofday();
             my $r=&{@fun{$fun}}($self,$prog,@$result);
+            $$prog{function_duration} +=Time::HiRes::gettimeofday()-$start;
             
             script($fun,join(',',@$result),$r);
 
@@ -10545,7 +10689,11 @@ sub evaluate
             $out .= "[$fun(";
          } else {                                    # good function, run it
             $txt = shift(@$result);
+
+            my $start = Time::HiRes::gettimeofday();
             my $r = &{@fun{$fun}}($self,$prog,@$result);
+            $$prog{function_duration} +=Time::HiRes::gettimeofday()-$start;
+
             script($fun,join(',',@$result),$r);
             $out .= "$r";
          }
@@ -11288,6 +11436,7 @@ sub handle_object_listener
                  wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
                  source => 0,
                  from   => "ATTR",
+                 attr   => $hash,
                 );
          $count++;
       }
@@ -11314,6 +11463,7 @@ sub handle_listener
                        cmd    => $$hash{atr_value},
                        wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
                        source => 0,
+                       attr   => $hash
                       );
                 $match=1;
             }
@@ -11323,6 +11473,7 @@ sub handle_listener
                     cmd    => $$hash{atr_value},
                     wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
                     source => 0,
+                    attr   => $hash
                    );
              $match=1;
          }
@@ -13662,6 +13813,17 @@ sub server_handle_sockets
             while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
                @{@connected{$s}}{buf} = $';                # store left overs
                server_process_line(@connected{$s},$`);         # process line
+
+           
+               # store last transaction in @info{connected_raw_socket} 
+               if(@{@connected{$s}}{raw} > 0) {
+                  if(@info{connected_raw_socket} ne $s) {
+                     delete @info{connected_raw};
+                     @info{connected_raw_socket} = $s;
+                  } 
+                  @info{connected_raw} .= $` . "\n";
+               }
+
 #               if(@{@connected{$s}}{raw} > 0) {
 #                  my $tmp = $`;
 #                  $tmp =~ s/\e\[[\d;]*[a-zA-Z]//g;

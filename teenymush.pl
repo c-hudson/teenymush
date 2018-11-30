@@ -10,7 +10,7 @@
 #                            'oooP'
 #
 #                A TinyMUSH like server written in perl?*^
-#                    [ Yep, impossible but true. ]
+#                       [ impossible but true ]
 #
 #
 # * = No Frogs were harmed in the creation of this project.
@@ -20,7 +20,6 @@ use strict;
 use IO::Select;
 use IO::Socket;
 use File::Basename;
-use Net::HTTPS::NB;
 
 #
 #    Certain variables can not be re-loaded or the MUSH will forget about
@@ -99,14 +98,24 @@ if($@) {
 }
 
 eval {                                                             
-   if(@info{"conf.url"} != -1) {
-      # See https://metacpan.org/pod/Net::WebSocket::Server           
+   if(@info{"conf.url_https"} != -1) {
       require Net::HTTPS::NB;
       import Net::HTTPS::NB;
    }
 };
 if($@) {                                                           
-   printf("WARNING: Missing Net::HTTPS::NB module, url() disabled\n");
+   printf("WARNING: Missing Net::HTTPS::NB module, https in url() disabled\n");
+   @info{"conf.url"} = -1;                                                
+}
+
+eval {                                                             
+   if(@info{"conf.url_http"} != -1) {
+      require Net::HTTP::NB;
+      import Net::HTTP::NB;
+   }
+};
+if($@) {                                                           
+   printf("WARNING: Missing Net::HTTP::NB module, http in url() disabled\n");
    @info{"conf.url"} = -1;                                                
 }
 
@@ -166,7 +175,7 @@ sub getfile
    my ($fn,$code,$filter) = @_;
    my($file, $out);
 
-   if($fn =~ /^[^\\|\/]+\.(pl|dat|dev)$/i) {
+   if($fn =~ /^[^\\|\/]+\.(pl|dat|dev|conf)$/i) {
       open($file,$fn) || return undef;                         # open pl file
    } elsif($fn =~ /^[^\\|\/]+$/i) {
       open($file,"txt\/$fn") || return undef;                 # open txt file
@@ -277,14 +286,14 @@ sub read_config
    my $flag = shift;
    my ($count,$fn)=(0,undef);
 
-   if($0 =~ /\.([^\.]+)$/ && -e "$1.dat.dev") {
-      $fn = "$1.dat.dev";
-   } elsif($0 =~ /\.([^\.]+)$/ && -e "$1.dat") {
-      $fn = "$1.dat";
-   } elsif(-e "tm_config.dat.dev") {
-      $fn = "tm_config.dat.dev";
+   if($0 =~ /\.([^\.]+)$/ && -e "$1.conf.dev") {
+      $fn = "$1.conf.dev";
+   } elsif($0 =~ /\.([^\.]+)$/ && -e "$1.conf") {
+      $fn = "$1.conf";
+   } elsif(-e "teenymush.conf.dev") {
+      $fn = "teenymush.conf.dev";
    } else {
-      $fn = "tm_config.dat";
+      $fn = "teenymush.conf";
    }
 
    if(!-e $fn) {
@@ -446,8 +455,8 @@ sub get_credentials
 
    return if scalar keys %save == -1;
   
-   open($file,">> tm_config.dat") ||                # write to tm_config.dat
-     die("Could not append to tm_config.dat");
+   open($file,">> teenymush.conf") ||                # write to teenymush.conf
+     die("Could not append to teenymush.conf");
 
    for my $key (keys %save) {                                   # save data
       printf($file "%s=%s\n",$key,@save{$key});
@@ -814,6 +823,7 @@ sub initialize_commands
    @command{"\@split"}  = { fun  => sub { cmd_split(@_); }                  };
    @command{"\@websocket"}= { fun  => sub { cmd_websocket(@_); }            };
    @command{"\@find"}   = { fun  => sub { cmd_find(@_); }                   };
+   @command{"\@bad"}    = { fun  => sub { cmd_bad(@_); }                    };
    @command{"\@sqldump"}= { fun  => sub { db_sql_dump(@_); }                };
    @command{"\@dbread"} = { fun  => sub { fun_dbread(@_); }                 };
    @command{"\@dump"}   = { fun  => sub { cmd_dump(@_); }                   };
@@ -1163,6 +1173,81 @@ sub cmd_while
 }
 
 
+sub member
+{
+   my ($loc,$id,@list) = @_;
+
+   for my $i (@list) {
+      return 1 if($id eq $$i{obj_id});
+   } 
+   return 0;
+}
+
+sub cmd_bad
+{
+   my ($self,$prog) = @_;
+   my (@out, $start);
+
+   if(mysqldb) {
+      return err($self,$prog,"This command is disabled.");
+   } elsif(defined $$prog{nomushrun}) {
+      return err($self,$prog,"This command is not run() safe.");
+   } else {
+      my $cmd = $$prog{cmd_last};
+      $$cmd{bad_pos} = 0 if(!defined $$cmd{bad_pos});     # initialize "loop"
+
+      for($start=$$cmd{bad_pos};                   # loop for 100 objects
+             $$cmd{bad_pos} < $#db &&
+             $$cmd{bad_pos} - $start < 100;
+             $$cmd{bad_pos}++) {
+         if(valid_dbref($$cmd{bad_pos})) {              # does object match?
+            if(!hasflag($$cmd{bad_pos},"PLAYER") &&
+               !hasflag($$cmd{bad_pos},"OBJECT") &&
+               !hasflag($$cmd{bad_pos},"EXIT") &&
+               !hasflag($$cmd{bad_pos},"ROOM")) {
+               push(@out,"#" . $$cmd{bad_pos} ." No TYPE flag");
+            }
+
+            if(!hasflag($$cmd{bad_pos},"ROOM")) {
+               my $loc = loc($$cmd{bad_pos});
+
+               if($loc eq undef) {
+                  push(@out,"#" . $$cmd{bad_pos} ." No location");
+               } elsif(hasflag($$cmd{bad_pos},"EXIT")) {
+                  if(!member($loc,$$cmd{bad_pos},lexits($loc))) {
+                     push(@out,"#" . $$cmd{bad_pos} ." not in lexit() of $loc");
+                  }
+               } else {
+                  if(!member($loc,$$cmd{bad_pos},lcon($loc))) {
+                     push(@out,"#" . $$cmd{bad_pos} ." not in lcon() of $loc");
+                  }
+               }
+            }
+         }
+      }
+      if($#out > -1) {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ join("\n",@out) ]
+           );
+      }
+      if($$cmd{bad_pos} >= $#db) {                          # search is done
+         delete @$cmd{bad_pos};
+#         necho(self   => $self,
+#               prog   => $prog,
+#               source => [ "%s", print_var(@{@db[1]}{obj_flag}) ]
+#          );
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "**End of List***" ]
+           );
+         delete @$cmd{bad_pos};
+      } else {
+         return "RUNNING";                                     # more to do
+      }
+   }
+}
+
 #
 # cmd_find
 #    Search the entire database for objects. When using a memory database,
@@ -1175,7 +1260,7 @@ sub cmd_find
 
    if(memorydb) {
       if(defined $$prog{nomushrun}) {
-         out($prog,"#-1 \@WHILE is not a valid command to use in RUN function");
+         out($prog,"#-1 \@find can not be used in the run() function");
          return;
       }
 
@@ -1208,7 +1293,7 @@ sub cmd_find
          delete $$cmd{find_pat};
          delete $$cmd{find_owner};
       } else {
-         if($#out >= -1) {
+         if($#out > -1) {
             necho(self   => $self,
                   prog   => $prog,
                   source => [ join("\n",@out) ]
@@ -1759,6 +1844,17 @@ sub cmd_honey
    
 }
 
+
+sub set_var
+{
+   my ($prog,$var,$value) = @_;
+
+   $$prog{var} = {} if(!defined $$prog{var});
+
+   @{$$prog{var}}{$var} = $value;
+   return 0;
+}
+
 sub cmd_var
 {
     my ($self,$prog,$txt) = @_;
@@ -1766,22 +1862,10 @@ sub cmd_var
     $$prog{var} = {} if !defined $$prog{var};
     if($txt =~ /^\s*([^ ]+)\+\+\s*$/) {
        @{$$prog{var}}{evaluate($self,$prog,$1)}++;
-#       necho(self   => $self,
-#             prog   => $prog,
-#             source => [ "Set." ],
-#            );
     } elsif($txt =~ /^\s*([^ ]+)\-\-\s*$/) {
        @{$$prog{var}}{evaluate($self,$prog,$1)}--;
-#       necho(self   => $self,
-#             prog   => $prog,
-#             source => [ "Set." ],
-#            );
     } elsif($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
        @{$$prog{var}}{evaluate($self,$prog,$1)} = evaluate($self,$prog,$2);
-#       necho(self   => $self,
-#             prog   => $prog,
-#             source => [ "Set. $1 = @{$$prog{var}}{$1}" ],
-#            );
     } else {
        necho(self   => $self,
              prog   => $prog,
@@ -1941,7 +2025,7 @@ sub cmd_halt
       @owner{$obj} = @{owner($creator)}{obj_id} if(!defined @owner{$creator});
 
       if(@owner{$obj} == $obj) {                  # are the owners the same?
-         close_telnet($$program{telnet_socket});
+         close_telnet($$program{socket_id});
          delete @$engine{$pid};
          necho(self => $self,
                prog => $prog,
@@ -1983,7 +2067,7 @@ sub test
    } elsif($txt =~ / ne /)  {
       return (tval($self,$prog,$`) ne tval($self,$prog,$')) ? 1 : 0;
    } else {
-      return 0;
+      return evaluate($self,$prog,$txt) ? 1 : 0;
    }
 }
 
@@ -2684,7 +2768,8 @@ sub cmd_switch
 {
    
     my ($self,$prog,@list) = (shift,shift,balanced_split(shift,',',3));
-    my %last;
+    my $switch = shift;
+    my (%last, $pat);
 
     my ($first,$second) = (get_segment2(shift(@list),"="));
     $first = trim(ansi_remove(evaluate($self,$prog,$first)));
@@ -2699,7 +2784,12 @@ sub cmd_switch
        }
        if($#list >= 1) {
           my $txt = ansi_remove(evaluate($self,$prog,shift(@list)));
-          my $pat = glob2re($txt);
+
+          if(defined $$switch{regexp}) {   
+             $pat = ansi_remove(single_line($txt));
+          } else {
+             $pat = glob2re($txt);
+          }
           my $cmd = shift(@list);
           $txt =~ s/^\s+|\s+$//g;
 
@@ -2712,29 +2802,31 @@ sub cmd_switch
                                cmd    => $cmd,
                               );
              }
-          } elsif($first =~ /$pat/) {
-             my $prev = get_digit_variables($prog);
-             set_digit_variables($self,$prog,"m",$1,$2,$3,$4,$5,$6,$7,$8,$9);
-             return mushrun(self   => $self,
-                            prog   => $prog,
-                            runas  => $self,
-                            source => 0,
-                            cmd    => $cmd,
-                           );
-             set_digit_variables($self,$prog,"m",$prev);
+          } else {
+             eval {                    # assume $pat could be a bad regexp
+                if($first =~ /$pat/) {
+                   mushrun(self   => $self,
+                           prog   => $prog,
+                           runas  => $self,
+                           source => 0,
+                           cmd    => $cmd,
+                           match  => { 0 => $1, 1 => $2, 2 => $3, 3 => $4,
+                                       4 => $5, 5 => $6, 6 => $7, 7 => $8,
+                                       8 => $9 }
+                          );
+                   return;
+                }
+             };
           }
        } else {
           @list[0] = $1 if(@list[0] =~ /^\s*{(.*)}\s*$/);
           @list[0] =~ s/\r|\n//g;
-          my $prev = get_digit_variables($prog);
-          set_digit_variables($self,$prog,"m",$1,$2,$3,$4,$5,$6,$7,$8,$9);
           return mushrun(self   => $self,
                          prog   => $prog,
                          runas  => $self,
                          source => 0,
                          cmd    => @list[0],
                         );
-          set_digit_variables($self,$prog,"m",$prev);
        }
     }
 }
@@ -2794,7 +2886,7 @@ sub cmd_telnet
 
    if(!$input && !$puppet) {
       return err($self,$prog,"Permission DENIED.");
-   } elsif(defined $$prog{telnet_sock}) {
+   } elsif(defined $$prog{socket_id}) {
       return err($self,$prog,"A telnet connection is already open");
    } elsif($txt =~ /^\s*([^:]+)\s*[:| ]\s*(\d+)\s*$/) {
       my $addr = inet_aton($1) ||
@@ -2814,7 +2906,7 @@ sub cmd_telnet
       defined($sock->blocking(1)) ||
          return err($self,$prog,"Could not open a nonblocking connection");
 
-      $$prog{telnet_sock} = $sock;
+      $$prog{socket_id} = $sock;
 
       @connected{$sock} = {
          obj_id    => $$self{obj_id},
@@ -2906,8 +2998,8 @@ sub find_socket
              }
           }
        }
-    } elsif(hasflag($self,"SOCKET_INPUT") && defined $$prog{telnet_sock}) {
-       return $$prog{telnet_socket};
+    } elsif(hasflag($self,"SOCKET_INPUT") && defined $$prog{socket_id}) {
+       return $$prog{socket_id};
     }
     return undef;
 }
@@ -3050,7 +3142,7 @@ sub cmd_force
                runas  => $target,
                source => 0,
                cmd    => evaluate($self,$prog,$'),
-               hint   => "INTERNAL"
+               hint   => "ALWAYS_RUN"
               );
    } else {
      err($self,$prog,"syntax: \@force <object> = <command>");
@@ -4514,9 +4606,9 @@ sub cmd_connect
 
       if(invalid_player($self,$username,$pass)) {
          if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
-            ws_echo($sock,"Either that player does not exist, or has a different password.");
+            ws_echo($sock,"Either that player does not exist, or has a different password.\n");
          } else {
-            printf($sock "Either that player does not exist, or has a different password.");
+            printf($sock "Either that player does not exist, or has a different password.\n");
          }
          return;
       }
@@ -5027,7 +5119,7 @@ sub cmd_inventory
 sub cmd_look
 {
    my ($self,$prog,$txt) = @_;
-   my ($flag,$desc,$target,@exit,@con,$out,$name);
+   my ($flag,$desc,$target,@exit,@con,$out,$name,$attr);
    my $owner = owner_id($self);
    my $perm = hasflag($self,"WIZARD");
 
@@ -5046,7 +5138,7 @@ sub cmd_look
    }
 
    if(memorydb) {
-      my $attr = get($target,"CONFORMAT");
+      $attr = get($target,"CONFORMAT") if($$prog{hint} ne "WEB");
 
       for my $obj (lcon($target)) { 
          if(!hasflag($obj,"DARK") &&
@@ -6457,13 +6549,13 @@ sub mget
 #
 sub db_delete
 {
-   my $id = obj(shift);
+   my $obj = obj(shift);
   
    if(defined @info{backup_mode} && @info{backup_mode}) {  # in backup mode
-      delete @delta[$id] if(defined @delta[$id]);
-      @deleted{$id} = 1;
-   } elsif(defined @db[$id]) {                       # non-backup mode delete
-      delete @db[$id];
+      delete @delta[$$obj{obj_id}] if(defined @delta[$$obj{obj_id}]);
+      @deleted{$$obj{obj_id}} = 1;
+   } elsif(defined @db[$$obj{obj_id}]) {             # non-backup mode delete
+      delete @db[$$obj{obj_id}];
    }
 }
 
@@ -7243,7 +7335,8 @@ sub mushrun
        unshift(@$stack,{ runas  => $arg{runas},
                          cmd    => $arg{cmd}, 
                          source => ($arg{hint} eq "WEB") ? 0 : 1,
-                         multi  => ($multi eq undef) ? 0 : 1
+                         multi  => ($multi eq undef) ? 0 : 1,
+                         match  => @arg{match}
                        }
               );
 
@@ -7263,6 +7356,7 @@ sub mushrun
                            cmd    => $i,
                            source => 0,
                            multi  => ($multi eq undef) ? 0 : 1,
+                           match  => @arg{match}
                           }
                  );
        }
@@ -7272,8 +7366,9 @@ sub mushrun
           push(@$stack,{runas  => $arg{runas},
                            cmd    => $i,
                            source => 0,
-                           multi  => ($multi eq undef) ? 0 : 1
-                          }
+                           multi  => ($multi eq undef) ? 0 : 1,
+                           match  => @arg{match}
+                        }
                  );
         }
     }
@@ -7467,7 +7562,7 @@ sub spin
                           "%.3fs [%sc/%sf]\n",
                           @{$$prog{attr}}{atr_owner},
                           @{$$prog{attr}}{atr_name},
-                          ($$prog{command} + ($$prog{function} / 10)) / 64,
+                          ($$prog{command} + ($$prog{function} / 10)) / 128,
                           $$prog{function_duration} + $$prog{command_duration},
                           $$prog{command},$$prog{function}
                          );
@@ -7576,6 +7671,7 @@ sub run_internal
 
    
    my $start = Time::HiRes::gettimeofday();
+   $$prog{function_command} = 0;
    my $result = &{@{$$hash{$cmd}}{fun}}($$command{runas},
                                         $prog,
                                         trim($arg),
@@ -7608,7 +7704,6 @@ sub spin_run
       $hash = \%command;
 #      delete @$prog{hint};
    } elsif(hasflag($self,"PLAYER") && !loggedin($self)) {
-      printf("LOGGEDIN: '%s'\n",$$self{obj_id},loggedin($self));
       printf("%s\n",print_var($self));
       $hash = \%offline;                                     # offline users
    } elsif(defined $$self{site_restriction} && $$self{site_restriction} == 69) {
@@ -8440,60 +8535,115 @@ sub initialize_functions
 
 sub fun_url
 {
-   my ($self,$prog,$txt) = (obj(shift),shift,shift);
-   my ($host,$path);
+   my ($self,$prog) = (obj(shift),shift);
+   my ($host,$path,$sock,$secure);
 
-   if(@info{"conf.url"} == -1) {
-      return "#-1 FUNCTION (URL) DISABLED, MISSING MODULE";
-   }
-      
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (URl) EXPECTS 1 ARGUMENT";
+
+   my $txt = evaluate($self,$prog,shift);
+
    my $puppet = hasflag($self,"SOCKET_PUPPET");
    my $input = hasflag($self,"SOCKET_INPUT");
    if(!$input && !$puppet) {
       return err($self,$prog,"Permission DENIED.");
-   } elsif(defined $$prog{telnet_sock}) {
-      return err($self,$prog,"A telnet connection is already open");
    } elsif($txt =~ /^https:\/\/([^\/]+)\//) {
-      ($host,$path) = ($1,$');
+      ($host,$path,$secure) = ($1,$',1);
+   } elsif($txt =~ /^http:\/\/([^\/]+)\//) {
+      ($host,$path,$secure) = ($1,$',0);
    } else {
-      my $host = $txt;
+      return set_var($prog,"data","#-1 Unable to parse URL");
    }
 
-   my $sock = Net::HTTPS::NB->new(Host => $host);
+   if($secure && @info{"conf.url_https"} == -1) {
+      return set_var($prog,"data","#-1 HTTPS DISABLED");
+   } elsif(!$secure && @info{"conf.url_http"} == -1) {
+      return set_var($prog,"data","#-1 HTTP DISABLED");
+   } elsif(defined $$prog{socket_id} && $$prog{socket_url} ne $txt && 
+      !defined $$prog{socket_closed}) {
+      return set_var($prog,"data","#-1 CONNECTION ALREADY OPEN");
+   } elsif($$prog{socket_url} eq $txt) {               # existing connection
+      my $buff = $$prog{socket_buffer};
 
-   $sock->blocking(0);
-   $$prog{telnet_sock} = $sock;
+      if($#$buff >= 0) {
+         my $data = shift(@$buff);
+         $data =~ s/’/'/g;
+         $data =~ s/―/-/g;
+         $data =~ s/`/`/g;
+         $data =~ s/‘/`/g;
+         $data =~ s/‚/,/g;
+         $data =~ s/⚡/`/g;
+         $data =~ s/↑ /N /g;
+         $data =~ s/↓ /S /g;
+         $data =~ s/↘ /SE /g;
+         $data =~ s/→ /E /g;
+         my $ch = chr(226) . chr(134) . chr(152);
+         $data =~ s/$ch/SE/g;
+         my $ch = chr(226) . chr(134) . chr(147);
+         $data =~ s/$ch/S/g;
+         my $ch = chr(226) . chr(134) . chr(145);
+         $data =~ s/$ch/N/g;
+         my $ch = chr(226) . chr(134) . chr(146);
+         $data =~ s/$ch/E/g;
+         my $ch = chr(226) . chr(134) . chr(151);
+         $data =~ s/$ch/NE/g;
+         my $ch = chr(226) . chr(134) . chr(150);
+         $data =~ s/$ch/NW/g;
+         set_var($prog,"data",$data);
+         return 1;
+      } elsif(!defined $$prog{socket_closed}) {
+         $$prog{idle} = 1;                                 # hint to queue
+         set_var($prog,"data","#-1 DATA PENDING");
+         return 1;
+      } elsif(defined $$prog{socket_closed}) {
+         set_var($prog,"data","#-1 CONNECTION CLOSED");
+         return 0;
+      }
+   } else {                                                # new connection
 
-   return 0 if !$sock;
+      if($secure) {                                      # open connection
+         $sock = Net::HTTPS::NB->new(Host => $host);
+      } else {
+         $sock = Net::HTTP::NB->new(Host => $host);
+      }
 
-   $sock->write_request(GET => "/$path");
+      $$prog{socket_url} = $txt;
 
-   @connected{$sock} = {
-      obj_id    => $$self{obj_id},
-      sock      => $sock,
-      raw       => 1,
-      hostname  => $1,
-      port      => 80,
-      loggedin  => 0,
-      opened    => time(),
-      enactor   => $self,
-      prog      => $prog,
-   };
+      if(!$sock) {
+         $$prog{socket_closed} = 1;
+         $$prog{socket_buffer} = [ "#-1 CONNECTION FAILED" ];
+         return 1;
+      }
 
-   if($puppet) {
-      @{@connected{$sock}}{raw} = 1;
-   } elsif($input) {
-      @{@connected{$sock}}{raw} = 2;
+      $sock->blocking(0);                                     # don't block
+
+      $$prog{socket_id} = $sock;                    # link prog to socket
+      delete @$prog{socket_closed};
+
+      # make request as curl (helps with wttr.in)
+      $sock->write_request(GET => "/$path", 'User-Agent' => 'curl/7.52.1');
+   
+      @connected{$sock} = {                      # add to mush sockets list
+         obj_id    => $$self{obj_id},
+         sock      => $sock,
+         raw       => 1,
+         hostname  => $1,
+         port      => 80,
+         loggedin  => 0,
+         opened    => time(),
+         enactor   => $self,
+         prog      => $prog,
+      };
+   
+      if($puppet) {                                 # set type of mush socket
+         @{@connected{$sock}}{raw} = 1;
+      } elsif($input) {
+         @{@connected{$sock}}{raw} = 2;
+      }
+   
+      $readable->add($sock);                                # add to listener
+      return 1;
    }
-
-   $readable->add($sock);
-
-   @info{io} = {} if(!defined @info{io});
-
-   @info{io}->{$sock} = {};
-   @info{io}->{$sock}->{buffer} = [];
-
-   return 1;
 }
 
 
@@ -9518,12 +9668,14 @@ sub fun_switch
 sub fun_member
 {
    my ($self,$prog) = (shift,shift);
-
-   my ($txt,$word,$delim) = @_;
    my $i = 1;
 
    good_args($#_,2,3) ||
       return "#-1 FUNCTION (MEMBER) EXPECTS 2 OR 3 ARGUMENTS";
+
+   my $txt    = evaluate($self,$prog,shift);
+   my $word  = evaluate($self,$prog,shift);
+   my $delim = evaluate($self,$prog,shift);
 
    return 1 if($txt =~ /^\s*$/ && $word =~ /^\s*$/);
    $delim = " " if $delim eq undef;
@@ -9891,7 +10043,7 @@ sub fun_type
    good_args($#_,1) ||
       return "#-1 FUNCTION (TYPE) EXPECTS 1 ARGUMENT";
 
-   if((my $target= find($self,$prog,$_[0])) ne undef) {
+   if((my $target= find($self,$prog,evaluate($self,$prog,$_[0]))) ne undef) {
       if(hasflag($target,"PLAYER")) {
          return "PLAYER";
       } elsif(hasflag($target,"OBJECT")) {
@@ -10240,9 +10392,9 @@ sub fun_input
          return "#-1 PERMISSION DENIED";
       }
    }
-   if(!defined $$prog{telnet_sock} && !defined $$prog{socket_buffer}) {
+   if(!defined $$prog{socket_id} && !defined $$prog{socket_buffer}) {
       return "#-1 Connection Closed";
-   } elsif(defined $$prog{telnet_sock} && !defined $$prog{socket_buffer}) {
+   } elsif(defined $$prog{socket_id} && !defined $$prog{socket_buffer}) {
       $$prog{idle} = 1;                                    # hint to queue
       return "#-1 No data found";
    }
@@ -10252,8 +10404,8 @@ sub fun_input
    # check if there is any buffered data and return it.
    # if not, the socket could have closed
    if($#$input == -1) { 
-      if(defined $$prog{telnet_sock} &&
-         defined @connected{$$prog{telnet_sock}}) {
+      if(defined $$prog{socket_id} &&
+         defined @connected{$$prog{socket_id}}) {
          $$prog{idle} = 1;                                 # hint to queue
          return "#-1 No data found";                  # wait for more data?
       } else {
@@ -10433,7 +10585,7 @@ sub fun_lattr
    if(memorydb) {
       my $pat = ($atr eq undef) ? undef : glob2re($atr);
 
-      for my $attr (lattr($target)) {
+      for my $attr (grep {!/^obj_/i} lattr($target)) {
          push(@list,uc($attr)) if($pat eq undef || $attr =~ /$pat/i);
       }
    } else {
@@ -10527,9 +10679,10 @@ sub parse_function
 {
    my ($self,$prog,$fun,$txt,$type) = @_;
 
-   if($$prog{function}++ > @info{"conf.function_invocation_limit"}) {
+   if($$prog{function_command}++ > @info{"conf.function_invocation_limit"}) {
       return undef; # "#-1 FUNCTION INVOCATION LIMIT HIT";
    }
+   $$prog{function}++;
 
    my @array = balanced_split($txt,",",$type);
    return undef if($#array == -1);
@@ -11146,22 +11299,23 @@ sub close_telnet
 {
    my $prog = shift;
 
-   if(!defined $$prog{telnet_sock}) {
+   if(!defined $$prog{socket_id}) {
       return;
-   } elsif(!defined @connected{$$prog{telnet_sock}}) {
+   } elsif(!defined @connected{$$prog{socket_id}}) {
       return;
-   } elsif(hasflag(@{@connected{$$prog{telnet_sock}}}{obj_id},
+   } elsif(hasflag(@{@connected{$$prog{socket_id}}}{obj_id},
                    "SOCKET_PUPPET"
                   )
           ) {
          return;
    } else {
-      my $hash = @connected{$$prog{telnet_sock}};
+      $$prog{socket_closed} = 1;
+      my $hash = @connected{$$prog{socket_id}};
       # delete any pending input
       printf("Closed orphaned mush telnet socket to %s:%s\n",
           $$hash{hostname},$$hash{port});
-      server_disconnect($$prog{telnet_sock});
-      delete @$prog{telnet_sock};
+      server_disconnect($$prog{socket_id});
+      delete @$prog{socket_id};
    }
 }
 
@@ -11299,7 +11453,10 @@ sub evaluate_substitutions
       } elsif(lc($seq) eq "%n") {                          # current dbref
          $out .= name($$prog{created_by});
       } elsif($seq =~ /^%m([0-9])$/) {
-         $out .= @{$$prog{var}}{"m$1"} if(defined $$prog{var});
+         if(defined $$prog{cmd} && 
+            defined @{$$prog{cmd}}{match}) {
+            $out .= @{@{$$prog{cmd}}{match}}{$1};
+         }
       } elsif($seq =~ /^%([0-9])$/ || $seq =~ /^%\{([^}]+)\}$/) {  # temp vars
          if($1 eq "hostname") {
             $out .= $$user{raw_hostname};
@@ -12156,27 +12313,32 @@ sub perm
 #
 sub destroy_object 
 {
-    my $obj = obj(shift);
+   my $obj = obj(shift);
 
    my $loc = loc($obj);
 
-   sql("delete " .
-       "  from object ".
-       " where obj_id = ?",
-       $$obj{obj_id}
-      );
-
-   if(@info{rows} != 1) {
-      my_rollback;
-      return 0;
-   }  else {
-      delete $cache{$$obj{obj_id}};
-      set_cache($loc,"lcon");
-      set_cache($loc,"con_source_id");
-      set_cache($loc,"lexits");
-      my_commit;
-
+   if(memorydb) {
+      db_delete($obj);
       return 1;
+   } else {
+      sql("delete " .
+          "  from object ".
+          " where obj_id = ?",
+          $$obj{obj_id}
+         );
+   
+      if(@info{rows} != 1) {
+         my_rollback;
+         return 0;
+      }  else {
+         delete $cache{$$obj{obj_id}};
+         set_cache($loc,"lcon");                   # invalid cache entries
+         set_cache($loc,"con_source_id");
+         set_cache($loc,"lexits");
+         my_commit;
+   
+         return 1;
+      }
    }
 }
 
@@ -13342,11 +13504,11 @@ use Carp;
 
 #
 # get_db_credentials
-#    Load the database credentials from the tm_config.dat file
+#    Load the database credentials from the teenymush.conf file
 #
 sub get_db_credentials
 {
-   my $fn = "tm_config.dat";
+   my $fn = "teenymush.conf";
 
    $fn .= ".dev" if(-e "$fn.dev");
 
@@ -13598,9 +13760,21 @@ sub add_telnet_data
    my($sock,$txt) = @_;
 
    my $prog = $$sock{prog};
-
    $$prog{socket_buffer} = [] if(!defined $$prog{socket_buffer});
    my $stack = $$prog{socket_buffer};
+
+   if($$prog{socket_url}) {
+      $$prog{socket_count}++;
+
+      # if its a url() request, read the header and determine if there
+      # was an error or not.
+      if($$prog{socket_count} == 1 && 
+         $txt =~ /^HTTP\/[\d\.]+ (\d+)/ && 
+         $1 >= 400) {
+         push(@$stack,"#-1 PAGE LOAD FAILURE");
+         server_disconnect($$prog{socket_id});
+      }
+   }
    push(@$stack,$txt);
 }
 
@@ -13816,7 +13990,7 @@ sub server_handle_sockets
 
            
                # store last transaction in @info{connected_raw_socket} 
-               if(@{@connected{$s}}{raw} > 0) {
+               if(defined @connected{$s} && @{@connected{$s}}{raw} > 0) {
                   if(@info{connected_raw_socket} ne $s) {
                      delete @info{connected_raw};
                      @info{connected_raw_socket} = $s;
@@ -13868,8 +14042,9 @@ sub server_disconnect
       }
       my $type = @{@connected{$id}}{type};
 
-      if(defined $$hash{prog} && defined @{$$hash{prog}}{telnet_sock}) {
-         delete @{$$hash{prog}}{telnet_sock};
+      if(defined $$hash{prog} && defined @{$$hash{prog}}{socket_id}) {
+         delete @{$$hash{prog}}{socket_id};
+         @{$$hash{prog}}{socket_closed} = 1;
       }
 
       if(defined $$hash{raw} && $$hash{raw} > 0) {             # MUSH Socket

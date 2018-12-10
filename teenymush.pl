@@ -2591,6 +2591,7 @@ sub cmd_squish
       $out .= $line;
    }
 
+   $out =~ s/\r|\n//g;
    set($self,$prog,$target,$atr,$out);
 
    necho(self   => $self,
@@ -3528,8 +3529,8 @@ sub cmd_name
 
       if(memorydb) {
          delete @player{name($target,1)};
-         db_set($target,"name",$name);
-         db_set($target,"cname",$cname);
+         db_set($target,"obj_name",$name);
+         db_set($target,"obj_cname",$cname);
       } else {
 
          sql("update object " .
@@ -3550,11 +3551,11 @@ sub cmd_name
          }
       }
 
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "Set." ],
-            room   => [ $target, "%s is now known by %s.\n",$old, $cname]
-           );
+#      necho(self   => $self,
+#            prog   => $prog,
+#            source => [ "Set." ],
+#            room   => [ $target, "%s is now known by %s.\n",$old, $cname]
+#           );
    } else {
       err($self,$prog,"syntax: \@name <object> = <new_name>");
    }
@@ -4692,7 +4693,8 @@ sub reconstitute
 {
    my ($name,$type,$pattern,$value,$flag,$raw) = @_;
 
-   if($type eq undef) {
+#   $value =~ s/\r|\n//g;
+   if($type eq undef && $value !~ /^\s*\@/) {
       if($flag eq undef) {
          return color("h",uc($name)) . ": $value" if($type eq undef);
       } else {

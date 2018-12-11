@@ -121,6 +121,18 @@ if($@) {
    @info{"conf.url"} = -1;                                                
 }
 
+# check to see if the HTML::Entities package loads
+eval {                                                             
+   if(@info{"conf.entities"} != -1) {
+      # See https://metacpan.org/pod/Net::WebSocket::Server           
+      require HTML::Entities;                                        
+      import HTML::Entities;                                        
+   }
+};
+if($@) {                                                           
+   printf("WARNING: Missing HTML::Entities module, encode/decode entities disabled\n");
+   @info{"conf.entities"} = -1;                                                
+}
 #
 # mysqldb
 #    Return 0/1 if the MUSH is using mysql
@@ -2584,6 +2596,13 @@ sub cmd_squish
       return "#-1 Unknown object";
    } elsif(!controls($self,$target)) {
       return "#-1 Permission Denied $$self{obj_id} -> $$target{obj_id}";
+   }
+
+   if(memorydb) { # escape out ":"
+      my $hash = mget($target,$atr);
+      $$hash{glob} =~ s/:/\\:/g if(defined $$hash{type});
+   } else {
+      # insert code for mysql version
    }
 
    for my $line (split(/\n/,get($target,$atr))) {
@@ -8324,6 +8343,7 @@ sub initialize_functions
    @fun{ansi}      = sub { return &color($_[2],$_[3]);             };
    @fun{ansi_debug}= sub { return &ansi_debug($_[2]);              };
    @fun{substr}    = sub { return &fun_substr(@_);                 };
+   @fun{file}      = sub { return &fun_file(@_);                   };
    @fun{cat}       = sub { return &fun_cat(@_);                    };
    @fun{space}     = sub { return &fun_space(@_);                  };
    @fun{repeat}    = sub { return &fun_repeat(@_);                 };
@@ -8420,6 +8440,50 @@ sub initialize_functions
    @fun{huh}        = sub { return "#-1 Undefined function";       };
    @fun{money}      = sub { return &fun_money(@_);                 };
    @fun{ip}         = sub { return &fun_ip(@_);                    };
+   @fun{entities}   = sub { return &fun_entities(@_);              };
+}
+
+sub fun_entities
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,2) ||
+      return "#-1 FUNCTION (ENTITIES) EXPECTS 2 ARGUMENTS";
+
+   my $txt = evaluate($self,$prog,shift);
+
+   if($txt !~ /^\s*(encode|decode)\s*$/i) {
+      return "#-1 EXPECTED FIRST ARGUEMENT OF ENCODE OR DECODE";
+   } elsif($txt =~ /^\s*encode\s*$/i) {
+      return encode_entities(evaluate($self,$prog,shift));
+   } else {
+      return decode_entities(evaluate($self,$prog,shift));
+   }
+}
+#
+# fun_file
+#     Return the contents of a file
+#
+sub fun_file
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (FILE) EXPECTS 1 ARGUMENT";
+ 
+   my $fn = evaluate($self,$prog,shift);
+
+   if($fn !~ /\.txt$/i) {
+      return "#-1 UNKNOWN FILE";
+   } else {
+      my $file = getfile($fn);
+
+      if($file eq undef) {
+         return "#-1 UNKNOWN FILE";
+      } else {
+         return $file;
+      }
+   }
 }
 
 sub fun_ip
@@ -8445,6 +8509,12 @@ sub fun_ip
    return undef;
 }
 
+#
+# fun_money
+#    Return how much money the target has. TinyMUSH does not seem to
+#    put any restrictions on checking to see how much money something
+#    has.
+#
 sub fun_money
 {
    my ($self,$prog) = (obj(shift),shift);
@@ -8458,6 +8528,10 @@ sub fun_money
    return money($target);
 }
 
+#
+# fun_lflags
+#    Return the list of flags of the target in a readable format.
+#
 sub fun_lflags
 {
    my ($self,$prog) = (obj(shift),shift);
@@ -8470,6 +8544,14 @@ sub fun_lflags
 
    return flag_list($target,1);
 }
+
+
+#
+# fun_url
+#    Open up a http/https connection to a website. Input from the socket
+#    can be recieved by calling this function multiple times with the same
+#    argument. Data is placed in %{data} variable.
+#
 sub fun_url
 {
    my ($self,$prog) = (obj(shift),shift);
@@ -8480,10 +8562,10 @@ sub fun_url
 
    my $txt = evaluate($self,$prog,shift);
 
-   my $puppet = hasflag($self,"SOCKET_PUPPET");
    my $input = hasflag($self,"SOCKET_INPUT");
-   if(!$input && !$puppet) {
-      return err($self,$prog,"Permission DENIED.");
+
+   if(!$input) {
+      return err($self,$prog,"#-1 Permission DENIED.");
    } elsif($txt =~ /^https:\/\/([^\/]+)\//) {
       ($host,$path,$secure) = ($1,$',1);
    } elsif($txt =~ /^http:\/\/([^\/]+)\//) {
@@ -8504,6 +8586,11 @@ sub fun_url
 
       if($#$buff >= 0) {
          my $data = shift(@$buff);
+
+         # -- Start of wttr.in modifications -- #
+         # modify data coming in to be wttr.in friendly. This shouldn't
+         # be handled this way. Suggestions?
+
          $data =~ s/’/'/g;
          $data =~ s/―/-/g;
          $data =~ s/`/`/g;
@@ -8526,6 +8613,8 @@ sub fun_url
          $data =~ s/$ch/NE/g;
          my $ch = chr(226) . chr(134) . chr(150);
          $data =~ s/$ch/NW/g;
+         # -- End of wttr.in modifications -- #
+
          set_var($prog,"data",$data);
          return 1;
       } elsif(!defined $$prog{socket_closed}) {
@@ -8582,11 +8671,8 @@ sub fun_url
          prog      => $prog,
       };
    
-      if($puppet) {                                 # set type of mush socket
-         @{@connected{$sock}}{raw} = 1;
-      } elsif($input) {
-         @{@connected{$sock}}{raw} = 2;
-      }
+      # set how socket data will be handled - i.e. @info{io}
+      @{@connected{$sock}}{raw} = 2;
    
       $readable->add($sock);                                # add to listener
       return 1;
@@ -10065,7 +10151,7 @@ sub fun_get
    if($atr =~ /^(last|last_page|last_created_date|create_by|last_whisper)$/) {
       return get($target,"obj_$atr");
    } elsif(lc($atr) eq "lastsite") {
-      return lastsite($target);
+      return short_hn(lastsite($target));
    } else {
       return get($target,$atr);
    }

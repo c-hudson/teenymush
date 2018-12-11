@@ -347,18 +347,25 @@ command:
 & @switch
 command:
 
-   @switch <string>=<test>,<command>,<test>,<command>,...,<default_command>
+   @switch[/switch} <string>=<test>,<cmd>,<test>,<cmd>,...,<default_cmd>
 
    If <string> matches <test>, the command following the <test> is run.
    Only the first match is concerned. If no matches are made, then the
-   <default_command> is run if it exists.
+   <default_cmd> is run if it exists.
 
    <test> may include * wild cards. Text matched by the wildcard maybe
    retrieved using %m0 - %m9. The <test> may also include > and < for
    greater and less then comparisons.
 
-   For readability, the <default_command> may have an optional  preceeding
+   For readability, the <default_cm> may have an optional preceeding
    <test> of DEFAULT.
+
+   Availible switches:
+
+      /regexp        :   Use regular expression matching instead of
+                         simple wildcard matching. All "\" characters
+                         will need to be escaped out due to the nature
+                         of how MUSH deals with the "\" character.
 
 Example:                                               |  Output
 ===========================================================================
@@ -366,3 +373,86 @@ Example:                                               |  Output
 @switch def=*b*,say %m0,*e*,say def,DEFAULT,say !match |  You say, "def"
 @switch ghi=*b*,say %m0,*d*,say def,DEFAULT,say !match |  You say, "!match"
 @switch ghi=*b*,say %m0,*d*,say def,say !match         |  You say, "!match"
+@switch abcde=^ab(.*)e$,say %m0                        |  You say, "cd"
+
+& input()
+function:
+
+    input()     : Returns a line of input from a connected socket opened from
+                  the @telnet command. If a line of data is not unavailible
+                  yet, the function will return "#-1 No data found". If the
+                  connection has closed, the function will return 
+                  "#-1 Connection Closed".
+
+    input(last) : Returns the last connection's data for the whole MUSH. If
+                  the connection is still pending, only partial data will be
+                  returned. This is implimented for debug purposes only.
+
+See: @telnet, telnet_open()
+& @telnet
+command:
+
+   @telnet <hostname> <port>
+
+   Opens a connection to <hostname> on <port> if the object is set either
+   SOCKET_PUPPET or SOCKET_INPUT. Both flags are setable by WIZARDS only.
+
+   If the object is set SOCKET_PUPPET, all socket input is matched via a
+   ^pattern style listen used by MUSH to match input in the same room as
+   an object. However, instead of a "^" the pattern must start with "!"
+   to specify a socket based listen.
+
+   If the object is set SOCKET_LISTEN, then all socket input may be
+   retrieved by the input() / telnet_open functions.
+
+See: input(), telnet_open(), SOCKET_PUPPET, SOCKET_INPUT, @close
+&url
+function:
+
+   url(http://address/path)
+   url(https://address/path)
+
+      This function is a way to pull web pages via MushCode. It must be used
+      within a loop command like @while. The function will return 1 as long
+      as the connection is still open or there is data to return. The responce
+      from the website may be retrieved from the %{data} variable.
+
+   Error Responces contained in %{data}:
+
+       #-1 CONNECTION FAILED    :   url() was unable to connect to the remote
+                                    site.
+
+       #-1 PAGE LOAD FAILURE    :   url connected but the server responded
+                                    with a 400 or higher return code.
+       #-1 DATA PENDING         :   No data was availible at this time
+
+   Example:
+
+      @while (url(https://www.wowbagger.com/process.php)) {
+         @switch %{data}=
+            #-1 CONNECTION FAILED,
+               say I'm out of insults \[connection failed\],
+            #-1 PAGE LOAD FAILURE,
+               say =I'm out of insults \[page load failure\],
+            #-1 DATA PENDING,
+               @@ ignore,
+            *customBig>*<*,
+               say %m1
+      }
+
+& @perl
+command:
+
+   @perl <command>
+
+   This invokes <command> via perl's eval() function. <Command> must be
+   a valid perl command. Only GOD may run this command.
+& entities()
+function:
+
+    entities(encode,<txt>)  :  Encodes <txt> with HTML entities.
+    entities(decode,<txt>)  :  Decodes <txt> with HTML entities.
+
+Example:
+    say entities(encode,<'>)       :  You say, "abc&lt;&#39;&gt;def"
+    say entities(encode,&lt;&gt;)  :  You say, "<>"

@@ -60,79 +60,33 @@ my (%command,                  #!# commands for after player has connected
     %flag,                     #!# flag definition
    );                          #!#
 
-# check to see if the URI::Escape module loads
-eval {                                                                       
-   if(@info{"conf.httpd"} != -1) {
-      require URI::Escape;                                                      
-      import URI::Escape;                                               
+#
+# load_modules
+#    Some modules are "optional". Load these optional modules or disable
+#    their use by setting the coresponding @info variable to -1.
+#
+sub load_modules
+{
+   my %mod = (
+      'URI::Escape'            => 'httpd',    
+      'DBI'                    => 'mysqldb',   
+      'Net::WebSocket::Server' => 'websocket',
+      'Net::HTTPS::NB'         => 'url_https',
+      'Net::HTTP::NB'          => 'url_http',      
+      'HTML::Entities'         => 'entities',
+   );
+
+   for my $key (keys %mod) {
+      if(!defined @info{"conf.@mod{$key}"} || @info{"conf.@mod{$key}"} == 1) {
+         eval "use $key; 1;" or @info{"conf.@mod{$key}"} = -1;
+         if(@info{"conf.@mod{$key}"} == -1) {
+            printf("WARNING: Missing $key  module, @mod{$key} disabled\n");
+         }
+      }
    }
-};                                                                 
-if($@) {                                                           
-   printf("WARNING: Missing URI::Escape module, HTTPD disabled\n");
-   printf("WARNING: Missing URI::Escape module, HTTPD disabled\n");
-   @info{"conf.httpd"} = -1;
-   @info{"conf.url_https"} = -1;                                                
 }
+
                                                                                 
-# check to see if the DBI module loads
-eval {                                                             
-   if(@info{"conf.mysqldb"} != -1) {
-      require DBI;                                                           
-      import DBI;                                                       
-   }
-};                                                                         
-if($@) {                                                           
-   printf("WARNING: Missing DBI module, MYSQLDB disabled\n");      
-   @info{"conf.mysqldb"} = -1;                                     
-}
-                                                                                
-# check to see if the Net::WebSocket::Server package loads
-eval {                                                             
-   if(@info{"conf.websocket"} != -1) {
-      # See https://metacpan.org/pod/Net::WebSocket::Server           
-      require Net::WebSocket::Server;                                        
-      import Net::WebSocket::Server;                                    
-   }
-};
-if($@) {                                                           
-   printf("WARNING: Missing Net::WebSocket::Server module, WEBSOCKET disabled\n");
-   @info{"conf.websocket"} = -1;                                                
-}
-
-eval {                                                             
-   if(@info{"conf.url_https"} != -1) {
-      require Net::HTTPS::NB;
-      import Net::HTTPS::NB;
-   }
-};
-if($@) {                                                           
-   printf("WARNING: Missing Net::HTTPS::NB module, https in url() disabled\n");
-   @info{"conf.url"} = -1;                                                
-}
-
-eval {                                                             
-   if(@info{"conf.url_http"} != -1) {
-      require Net::HTTP::NB;
-      import Net::HTTP::NB;
-   }
-};
-if($@) {                                                           
-   printf("WARNING: Missing Net::HTTP::NB module, http in url() disabled\n");
-   @info{"conf.url"} = -1;                                                
-}
-
-# check to see if the HTML::Entities package loads
-eval {                                                             
-   if(@info{"conf.entities"} != -1) {
-      # See https://metacpan.org/pod/Net::WebSocket::Server           
-      require HTML::Entities;                                        
-      import HTML::Entities;                                        
-   }
-};
-if($@) {                                                           
-   printf("WARNING: Missing HTML::Entities module, encode/decode entities disabled\n");
-   @info{"conf.entities"} = -1;                                                
-}
 #
 # mysqldb
 #    Return 0/1 if the MUSH is using mysql
@@ -591,6 +545,7 @@ sub arg
 $SIG{HUP} = sub {
   my $files = load_all_code(0,@info{filter});
   delete @info{engine};
+  load_modules();
   initialize_functions();
   initialize_commands();
   initialize_flags();
@@ -606,6 +561,7 @@ $SIG{'INT'} = sub {  if(memorydb && $#db > -1) {
                      exit(1);
                   };
 
+load_modules();
 if(arg("split")) {
    split_source_into_multiple();
    exit(0);
@@ -5226,6 +5182,7 @@ sub cmd_reload_code
    return err($self,$prog,"Permission denied.") if(!hasflag($self,"GOD"));
 
    my $result = load_all_code(1,@info{filter});
+   load_modules();
    initialize_functions();
    initialize_commands();
    initialize_flags();
@@ -7096,11 +7053,16 @@ sub run_container_commands
 #
 sub mush_command
 {
-   my ($self,$prog,$runas,$cmd) = @_;
-   my $i =  0;
+   my ($self,$prog,$runas,$cmd,$src) = @_;
+   my ($i,%checked) =  0;
 
-   for my $obj ($self,loc($self),@info{"conf.master"}) {
-      $i += run_container_commands($self,$prog,$runas,$obj,$cmd);
+   $cmd = evaluate($self,$prog,$cmd) if($src ne undef && $src == 0);
+
+   for my $obj ($self,obj(loc($self)),obj(@info{"conf.master"})) {
+      if(!defined @checked{$$obj{obj_id}}) {
+         $i += run_container_commands($self,$prog,$runas,$obj,$cmd);
+         @checked{$$obj{obj_id}} = 1;
+      }
    }
  
    return ($i > 0) ? 1 : 0;
@@ -7452,13 +7414,15 @@ sub spin
          if($#$command == -1) { # program is done 
             my $prog = shift(@$thread);
 
-            if($$prog{function} > 20 || $$prog{command} > 20) {
+            my $cost = ($$prog{command} + ($$prog{function} / 10)) / 128;
+
+            if($cost > .5) {
                if(defined $$prog{attr}) {
                    printf("Cost: #%s/%s => %.3f pennies in " .
                           "%.3fs [%sc/%sf]\n",
                           @{$$prog{attr}}{atr_owner},
                           @{$$prog{attr}}{atr_name},
-                          ($$prog{command} + ($$prog{function} / 10)) / 128,
+                          $cost,
                           $$prog{function_duration} + $$prog{command_duration},
                           $$prog{command},$$prog{function}
                          );
@@ -7466,10 +7430,10 @@ sub spin
 #                      printf("   %s -> %s\n",,substr($key,8),$$prog{$key});
 #                   }
                } else {
-                   printf("Cost: %s.%s commands in %.3fs\n",
-                          $$prog{command},
-                          $$prog{function},
+                   printf("Cost: %.3f pennies in %.3fs [%sc/%sf]\n",
+                          $cost,
                           $$prog{function_duration} + $$prog{command_duration},
+                          $$prog{command},$$prog{function}
                          );
                }
             }
@@ -7610,7 +7574,6 @@ sub spin_run
       $hash = \%command;
 #      delete @$prog{hint};
    } elsif(hasflag($self,"PLAYER") && !loggedin($self)) {
-      printf("%s\n",print_var($self));
       $hash = \%offline;                                     # offline users
    } else {
       $hash = \%command;                                    # connected users
@@ -7637,7 +7600,11 @@ sub spin_run
                          );
    } elsif(find_exit($self,$prog,$$command{cmd})) {   # handle exit as command
       return &{@{$$hash{"go"}}{fun}}($$command{runas},$prog,$$command{cmd});
-   } elsif(mush_command($self,$prog,$$command{runas},$$command{cmd})) {
+   } elsif(mush_command($self,
+                        $prog,
+                        $$command{runas},
+                        $$command{cmd},
+                        $$command{source})) {
       return 1;                                   # mush_command runs command
    } else {
       my $match;
@@ -9616,15 +9583,21 @@ sub fun_words
                 );
 }
 
+#
+# fun_match
+#    Match a string against a pattern with an optional delimiter.
+#
 sub fun_match
 {
    my ($self,$prog) = (shift,shift);
-
-   my ($txt,$pat,$delim) = ($_[0],ansi_remove($_[1]),$_);
    my $count = 1;
 
    good_args($#_,1,2,3) ||
       return "#-1 FUNCTION (MATCH) EXPECTS 1, 2 OR 3 ARGUMENTS";
+
+   my $txt   = evaluate($self,$prog,shift);
+   my $pat   = evaluate($self,$prog,shift);
+   my $delim = evaluate($self,$prog,shift);
 
    $delim = " " if $delim eq undef; 
    $pat = glob2re($pat);
@@ -10236,12 +10209,14 @@ sub fun_extract
 sub fun_remove
 {
    my ($self,$prog) = (shift,shift);
-
-   my ($list,$words,$delim) = @_;
    my (%remove, @result);
 
    good_args($#_,2,3) ||
       return "#-1 FUNCTION (REMOVE) EXPECTS 2 OR 3 ARGUMENTS";
+
+   my $list  = evaluate($self,$prog,shift);
+   my $words = evaluate($self,$prog,shift);
+   my $delim = evaluate($self,$prog,shift);
 
    if($delim eq undef || $delim eq " ") {
       $list =~ s/^\s+|\s+$//g;
@@ -12687,7 +12662,7 @@ sub set
          } else {
             db_set($obj,$attribute,$value);
             if($$obj{obj_id} eq 0 && $attribute =~ /^conf./i) {
-               @info{$attribute} = @default{$'};
+               @info{$attribute} = $value;
             }
             if(!$quiet) {
                 necho(self => $self,

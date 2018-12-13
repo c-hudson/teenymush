@@ -48,7 +48,7 @@ my (%command,                  #!# commands for after player has connected
     $enactor,                  #!# object who initated the action
     %cache,                    #!# cached data from sql database
     %c,                        #!#
-    %default                   #!# default values for config.
+    %default,                  #!# default values for config.
 
     #----[memory database structures]---------------------------------------#
     %help,                     #!# online-help
@@ -636,8 +636,14 @@ sub initialize_commands
    @offline{create}      = sub { return cmd_pcreate(@_);                    };
    @offline{quit}        = sub { return cmd_quit(@_);                       };
    @offline{huh}         = sub { return cmd_offline_huh(@_);                };
+   @offline{screenwidth} = sub { return;                                    };
+   @offline{screenheight}= sub { return;                                    };
    # ------------------------------------------------------------------------#
-   @command{"\@perl"}  = { help => "Run a perl command",
+   @command{screenwidth} ={ help => "Set screen width",
+                            fun  => sub { return;}                          };
+   @command{screenheight}={ help => "Set screen width",
+                             fun  => sub {return 1;}                        };
+   @command{"\@perl"}   = { help => "Run a perl command",
                             fun  => sub { return &cmd_perl(@_); }           };
    @command{say}        = { help => "Sends a message to everyone in the room",
                             fun  => sub { return &cmd_say(@_); }            };
@@ -2023,7 +2029,7 @@ sub cmd_dump
       $$cmd{dump_file} = $file;
       @info{backup_mode} = $$prog{pid};
       @info{db_last_dump} = time();
-      if($type ne "CRASH") {
+      if($type ne "CRASH" && $user ne undef) {
          echo_flag($user,
                    prog($user,$user),
                    "CONNECTED,PLAYER,LOG",
@@ -5279,8 +5285,8 @@ sub who
          if(($txt ne undef && 
             lc(substr(name($hash,1),0,length($txt))) eq lc($txt)) ||
             $txt eq undef) {
-            if(length(loc($hash)) > length($max)) {
-               $max = length(loc($hash));
+            if(length(loc($hash)) > length($max) + 1) {
+               $max = length(loc($hash)) + 1;
             }
             push(@who,$hash);
          }

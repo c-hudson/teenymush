@@ -247,24 +247,24 @@ sub load_config_default
 {
    delete @default{keys %default};
 
-   @default{money_name_plural}        => "Pennies",
-   @default{money_name_singular}      => "Penny",
-   @default{paycheck}                 => 50,
-   @default{starting_money}           => 150,
-   @default{linkcost}                 => 1,
-   @default{digcost}                  => 10,
-   @default{createcost}               => 10,
-   @default{backup_interval}          => 3600,                  # once an hour
-   @default{freefind_interval}        => 84600,                   # once a day
-   @default{function_invocation_limit}=> 2500,
-   @default{login}                    => "Welcome to @info{version}\r\n\r\n" .
-                                         "   Type the below command to " .
-                                         "customize this screen after loging ".
-                                         "in as God.\r\n\r\n    \@set #0/" .
-                                         "conf.login = Login screen\r\n\r\n",
-   @default{badsite}                  => "Your site has been banned.",
-   @default{httpd_template}           => "<pre>",
-   @default{mudname}                  => "TeenyMUSH"
+   @default{money_name_plural}        = "Pennies";
+   @default{money_name_singular}      = "Penny";
+   @default{paycheck}                 = 50;
+   @default{starting_money}           = 150;
+   @default{linkcost}                 = 1;
+   @default{digcost}                  = 10;
+   @default{createcost}               = 10;
+   @default{backup_interval}          = 3600;                  # once an hour
+   @default{freefind_interval}        = 84600;                   # once a day
+   @default{function_invocation_limit}= 2500;
+   @default{login}                    = "Welcome to @info{version}\r\n\r\n" .
+                                        "   Type the below command to " .
+                                        "customize this screen after loging ".
+                                        "in as God.\r\n\r\n    \@set #0/" .
+                                        "conf.login = Login screen\r\n\r\n";
+   @default{badsite}                  = "Your site has been banned.";
+   @default{httpd_template}           = "<pre>";
+   @default{mudname}                  = "TeenyMUSH";
 }
 
 #
@@ -4011,10 +4011,11 @@ sub cmd_quit
 
       if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
          ws_echo($sock,@info{"conf.logoff"});
+         ws_disconnect(@c{$sock}) if(defined @c{$sock});
       } else {
          printf($sock "%s",@info{"conf.logoff"});
+         server_disconnect($sock);
       }
-      server_disconnect($sock);
    } else {
       err($self,$prog,"Permission denied [Non-players may not quit]");
    }
@@ -10694,6 +10695,7 @@ sub parse_function
    my ($self,$prog,$fun,$txt,$type) = @_;
 
    if($$prog{function_command}++ > @info{"conf.function_invocation_limit"}) {
+      printf("FUNCTION_INVOCATION_LIMIT_HIT '%s'\n",@info{"conf.function_invocation_limit"});
       return undef; # "#-1 FUNCTION INVOCATION LIMIT HIT";
    }
    $$prog{function}++;
@@ -14082,7 +14084,7 @@ sub server_handle_sockets
 sub server_disconnect
 {
    my $id = shift;
-   my $prog;
+   my ($prog, $type);
 
    # notify connected users of disconnect
    if(defined @connected{$id}) {
@@ -14093,8 +14095,10 @@ sub server_disconnect
       } else {
          $prog = prog($hash,$hash);
       }
-      my $type = @{@connected{$id}}{type};
+      $type = @{@connected{$id}}{type};
 
+
+      # tell the running mushcode that the socket closed
       if(defined $$hash{prog} && defined @{$$hash{prog}}{socket_id}) {
          delete @{$$hash{prog}}{socket_id};
          @{$$hash{prog}}{socket_closed} = 1;
@@ -14160,7 +14164,18 @@ sub server_disconnect
 
    # remove user out of the loop
    $readable->remove($id);
-   $id->close;
+
+   #
+   # closing the socket here on a websocket causes a crash later on. 
+   # not closing it here doesn't seem to cause any problems. 
+   # i.e. no orphaned connections in netstat.
+   #
+   if($type eq "WEBSOCKET" && defined @c{$id}) {
+      @c{$id}->disconnect();
+      delete @c{$id};
+   } else {
+      $id->close;
+   }
    delete @connected{$id};
 }
 
@@ -14324,9 +14339,8 @@ sub ws_disconnect
     my ($conn, $code, $reason) = @_;
 
     my $sock = $conn->{socket};
-    $ws->{select_readable}->remove( $conn->{socket} );
     server_disconnect( $conn->{socket} );
-    $conn->disconnect();
+    $ws->{select_readable}->remove( $conn->{socket} );
     delete $ws->{conns}{$sock};
 }
 
@@ -14378,7 +14392,7 @@ sub websock_io
 
       $ws->{select_readable}->add( $sock );
       $ws->{on_connect}($ws, $conn );
-      @c{$conn} = $conn;
+      @c{$sock} = $conn;
 
       # attach the socket to the mush data structure 
       my $hash = { sock     => $sock,             # store connect details

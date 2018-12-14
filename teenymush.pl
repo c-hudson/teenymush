@@ -10695,7 +10695,6 @@ sub parse_function
    my ($self,$prog,$fun,$txt,$type) = @_;
 
    if($$prog{function_command}++ > @info{"conf.function_invocation_limit"}) {
-      printf("FUNCTION_INVOCATION_LIMIT_HIT '%s'\n",@info{"conf.function_invocation_limit"});
       return undef; # "#-1 FUNCTION INVOCATION LIMIT HIT";
    }
    $$prog{function}++;

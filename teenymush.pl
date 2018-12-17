@@ -3066,17 +3066,18 @@ sub cmd_destroy
    my $objname = obj_name($self,$target);
    my $loc = loc($target);
 
+   necho(self      => $self,
+         prog      => $prog,
+         source    => [ "%s was destroyed.",$objname ],
+         room      => [ $target, "%s was destroyed.",$name  ],
+         all_room  => [ $target, "%s has left.",$name ]
+        );
    if(!destroy_object($target)) {
-      necho(self   => $self,
-            prog   => $prog,
+      necho(self    => $self,
+            prog    => $prog,
             source  => [ "Internal error, object not destroyed." ],
-           );
-   } elsif($loc ne undef && valid_dbref($loc)) {
-      necho(self      => $self,
-            prog      => $prog,
-            source    => [ "%s was destroyed.",$objname ],
-            room      => [ $loc, "%s was destroyed.",$name  ],
-            all_room  => [ $loc, "%s has left.",$name ]
+            room    => [ $target, "%s remateralizes and was not destroyed.",
+                         $name  ],
            );
    }
 }
@@ -4782,7 +4783,6 @@ sub cmd_inventory
 
    my $inv = [ lcon($self) ];
 
-   @{$$inv{LjwljrW}}{biz};
    if($#$inv == -1) {
       $out .= "You are not carrying anything.";
    } else {
@@ -5077,6 +5077,7 @@ sub reload_code
 
          if($@) {
             printf("*FAILED*\n%s\n",$@);
+            @{$$curr{$key}}{chk} = -1;
          } else {
             printf("Successful\n");
          }
@@ -5094,12 +5095,20 @@ sub reload_code
    return $count;
 }
 
+#
+# cmd_reload_code
+#    Let the code be reloaded from within the server.
+#
 sub cmd_reload_code
 {
    my ($self,$prog,$txt) = @_;
    my $count = 0;
 
-   return err($self,$prog,"Permission denied.") if(!hasflag($self,"GOD"));
+   if(!hasflag($self,"GOD")) {
+      return err($self,$prog,"Permission denied.");
+   } elsif(@info{"conf.md5"} != 1) {
+      return err($self,$prog,"#-1 DISABLED");
+   }
 
    $count = reload_code();
 
@@ -5264,44 +5273,42 @@ sub who
 }
 
 
+sub sweep_obj
+{
+   my ($self,$obj,$out) = @_;
+   my @list;
+
+   for my $obj (lcon($obj)) {
+      delete @list[0 .. $#list];
+      push(@list,"listening") if(hasflag($obj,"LISTENER"));
+      push(@list,"commands") if(!hasflag($obj,"NO_COMMAND"));
+      push(@list,"player") if(hasflag($obj,"PLAYER"));
+      push(@list,"connected") if(hasflag($obj,"CONNECTED"));
+
+      if($#list >= 0) {
+         push(@$out,"  " . obj_name($self,$obj) . " is listening. [" .
+            join(" ",@list) . "]");
+      }
+   }
+}
+
 sub cmd_sweep
 {
    my ($self,$prog) = @_;
+   my @out;
 
+   push(@out,"Sweeping location...");
+   sweep_obj($self,loc($self),\@out);
+   push(@out,"Sweeping inventory...");
+   sweep_obj($self,$self,\@out);
+   push(@out,"Sweep Complete.");
    necho(self   => $self,
          prog   => $prog,
-         source => [ "Sweeping location..." ]
-        );
-   for my $obj (sql("select obj.* " .
-                    "  from content c1,  " .
-                    "       content c2,  " .
-                    "       flag flg, " .
-                    "       flag_definition fde, " .
-                    "       socket sck," .
-                    "       object obj ". 
-                    " where c1.con_source_id = c2.con_source_id " .
-                    "   and obj.obj_id = c1.obj_id " .
-                    "   and flg.obj_id = c1.obj_id " .
-                    "   and flg.fde_flag_id = fde.fde_flag_id " .
-                    "   and fde.fde_Name in ('LISTENER','PUPPET','PLAYER') " .
-                    "   and ( sck.obj_id = c1.obj_id " .
-                    "         or obj.obj_owner = sck.obj_id " .
-                    "       ) " .
-                    "   and c2.obj_id = ?",
-                    $$self{obj_id}
-                   )
-               ) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "   %s is listening.", obj_name($self,$$obj{obj_id}) ],
-           );
-    }
-
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "Sweep complete." ]
+         source => [ "%s", join("\n",@out) ]
         );
 }
+
+
 # #!/usr/bin/perl
 # 
 # tm_cache.pl
@@ -6253,6 +6260,7 @@ sub initialize_flags
    @flag{VISUAL}       ={ letter => "V", perm => "!GUEST", type => 1, ord=>21 };
    @flag{ANSI}         ={ letter => "X", perm => "!GUEST", type => 1, ord=>22 };
    @flag{LOG}          ={ letter => "l", perm => "WIZARD", type => 1, ord=>23 };
+   @flag{NO_COMMAND}   ={ letter => "n", perm => "!GUEST", type => 1, ord=>24 };
 }
 
 #
@@ -7268,7 +7276,7 @@ sub spin
           printf("%s",code("long"));
        };
 
-       ualarm(30_000_000);                              # die at 8 milliseconds
+       ualarm(8_000_000);                              # die at 8 milliseconds
 
 #      printf("PIDS: '%s'\n",join(',',keys %{@info{engine}}));
       for my $pid (sort { $a cmp $b } keys %{@info{engine}}) {
@@ -12308,6 +12316,7 @@ sub create_object
       }
  
       my $out = set_flag($self,$prog,$id,$type,1);
+      set_flag($self,$prog,$id,"NO_COMMAND",1);
 
       if($out =~ /^#-1 /) {
          necho(self => $self,
@@ -12335,7 +12344,6 @@ sub create_object
          move($self,$prog,$id,$where);
       }
       return $id;
-
    } else {
       # find an id to reuse. You shouldn't refuse IDs in a db, but it
       # part of the "charm" of a MUSH.
@@ -12381,6 +12389,8 @@ sub create_object
    }
 
    my $out = set_flag($self,$prog,$id,$type,1);
+   set_flag($self,$prog,$id,"NO_COMMAND",1);
+
    if($out =~ /^#-1 /) {
       necho(self => $self,
             prog => $prog,

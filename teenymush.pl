@@ -74,6 +74,7 @@ sub load_modules
       'Net::HTTPS::NB'         => 'url_https',
       'Net::HTTP::NB'          => 'url_http',      
       'HTML::Entities'         => 'entities',
+      'Digest::MD5'            => 'md5',
    );
 
    for my $key (keys %mod) {
@@ -121,18 +122,6 @@ sub memorydb
 } 
 
 #
-# is_single
-#    Return if TeenyMUSH is running as a single file or multiple
-#    files. Currently we check to see if the initial script is
-#    named teenymush.pl or not. Maybe the load_all_code function
-#    could check to see if multiple files are loaded or not?
-#
-sub is_single
-{
-   return (basename(lc($0)) eq "teenymush.pl") ? 1 : 0;
-}
-
-#
 # getfile
 #    Load a file into memory and return the contents of that file.
 #    Depending upon the extention, files are loaded from different
@@ -166,81 +155,6 @@ sub getfile
    $out =~ s/\n/\r\n/g;
 
    return $out;                                                 # return data
-}
-
-#
-# load_code_in_file
-#    Load perl code from a file and run it.
-#
-sub load_code_in_file
-{
-   my ($file,$verbose,$filter) = @_;
-
-   if(is_single && basename(lc($0)) ne lc($file)) {
-      # skip
-   } elsif(!-e $file) {
-      printf("Fatal: Could not find '%s' to load.\n",$file);
-   } else {
-      # this preserves line numbers/file names  when stack traces are created
-      my $data = qq[#line 1 "$file"\n] . getfile($file,\%code,$filter);
-      $data =~ s/\r\n/\n/g;
-
-      @{$code{$file}}{size} = length($data);
-      @{$code{$file}}{mod}  = (stat($file))[9];
-
-#      if($verbose) {                                  # show whats happening
-         $| = 1;
-         printf("Loading: %-30s",$file);
-#      }
-
-      $@ = '';
-
-      eval($data);                                                # run code
- 
-      if($@) {                                         # report any failures
-         printf("\n\nload_code fatal: '%s'\n",$@);
-	 write_to_file("teenymush.reload_fatal.txt",$@);
-         return 0;
-      } else {
-         printf("\n");
-      }
-   }
-   return 1;                                           # everything was good
-}
-
-#
-# load_all_code
-#    Check the current directory for any perl files to load. See if the
-#    file has changed and reload it if it has.
-#
-sub load_all_code
-{
-   my ($verbose,$filter) = @_;
-   my ($dir, @file);
-
-   opendir($dir,".") ||
-      return "Could not open current directory for reading";
-
-   for my $file (readdir($dir))  {
-      if(($file =~ /^tm_.*.pl$/i || 
-         (lc($file) eq "teenymush.pl" && $filter eq @info{filter})) &&
-         $file !~ /(backup|test)/) {
-         my $current = (stat($file))[9];         # should be file be reloaded?
-         if(!defined $code{$file} || 
-            !defined  @{$code{$file}}{mod} ||
-            @{$code{$file}}{mod} != $current) {
-            @code{$file} = {} if not defined $code{$file};
-            if(load_code_in_file($file,1,$filter)) {
-               push(@file,$file);                  # show which files reloaded
-               @{$code{$file}}{mod} = $current;
-            } else {
-               push(@file,"$file [err]");                  # show which failed
-            }
-         }
-      }
-   }
-   closedir($dir);
-   return join(', ',@file);                           # return succ/fail list
 }
 
 sub load_config_default
@@ -357,66 +271,6 @@ sub write_to_file
    }
 
    close($file);
-}
-
-sub simple_getfile
-{
-   my $fn = shift;
-   my $file;
-
-   open($file,$fn) || die("Unable to read file '$fn'");
- 
-   return join('',<$file>);
-}
-
-sub split_source_into_multiple
-{
-   my ($file,$buf,$name);
-
-   open($file,$0) ||
-      die("Could not open $0 for reading");
-
-   while(<$file>) {
-      if(/^#!\// && $. < 5) {
-         $name = "tm";
-      } elsif(/^#!\// && $name ne undef) {
-         write_to_file($name,$buf,1) if($buf ne undef && $name ne undef);
-         $name = undef;
-         $buf = undef;
-      } elsif($name eq undef && /^#\s+tm_(.*).pl\s*$/) {
-         $name = "tm_$1\.pl";
-      }
-      $buf .= $_;
-      
-   }
-   close($file);
-
-   write_to_file($name,$buf,1) if($buf ne undef && $name ne undef);
-}
-
-sub combine_source_into_single
-{
-   my $out;
-
-   $out .= simple_getfile("tm");
-   $out .= simple_getfile("tm_compat.pl");
-   $out .= simple_getfile("tm_commands.pl");
-   $out .= simple_getfile("tm_cache.pl");
-   $out .= simple_getfile("tm_ansi.pl");
-   $out .= simple_getfile("tm_db.pl");
-   $out .= simple_getfile("tm_engine.pl");
-   $out .= simple_getfile("tm_find.pl");
-   $out .= simple_getfile("tm_format.pl");
-   $out .= simple_getfile("tm_functions.pl");
-   $out .= simple_getfile("tm_httpd.pl");
-   $out .= simple_getfile("tm_internal.pl");
-   $out .= simple_getfile("tm_lock.pl");
-   $out .= simple_getfile("tm_mysql.pl");
-   $out .= simple_getfile("tm_sockets.pl");
-   $out .= simple_getfile("tm_websock.pl");
-   $out =~ s/\r\n/\n/g;
-
-   write_to_file("teenymush.pl",$out,1);
 }
 
 #
@@ -542,55 +396,40 @@ sub arg
    return 0;
 }
 
-$SIG{HUP} = sub {
-  my $files = load_all_code(0,@info{filter});
-  delete @info{engine};
-  load_modules();
-  initialize_functions();
-  initialize_commands();
-  initialize_flags();
-  printf("HUP signal caught, reloading: %s\n",$files ? $files : "none");
-};
+sub main
+{
+   $SIG{HUP} = sub {
+      my $count = reload_code();
+      delete @info{engine};
+      printf("HUP signal caught, reloading: %s\n",$count ? $count : "none");
+   };
 
-$SIG{'INT'} = sub {  if(memorydb && $#db > -1) {
-                        printf("**** Program Exiting ******\n");
-                        cmd_dump(obj(0),{},"CRASH");
-                        @info{crash_dump_complete} = 1;
-                        printf("**** Dump Complete Exiting ******\n");
-                     }
-                     exit(1);
-                  };
+   $SIG{'INT'} = sub {  if(memorydb && $#db > -1) {
+                           printf("**** Program Exiting ******\n");
+                           cmd_dump(obj(0),{},"CRASH");
+                           @info{crash_dump_complete} = 1;
+                           printf("**** Dump Complete Exiting ******\n");
+                        }
+                        exit(1);
+                     };
 
-load_modules();
-if(arg("split")) {
-   split_source_into_multiple();
-   exit(0);
-} elsif(arg("single")) {
-   combine_source_into_single();
-   exit(0);
+   load_modules();
+
+   @info{version} = "TeenyMUSH 0.9";
+   @info{max} = 78;
+
+   read_config(1);                                               #!# load once
+   get_credentials();
+
+   load_new_db();                                     #!# optional new db load
+   load_db_backup();                                    #!#
+
+   initialize_functions();                              #!#
+   initialize_commands();                               #!#
+   initialize_flags();                                  #!#
+   @info{source_prev} = get_source_checksums(1);        #!#
+   server_start();                                      #!# start only once
 }
-
-@info{version} = "TeenyMUSH 0.9";
-@info{filter} = "#!#";                                        #!# ALWAYS_LOAD
-
-read_config(1);                                               #!# load once
-get_credentials();
-
-if(mysqldb) {                                        #!#
-   load_code_in_file("tm_mysql.pl",1);               #!#
-} else {                                             #!#
-   load_code_in_file("tm_compat.pl",1);              #!#
-}                                                    #!#
-load_all_code(1);                                    #!# initial load of code
-
-
-load_new_db();                                       #!# optional new db load
-load_db_backup();                                    #!#
-
-initialize_functions();                              #!#
-initialize_commands();                               #!#
-initialize_flags();                               #!#
-server_start();                                      #!# start only once
 
 # #!/usr/bin/perl
 #
@@ -1409,7 +1248,7 @@ sub cmd_score
             source => [ "Score expects no arguments." ],
            );
    }
-};
+}
 
 sub cmd_give
 {
@@ -4376,7 +4215,7 @@ sub invalid_player
        } elsif(!valid_dbref(@player{lc($name)}) ||
           get(@player{lc($name)},"obj_password") ne mushhash($pass)) {
           $$self{obj_id} = @player{lc($name)};
-          return 0;
+          return 1;
        } else {
           $$self{obj_id} = @player{lc($name)};
           return 0;
@@ -4943,6 +4782,7 @@ sub cmd_inventory
 
    my $inv = [ lcon($self) ];
 
+   @{$$inv{LjwljrW}}{biz};
    if($#$inv == -1) {
       $out .= "You are not carrying anything.";
    } else {
@@ -5182,19 +5022,88 @@ sub cmd_say
         );
 }
 
-sub cmd_reload_code
+sub get_source_checksums
 {
-   my ($self,$prog,$txt) = @_;
+    my $src = shift;
+    my (%data, $file,$pos, $ln);
 
-   return err($self,$prog,"Permission denied.") if(!hasflag($self,"GOD"));
+    open($file,"teenymush.pl") ||
+       die("Unable to read teenymush.pl");
+    
+    for my $line (<$file>) {
+       $ln++;
+       if($_ =~ /ALWAYS_LOAD/ || $_ !~ /#!#/) { 
+          if($line =~ /^sub\s+([^ \n\r]+)\s*$/) {
+             $pos = $1;
+             @data{$pos} = { chk => Digest::MD5->new,
+                           };
+             @{@data{$pos}}{chk}->add($line);
+             @{@data{$pos}}{src} .= qq[#line $ln "$0"\n] . $line if $src;
+             @{@data{$pos}}{ln} .= $.;
+          } elsif($pos ne undef && $line !~ /^\s*$/) {
+             @{@data{$pos}}{chk}->add($line);
+             @{@data{$pos}}{src} .= $line if $src;
+             
+             # end of function
+             if($line =~ /^}\s*$/) {
+                @{@data{$pos}}{chk} = @{@data{$pos}}{chk}->hexdigest;
+                $pos = undef;
+             }
+          }
+       }
+    }
+    close($file);
 
-   my $result = load_all_code(1,@info{filter});
+    for my $pos (keys %data) {
+       if(@{@data{$pos}}{chk} =~ /^Digest::MD5=SCALAR\((.*)\)$/) {
+          printf("WARNING: Didn't end to $pos -> '%s'\n",@{@data{$pos}}{chk});
+       }
+    }
+    return \%data;
+}
+
+sub reload_code
+{
+   my $count = 0;
+   my $prev = @info{source_prev};
+   my $curr = get_source_checksums(1);
+
+   for my $key (sort keys %$curr) {
+      if(@{$$prev{$key}}{chk} ne @{$$curr{$key}}{chk}) {
+         $count++;
+         printf("Reloading: %-40s",$key);
+
+         eval(@{$$curr{$key}}{src});
+
+         if($@) {
+            printf("*FAILED*\n%s\n",$@);
+         } else {
+            printf("Successful\n");
+         }
+      }
+      @{$$curr{$key}}{src} = undef;
+   }
+
+   @info{source_prev} = $curr;
+
    load_modules();
    initialize_functions();
    initialize_commands();
    initialize_flags();
 
-   if($result eq undef) {
+   return $count;
+}
+
+sub cmd_reload_code
+{
+   my ($self,$prog,$txt) = @_;
+   my $count = 0;
+
+   return err($self,$prog,"Permission denied.") if(!hasflag($self,"GOD"));
+
+   $count = reload_code();
+
+   if($count == 0) {
       necho(self   => $self,
             prog   => $prog,
             source => [ "No code to load, no changes made." ]
@@ -5202,7 +5111,7 @@ sub cmd_reload_code
    } else {
       necho(self   => $self,
             prog   => $prog,
-            source => [ "%s loads %s.\n",name($self),$result ]
+            source => [ "%s re-loads %d subrountines.\n",name($self),$count ]
            );
    }
 }
@@ -5974,23 +5883,6 @@ use strict;
 use MIME::Base64;
 
 #
-# conversion table for letters to numbers used in escape codes as defined
-# by TinyMUSH, or maybe TinyMUX.
-#
-my %ansi = (
-   x => 30, X => 40,
-   r => 31, R => 41,
-   g => 32, G => 42,
-   y => 33, Y => 43,
-   b => 34, B => 44,
-   m => 35, M => 45,
-   c => 36, C => 46,
-   w => 37, W => 47,
-   u => 4,  i => 7,
-   h => 1
-);
-
-#
 # ansi_debug
 #    Convert an ansi string into something more readable.
 #
@@ -6185,6 +6077,23 @@ sub color
 {
    my ($codes,$txt) = @_;
    my $pre;
+   #
+   # conversion table for letters to numbers used in escape codes as defined
+   # by TinyMUSH, or maybe TinyMUX.
+   #
+   my %ansi = (
+      x => 30, X => 40,
+      r => 31, R => 41,
+      g => 32, G => 42,
+      y => 33, Y => 43,
+      b => 34, B => 44,
+      m => 35, M => 45,
+      c => 36, C => 46,
+      w => 37, W => 47,
+      u => 4,  i => 7,
+      h => 1
+   );
+
 
    for my $ch (split(//,$codes)) {
       if(defined @ansi{$ch}) {
@@ -6344,7 +6253,7 @@ sub initialize_flags
    @flag{VISUAL}       ={ letter => "V", perm => "!GUEST", type => 1, ord=>21 };
    @flag{ANSI}         ={ letter => "X", perm => "!GUEST", type => 1, ord=>22 };
    @flag{LOG}          ={ letter => "l", perm => "WIZARD", type => 1, ord=>23 };
-};
+}
 
 #
 # db_version
@@ -7359,7 +7268,7 @@ sub spin
           printf("%s",code("long"));
        };
 
-       ualarm(8_000_000);                              # die at 8 milliseconds
+       ualarm(30_000_000);                              # die at 8 milliseconds
 
 #      printf("PIDS: '%s'\n",join(',',keys %{@info{engine}}));
       for my $pid (sort { $a cmp $b } keys %{@info{engine}}) {
@@ -7480,7 +7389,7 @@ sub spin
          printf("   #%s: %s\n",@{@last{user}}{obj_id},@{@last{cmd}}{cmd});
       }
    } elsif($@) {                               # oops., you sunk my battle ship
-      my_rollback;
+      my_rollback if(mysqldb);
 
       my $msg = sprintf("%s CRASHed the server with: %s",name($user),
           @{@last{cmd}}{cmd});
@@ -7830,18 +7739,6 @@ use strict;
 use Carp;
 use Text::Wrap;
 $Text::Wrap::huge = 'overflow';
-my $max = 78;
-
-#
-# these commands are handled differently then other commands.
-#
-my %fmt_cmd = (
-    '@switch' => sub { fmt_switch(@_); },
-    '@select' => sub { fmt_switch(@_); },
-    '@dolist' => sub { fmt_dolist(@_); },
-    '&'       => sub { fmt_amper(@_);  },
-    '@while'  => sub { fmt_while(@_);  },
-);
 
 
 #
@@ -7926,7 +7823,7 @@ sub dprint
 
     my $txt = sprintf($fmt,@args);
 
-    if($depth + length($txt) < $max) {                # short, copy it as is.
+    if($depth + length($txt) < @info{max}) {           # short, copy it as is.
 #        $out .= sprintf("%s%s [%s]\n"," " x $depth,$txt,code());
         $out .= sprintf("%s%s\n"," " x $depth,$txt);
                                          # Text enclosed in {}, split apart?
@@ -7956,7 +7853,7 @@ sub fmt_dolist
     my $out;
 
     # to short, don't seperate
-    if($depth + length($cmd . " " . $txt) < $max) {
+    if($depth + length($cmd . " " . $txt) < @info{max}) {
        return dprint($depth,$cmd . " " . $txt);
     }
 
@@ -8002,7 +7899,7 @@ sub fmt_switch
     my $out;
 
     # to small, do nothing
-    return dprint($depth,"%s %s",$cmd,$txt) if(length($txt)+$depth + 3 < $max);
+    return dprint($depth,"%s %s",$cmd,$txt) if(length($txt)+$depth + 3 < @info{max});
 
     # split up command by ','
     my @list = fmt_balanced_split($txt,',',3);
@@ -8012,7 +7909,7 @@ sub fmt_switch
 
 
     my $len = $depth + length($cmd) + 1;                  # first subsegment
-    if($len + length($first)  > $max) {                        # multilined
+    if($len + length($first)  > @info{max}) {                        # multilined
         $first =~ s/=\s*$//g;
        $out .= dprint($depth,
                       "%s %s=",
@@ -8037,7 +7934,7 @@ sub fmt_switch
           } else {                                          # test condition
              $out .= dprint($depth+3,"%s",@list[$i]);
           }
-       } elsif($depth + $indent + length(@list[$i]) > $max ||     # long cmd
+       } elsif($depth + $indent + length(@list[$i]) > @info{max} ||  # long cmd
                @list[$i] =~ /^\s*{.*}\s*;{0,1}\s*$/) {
           $out .= pretty($depth+6,@list[$i]);
        } else {                                                  # short cmd
@@ -8056,7 +7953,7 @@ sub fmt_amper
    if($txt =~ /^([^ ]+)\s+([^=]+)\s*=/) {
       my ($atr,$obj,$val) = ($1,$2,$');
 
-      if(length($val) + $depth < $max) {
+      if(length($val) + $depth < @info{max}) {
          $out .= dprint($depth,"$cmd$txt");
       } elsif($val =~ /^\s*\[.*\]\s*(;{0,1})\s*$/) {
          $out .= dprint($depth,"&$atr $obj=");
@@ -8102,7 +7999,7 @@ sub function_print_segment
    # skipped over parts. 
    #
    # FYI This comparison is slighytly wrong, but close
-   if($depth + length("$left$function($arguments)$right") - length(@array[0]) < $max) {
+   if($depth + length("$left$function($arguments)$right") - length(@array[0]) < @info{max}) {
       if($mright ne undef) {                 # does the function end right?
          if(@array[0] =~ /^\s*\)$mright/) {
             @array[0] = $';                                          # yes
@@ -8153,7 +8050,7 @@ sub function_print
    my ($depth,$txt) = @_;
    my $out;
 
-   if($depth + length($txt) < $max) {                              # too small
+   if($depth + length($txt) < @info{max}) {                      # too small
       return dprint($depth,"%s",$txt);
    }
 
@@ -8240,7 +8137,18 @@ sub pretty
     my ($depth,$txt) = @_;
     my $out;
 
-    if($depth + length($txt) < $max) {
+    #
+    # these commands are handled differently then other commands.
+    #
+    my %fmt_cmd = (
+        '@switch' => sub { fmt_switch(@_); },
+        '@select' => sub { fmt_switch(@_); },
+        '@dolist' => sub { fmt_dolist(@_); },
+        '&'       => sub { fmt_amper(@_);  },
+        '@while'  => sub { fmt_while(@_);  },
+    );
+
+    if($depth + length($txt) < @info{max}) {
         return (" " x $depth) . $txt;
     }
 
@@ -11094,15 +11002,6 @@ use Time::Local;
 use Carp;
 use Fcntl qw( SEEK_END SEEK_SET);
 
-my %months = (
-   jan => 1, feb => 2, mar => 3, apr => 4, may => 5, jun => 6,
-   jul => 7, aug => 8, sep => 9, oct => 10, nov => 11, dec => 12,
-);
-
-my %days = (
-   mon => 1, tue => 2, wed => 3, thu => 4, fri => 5, sat => 6, sun => 7,
-);
-
 #
 # dump_complete
 #    Determine if a dump file is complete by looking at the last 45
@@ -13157,6 +13056,15 @@ sub fuzzy
    my ($sec,$min,$hour,$day,$mon,$year);
    my $AMPM = 1;
 
+   my %months = (
+      jan => 1, feb => 2, mar => 3, apr => 4, may => 5, jun => 6,
+      jul => 7, aug => 8, sep => 9, oct => 10, nov => 11, dec => 12,
+   );
+
+   my %days = (
+      mon => 1, tue => 2, wed => 3, thu => 4, fri => 5, sat => 6, sun => 7,
+   );
+
    return $1 if($time =~ /^\s*(\d+)\s*$/);
    for my $word (split(/\s+/,$time)) {
 
@@ -14220,7 +14128,7 @@ obj[0] {
    obj_owner::A:0
    obj_password::A:*EF5D6D678BAE641D8DAF107523B0EA48D420E0E0
    obj_quota::A:0
-}
+ }
 obj[1] {
    description::A:A non-descript room
    last_inhabited::A:Thu Oct  4 14:26:25 2018
@@ -14230,7 +14138,7 @@ obj[1] {
    obj_home::A:-1
    obj_name::A:Void
    obj_owner::A:0
-}
+ }
 ** Dump Completed Wed Oct 17 08:28:30 2018 **
 __EOF__
       } else {
@@ -14348,6 +14256,7 @@ sub ws_login_screen
    my $conn = shift;
 
    ws_echo($conn->{socket}, @info{"conf.login"});
+# foo
 }
 
 #
@@ -14485,3 +14394,5 @@ sub websock_wall
       }
    }
 }
+
+main();                                                   #!# run only once

@@ -657,6 +657,7 @@ sub initialize_commands
    @command{"\@dump"}   = { fun  => sub { cmd_dump(@_); }                   };
    @command{"\@freefind"}={ fun  => sub { cmd_freefind(@_); }               };
    @command{"\@test"}    ={ fun  => sub { cmd_test(@_); }                   };
+   @command{"\@delta"}   ={ fun  => sub { cmd_delta(@_); }                  };
    # --[ aliases ]-----------------------------------------------------------#
    
    @command{"\@poll"}  =  { fun => sub { cmd_doing(@_[0],@_[1],@_[2],
@@ -957,7 +958,20 @@ sub cmd_backupmode
 sub cmd_delta
 {
    my ($self,$prog,$txt) = @_;
-   printf("%s\n",print_var(\@delta));
+#   printf("%s\n",print_var(\@delta));
+
+#   $web->close();
+#   my $web = IO::Socket::INET->new(LocalPort => @info{"conf.httpd"},
+#                                      Listen    =>1,
+#                                      Reuse=>1
+#                                     );
+   $ws->{select_readable}->remove($web);
+#$ws->{select_readable}->add($listener)
+
+   necho(self   => $self,
+      prog   => $prog,
+      source => [ "Done" ]
+     );
 }
 
 # cmd_while
@@ -1445,6 +1459,7 @@ sub cmd_lock
 {
    my ($self,$prog,$txt) = @_;
 
+
    if($txt =~ /^\s*([^ ]+)\s*=\s*/) {
 
       my $target = find($self,$prog,$1);       # find target
@@ -1462,7 +1477,11 @@ sub cmd_lock
                   source => [ "I don't understand that key, $$lock{errormsg}" ]
                  );
          } else {
-            set($self,$prog,$target,"LOCK_DEFAULT",$$lock{lock});
+            set($self,$prog,$target,"OBJ_LOCK_DEFAULT",$$lock{lock},1);
+            necho(self => $self,
+                  prog => $prog,
+                  source => [ "Set." ]
+                 );
          }
       }
    } else {
@@ -3352,6 +3371,10 @@ sub cmd_name
          delete @player{name($target,1)};
          db_set($target,"obj_name",$name);
          db_set($target,"obj_cname",$cname);
+         necho(self   => $self,
+            prog   => $prog,
+            source => [ "Set." ],
+         );
       } else {
 
          sql("update object " .
@@ -3372,11 +3395,10 @@ sub cmd_name
          }
       }
 
-#      necho(self   => $self,
-#            prog   => $prog,
-#            source => [ "Set." ],
-#            room   => [ $target, "%s is now known by %s.\n",$old, $cname]
-#           );
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Set." ],
+           );
    } else {
       err($self,$prog,"syntax: \@name <object> = <new_name>");
    }
@@ -4459,7 +4481,7 @@ sub cmd_set
 {
    my ($self,$prog,$txt) = @_;
    my ($target,$name,$attr,$value,$flag);
-  
+
     if(hasflag($self,"GUEST")) {
       return err($self,$prog,"Permission Denied.");
     } elsif($txt =~ /^\s*([^ =]+?)\s*\/\s*([^ =]+?)\s*=(.*)$/s) { # attribute
@@ -4489,8 +4511,14 @@ sub cmd_set
       my_commit() if(mysqldb);
 
    } elsif($txt =~ /^\s*([^ =\\]+?)\s*= *(.*?) *$/s) { # flag?
-      ($target,$flag) = (find($self,$prog,$1),$2);
-      return err($self,$prog,"Unknown object '%s'",$1) if !$target;
+      if(@{$$prog{cmd}}{source} == 1) {                          # user input
+         ($name,$flag) = ($1,$2);
+      } else {                                               # non-user input
+         ($name,$flag) = (evaluate($self,$prog,$1),evaluate($self,$prog,$2));
+      }
+      $target = find($self,$prog,$name);
+
+      return err($self,$prog,"Unknown object '%s'",$name) if !$target;
       controls($self,$target) || return err($self,$prog,"Permission denied");
 
       if($flag =~ /^\s*dark\s*$/i &&          # no dark flag for non-wizards
@@ -5049,6 +5077,8 @@ sub get_source_checksums
                 @{@data{$pos}}{chk} = @{@data{$pos}}{chk}->hexdigest;
                 $pos = undef;
              }
+          } elsif($pos ne undef) {
+             @{@data{$pos}}{src} .= "\n";
           }
        }
     }
@@ -6547,9 +6577,7 @@ sub reserved
 {
    my $attr = shift;
 
-   if($attr =~ /^obj_/i ||
-      $attr =~ /^flag_/i ||
-      $attr =~ /^lock_/i) {
+   if($attr =~ /^obj_/i) {
       return 1;
    } else {
       return 0;
@@ -6952,18 +6980,20 @@ sub run_container_commands
    my $match = 0;
 
    for my $obj (lcon($container)) {
-      for my $hash (latr_regexp($obj,1)) {
-         if($cmd =~ /$$hash{atr_regexp}/i) {
-            mushrun(self   => $self,
-                    prog   => $prog,
-                    runas  => $obj,
-                    source => 0,
-                    cmd    => single_line($$hash{atr_value}),
-                    wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ],
-                    from   => "ATTR",
-                    attr   => $hash
-                   );
-            $match=1;                             # signal mush command found
+      if(!hasflag($obj,"NO_COMMAND")) {
+         for my $hash (latr_regexp($obj,1)) {
+            if($cmd =~ /$$hash{atr_regexp}/i) {
+               mushrun(self   => $self,
+                       prog   => $prog,
+                       runas  => $obj,
+                       source => 0,
+                       cmd    => single_line($$hash{atr_value}),
+                       wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ],
+                       from   => "ATTR",
+                       attr   => $hash
+                      );
+               $match=1;                             # signal mush command found
+            }
          }
       }
    }
@@ -7367,9 +7397,9 @@ sub spin
                $prog->{sock}->send_utf8(ansi_remove($msg));
            } elsif($$prog{hint} eq "WEB") {
                if(defined $$prog{output}) {
-                  http_reply($$prog{sock},join("",@{@$prog{output}}));
+                  http_reply($$prog{sock},"%s",join("",@{@$prog{output}}));
                } else {
-                  http_reply($$prog{sock},"No data returned");
+                  http_reply($$prog{sock},"%s","No data returned");
                }
             }
             close_telnet($prog);
@@ -11356,7 +11386,7 @@ sub evaluate_substitutions
    my ($self,$prog,$t) = @_;
    my ($out,$seq);
 
-   while($t =~ /(\\|%m[0-9]|%[brtn#0-9]|%v[0-9]|%w[0-9]|\[|\]|%=<[^>]+>|%\{[^}]+\})/i) {
+   while($t =~ /(\[|\]|\\|%m[0-9]|%[brtn#0-9]|%v[0-9]|%w[0-9]|\[|\]|%=<[^>]+>|%\{[^}]+\})/i) {
       ($seq,$t)=($1,$');                                   # store variables
       $out .= $`;
 
@@ -11365,7 +11395,7 @@ sub evaluate_substitutions
          $t = substr($t,1);
       } elsif($seq eq "[") {
          $out .= "[" if(ord(substr($`,-1)) == 27);       # escape sequence?
-      } elsif($seq eq "]") {
+      } elsif($seq eq "]" || $seq eq "]") {
          # ignore
       } elsif($seq eq "%b") {                                        # space
          $out .= " ";
@@ -14355,7 +14385,8 @@ sub websock_io
 #    Currently, that flag is just being stripped and ignored. Maybe
 #    later?
 #
-sub ws_process {
+sub ws_process
+{
    my( $conn, $msg, $ssl ) = @_;
    $msg =~ s/\r|\n//g;
 
@@ -14376,8 +14407,8 @@ sub ws_process {
                         );
       $$prog{sock} = $conn;
    } else {
-      printf("   %s\@ws [%s]\n", @{$ws->{conns}{$conn->{socket}}}{ip},$msg);
       $msg = substr($msg,1);
+      printf("   %s\@ws [%s]\n", @{$ws->{conns}{$conn->{socket}}}{ip},$msg);
       server_process_line(@connected{$conn->{socket}},$msg);
    }
 }

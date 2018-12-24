@@ -82,6 +82,8 @@ sub load_modules
          eval "use $key; 1;" or @info{"conf.@mod{$key}"} = -1;
          if(@info{"conf.@mod{$key}"} == -1) {
             printf("WARNING: Missing $key  module, @mod{$key} disabled\n");
+         } elsif(!defined @info{"conf.@mod{$key}"}) {
+            @info{"conf.@mod{$key}"} = 0;
          }
       }
    }
@@ -171,6 +173,7 @@ sub load_config_default
    @default{backup_interval}          = 3600;                  # once an hour
    @default{freefind_interval}        = 84600;                   # once a day
    @default{function_invocation_limit}= 2500;
+   @default{httpd_invalid}            = 3;
    @default{login}                    = "Welcome to @info{version}\r\n\r\n" .
                                         "   Type the below command to " .
                                         "customize this screen after loging ".
@@ -1341,8 +1344,10 @@ sub cmd_test
 
 sub cmd_trigger
 {
-   my ($self,$prog,$txt) = @_;
-   my (@wild,$last,$target,$attr,$name);
+   my ($self,$prog) = (obj(shift),obj(shift));
+   my (@wild,$last,$target,$name);
+
+   my $txt = evaluate($self,$prog,shift);
 
    if($txt =~ /^\s*([^\/]+)\s*\/\s*([^=]+)\s*={0,1}/ ||
       $txt =~ /^\s*([^\/]+)\s*/) {
@@ -1353,16 +1358,13 @@ sub cmd_trigger
          ($name,$target) = ($2,find($self,$prog,$1));
       }
 
-      if($target eq undef) {
-         return err($self,$prog,"No match.");
-      } elsif(!controls($self,$target)) {                 # can modify object?
-         return err($self,$prog,"Permission denied");
-      }
+      return err($self,$prog,"No match.") if($target eq undef);
 
-      $attr = get($target,$name);
+      my $attr = mget($target,$name) ||
+         return err($self,$prog,"No such attribute.");
 
-      if($attr eq undef) {
-          return err($self,$prog,"No such attribute.");
+      if(!defined $$attr{glob} && !controls($self,$target)) {
+         return err($self,$prog,"PermiSsion denied");
       }
 
       for my $i (balanced_split($',',',2)) {             # split param list
@@ -1378,7 +1380,7 @@ sub cmd_trigger
               prog   => $prog,
               runas  => $target,
               source => 0,
-              cmd    => $attr,
+              cmd    => $$attr{value},
               wild   => [ @wild ],
              );
    } else {
@@ -2080,6 +2082,13 @@ sub cmd_dolist
    if($item !~ /^\s*$/) {
       my $cmds = $$cmd{dolist_cmd};
       $cmds =~ s/\#\#/$item/g;
+#      mushrun(self   => $$cmd{self},
+#              prog   => $prog,
+#              runas  => $self,
+              source => 0,
+#              cmd    => $cmds,
+#              child  => 1,
+#             );
       mushrun(self   => $self,
               prog   => $prog,
               runas  => $self,
@@ -2737,9 +2746,6 @@ sub cmd_recall
     my ($self,$prog,$txt) = @_;
     my ($qualifier,@args);
 
-    my $attr = mget(126,"url_listen");
-
-    printf("%s",print_var($attr));
     if(memorydb) {
        return err($self,$prog,"\@recall is only supported under mysql");
     }
@@ -2811,12 +2817,13 @@ sub cmd_force
 ##               cmd    => $',
 #               hint   => "INTERNAL"
 #              );
-       mushrun(self   => $target,
-               prog   => $prog,
-               runas  => $target,
-               source => 0,
-               cmd    => evaluate($self,$prog,$'),
-               hint   => "ALWAYS_RUN"
+       mushrun(self     => $target,
+               prog     => $prog,
+               runas    => $target,
+               source   => 0,
+               cmd      => evaluate($self,$prog,$'),
+               cmdself  => $target,
+               hint     => "ALWAYS_RUN"
               );
    } else {
      err($self,$prog,"syntax: \@force <object> = <command>");
@@ -4541,10 +4548,12 @@ sub cmd_set
 
 sub reconstitute
 {
-   my ($name,$type,$pattern,$value,$flag,$raw) = @_;
+   my ($name,$type,$pattern,$value,$flag,$switch) = @_;
 
 #   $value =~ s/\r|\n//g;
-   if($type eq undef && $value !~ /^\s*\@/) {
+   if($type eq undef && defined $$switch{command}) {
+      return;
+   } elsif($type eq undef && $value !~ /^\s*\@/) {
       if($flag eq undef) {
          return color("h",uc($name)) . ": $value" if($type eq undef);
       } else {
@@ -4562,7 +4571,10 @@ sub reconstitute
 
    # convert single line unreadable mushcode into hopefully readable
    # multiple line code
-   if(!$raw &&
+
+   if(defined $$switch{command}) {
+      $value = undef;
+   } elsif(!$$switch{raw} &&
       length($value) > 78 &&
       $value !~ /\n/ &&
       ($pattern ne undef || $value  =~ /^\s*([\$|\[|^|!|@])/)) {
@@ -4637,7 +4649,7 @@ sub list_attr
                                       $$attr{glob},
                                       $$attr{value},
                                       list_attr_flags($attr),
-                                      $$switch{raw}
+                                      $switch
                                      )
                 );
             }
@@ -4672,7 +4684,7 @@ sub list_attr
                                    $$hash{atr_pattern_type},
                                    $$hash{atr_pattern},
                                    $$hash{atr_value},
-                                   $$switch{raw}
+                                   $switch
                                   )
                 );
          }
@@ -4694,7 +4706,7 @@ sub cmd_ex
 #   my ($self,$prog,$txt) = @_;
    my ($target,$desc,@exit,@content,$atr,$out);
 
-   validate_switches($self,$prog,$switch,"raw") || return;
+   validate_switches($self,$prog,$switch,"raw","command") || return;
 
    $txt = evaluate($self,$prog,$txt);
 
@@ -5053,7 +5065,8 @@ sub cmd_say
 sub get_source_checksums
 {
     my $src = shift;
-    my (%data, $file,$pos, $ln);
+    my (%data, $file,$pos);
+    my $ln = 0;
 
     open($file,"teenymush.pl") ||
        die("Unable to read teenymush.pl");
@@ -5066,8 +5079,8 @@ sub get_source_checksums
              @data{$pos} = { chk => Digest::MD5->new,
                            };
              @{@data{$pos}}{chk}->add($line);
-             @{@data{$pos}}{src} .= qq[#line $ln "$0"\n] . $line if $src;
-             @{@data{$pos}}{ln} .= $.;
+             @{@data{$pos}}{src} .= qq[#line 0 "$pos"\n] . $line if $src;
+             @{@data{$pos}}{ln} .= $ln;
           } elsif($pos ne undef && $line !~ /^\s*$/) {
              @{@data{$pos}}{chk}->add($line);
              @{@data{$pos}}{src} .= $line if $src;
@@ -5094,11 +5107,15 @@ sub get_source_checksums
 
 sub reload_code
 {
+   my ($self,$prog) = @_;
    my $count = 0;
    my $prev = @info{source_prev};
    my $curr = get_source_checksums(1);
 
    for my $key (sort keys %$curr) {
+#      if(@{$$curr{$key}}{src} =~ /^#line (\d+)/) {
+#         printf("$key -> '%s'\n",$1);
+#      }
       if(@{$$prev{$key}}{chk} ne @{$$curr{$key}}{chk}) {
          $count++;
          printf("Reloading: %-40s",$key);
@@ -5108,8 +5125,20 @@ sub reload_code
          if($@) {
             printf("*FAILED*\n%s\n",$@);
             @{$$curr{$key}}{chk} = -1;
+            if($self ne undef) {
+               necho(self   => $self,
+                     prog   => $prog,
+                     source => [ "Reloading %-40s *FAILED*", $key ]
+                    );
+            }
          } else {
             printf("Successful\n");
+            if($self ne undef) {
+               necho(self   => $self,
+                     prog   => $prog,
+                     source => [ "Reloading %-40s Success", $key ]
+                    );
+            }
          }
       }
       @{$$curr{$key}}{src} = undef;
@@ -5127,7 +5156,8 @@ sub reload_code
 
 #
 # cmd_reload_code
-#    Let the code be reloaded from within the server.
+#    Let the code be reloaded from within the server. This should not be
+#    disabled, so ignore the conf option unless its set to -1.
 #
 sub cmd_reload_code
 {
@@ -5136,11 +5166,11 @@ sub cmd_reload_code
 
    if(!hasflag($self,"GOD")) {
       return err($self,$prog,"Permission denied.");
-   } elsif(@info{"conf.md5"} != 1) {
+   } elsif(@info{"conf.md5"} == -1) {
       return err($self,$prog,"#-1 DISABLED");
    }
 
-   $count = reload_code();
+   $count = reload_code($self,$prog);
 
    if($count == 0) {
       necho(self   => $self,
@@ -6316,33 +6346,66 @@ sub db_version
 #    database). @deleted defines if the object was deleted while the
 #    database was in backup mode.
 #
+#    WARNING: If this function is used for mysql, then the code assumes
+#             that the returned data will never be modified.
+#
 sub mget
 {
    my ($obj,$attr) = (obj(shift),shift);
    my $data;
 
    # handle if object exists
-   if(defined @info{backup_mode} && @info{backup_mode}) {
-      if(defined @deleted{$$obj{obj_id}}) {                # obj was deleted
-         return undef;
-      } elsif(defined @delta[$$obj{obj_id}]) {   # obj changed during backup
-         $data = @delta[$$obj{obj_id}];
-      } elsif(defined @db[$$obj{obj_id}]) {                   # in actual db
-         $data = @db[$$obj{obj_id}];
-      } else {                                           # obj doesn't exist
-         return undef;
-      }
-   } elsif(defined @db[$$obj{obj_id}]) {            # non-backup mode object
-      $data = @db[$$obj{obj_id}];
-   } else {
-      return undef;                                      # obj doesn't exist
-   }
 
-   # handle if attribute exits on object
-   if(!defined $$data{lc($attr)}) {              # check if attribute exists
-      return undef;                                                   # nope
-   } else {
-      return $$data{lc($attr)};                                     # exists
+   if(memorydb) {
+      if(defined @info{backup_mode} && @info{backup_mode}) {
+         if(defined @deleted{$$obj{obj_id}}) {             # obj was deleted
+            return undef;
+         } elsif(defined @delta[$$obj{obj_id}]) {   # obj changed during backup
+            $data = @delta[$$obj{obj_id}];
+         } elsif(defined @db[$$obj{obj_id}]) {                # in actual db
+            $data = @db[$$obj{obj_id}];
+         } else {                                        # obj doesn't exist
+            return undef;
+         }
+      } elsif(defined @db[$$obj{obj_id}]) {         # non-backup mode object
+         $data = @db[$$obj{obj_id}];
+      } else {
+         return undef;                                   # obj doesn't exist
+      }
+   
+      # handle if attribute exits on object
+      if(!defined $$data{lc($attr)}) {           # check if attribute exists
+         return undef;                                                # nope
+      } else {
+         return $$data{lc($attr)};                                  # exists
+      }
+   } else {                         # emulate how memorydb works in mysql
+      my $hash = one("select atr_name name, " .
+                     "      atr_value value,  " .
+                     "      atr_pattern_type type," .
+                     "      atr_pattern glob, ".
+                     "      atr_regexp regexp" .
+                     "  from attribute ".
+                     " where atr_name = ? " .
+                     "   and obj_id = ? ",
+                     lc($attr),
+                     $$obj{obj_id}
+                    ) ||
+         return undef;
+      delete $$hash{regexp} if $$hash{regex} eq undef;
+      delete $$hash{glob} if $$hash{glob} eq undef;
+      delete $$hash{type} if $$hash{type} eq undef;
+
+      if($$hash{type} eq undef) {
+         delete @$hash{type};
+      } elsif($$hash{type} == 1) {
+         $$hash{type} = "\$";                     # how the type is defined
+      } elsif($$hash{type} == 2) {
+         $$hash{type} = "^";
+      } elsif($$hash{type} == 3) {
+         $$hash{type} = "!";
+      }
+      return $hash;
    }
 }
 
@@ -6979,20 +7042,30 @@ sub run_container_commands
    my ($self,$prog,$runas,$container,$cmd) = @_;
    my $match = 0;
 
+#
    for my $obj (lcon($container)) {
       if(!hasflag($obj,"NO_COMMAND")) {
          for my $hash (latr_regexp($obj,1)) {
             if($cmd =~ /$$hash{atr_regexp}/i) {
-               mushrun(self   => $self,
-                       prog   => $prog,
-                       runas  => $obj,
-                       source => 0,
-                       cmd    => single_line($$hash{atr_value}),
-                       wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ],
-                       from   => "ATTR",
-                       attr   => $hash
-                      );
-               $match=1;                             # signal mush command found
+               # run attribute only if last run attritube isn't the new
+               # attribute to run. I.e. infinite loop. Since we're not keeping
+               # a stack of exec() attributes, this won't catch more complex
+               # recursive calls. Future feature?
+               if(!defined $$prog{attr} || 
+                  !(@{$$prog{attr}}{atr_owner} eq $$obj{obj_id} &&
+                  @{$$prog{attr}}{atr_name} eq $$hash{atr_name})) {
+                  mushrun(self   => $self,
+                          prog   => $prog,
+                          runas  => $obj,
+                          source => 0,
+                          cmd    => single_line($$hash{atr_value}),
+                          wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ],
+                          from   => "ATTR",
+                          attr   => $hash,
+                          cmdself=> $self
+                         );
+                  $match=1;                       # signal mush command found
+               }
             }
          }
       }
@@ -7002,21 +7075,27 @@ sub run_container_commands
 
 #
 # mush_command
-#   Search Order  is objects you carry, objects around you, and objects in
-#   the master room.
+#   Search Order is objects you carry, objects around you, and objects in
+#   the master room. http/non-interactive websocket requests only search
+#   objects you carry.
 #
 sub mush_command
 {
    my ($self,$prog,$runas,$cmd,$src) = @_;
-   my ($i,%checked) =  0;
+   my ($i,%list) =  0;
 
    $cmd = evaluate($self,$prog,$cmd) if($src ne undef && $src == 0);
 
-   for my $obj ($self,obj(loc($self)),obj(@info{"conf.master"})) {
-      if(!defined @checked{$$obj{obj_id}}) {
-         $i += run_container_commands($self,$prog,$runas,$obj,$cmd);
-         @checked{$$obj{obj_id}} = 1;
-      }
+   @list{$$self{obj_id}} = 1;                       # search carried objects
+   if(!defined $$prog{hint} ||                     # no hint, not web based?
+      defined $$prog{attr} ||     # from attr, okay to run even if web based
+     ($$prog{hint} ne "WEB" && $$prog{hint} ne "WEBSOCKET")) {
+      @list{loc($self)} = 1;                              # search your loc
+      @list{@info{"conf.master"}} = 1;                 # search master room
+   }
+
+   for my $obj (keys %list) {
+      $i += run_container_commands($self,$prog,$runas,$obj,$cmd);
    }
  
    return ($i > 0) ? 1 : 0;
@@ -7073,10 +7152,22 @@ sub mushrun
 {
    my %arg = @_;
    my $multi = inattr($arg{self},$arg{source});
+   my $cmdself;
 
    if(!$multi) {
        return if($arg{cmd} =~ /^\s*$/);                        # empty command
        @arg{cmd} = $1 if($arg{cmd} =~ /^\s*{(.*)}\s*$/s);       # strip braces
+   }
+
+   if(defined @arg{cmdself}) {
+      $cmdself = @arg{cmdself};
+   } elsif(defined @arg{prog} && 
+      defined @arg{prog}->{cmd} &&
+      defined @arg{prog}->{cmd}->{self} &&
+      defined @arg{prog}->{cmd}->{self}->{obj_id}) {
+      $cmdself = @{@{@arg{prog}}{cmd}}{self};
+   } else {
+      $cmdself = @arg{self};
    }
 
    if(!defined $arg{prog}) {                                     # new program
@@ -7148,9 +7239,12 @@ sub mushrun
                          cmd    => $arg{cmd}, 
                          source => ($arg{hint} eq "WEB") ? 0 : 1,
                          multi  => ($multi eq undef) ? 0 : 1,
-                         match  => @arg{match}
+                         match  => @arg{match},
+                         hint   => @arg{hint},
+                         self   => $cmdself,
                        }
               );
+       
 
 #       my %last;
 #       my $result = spin_run(\%last,
@@ -7168,7 +7262,9 @@ sub mushrun
                            cmd    => $i,
                            source => 0,
                            multi  => ($multi eq undef) ? 0 : 1,
-                           match  => @arg{match}
+                           match  => @arg{match},
+                           hint   => @arg{hint},
+                           self   => $cmdself,
                           }
                  );
        }
@@ -7179,7 +7275,9 @@ sub mushrun
                            cmd    => $i,
                            source => 0,
                            multi  => ($multi eq undef) ? 0 : 1,
-                           match  => @arg{match}
+                           match  => @arg{match},
+                           hint   => @arg{hint},
+                           self   => $cmdself,
                         }
                  );
         }
@@ -7265,6 +7363,9 @@ sub spin
    @info{engine} = {} if(!defined @info{engine});
 
    if(memorydb) {
+      #
+      # dump database every hour
+      #
       if(time()-@info{db_last_dump} > @info{"conf.backup_interval"}) {
           @info{db_last_dump} = time();
           my $self = obj(0);
@@ -7277,6 +7378,9 @@ sub spin
                  );
       } elsif(time() - @info{"conf.freefind_last"} > 
               @info{"conf.freefind_interval"}) {
+         #
+         # update free objects list every hour
+         #
          @info{"conf.freefind_last"} = time();
          if(!defined @info{"conf.freefind_interval"}) {
             @info{"conf.freefind_interval"} = 86400;
@@ -7290,6 +7394,15 @@ sub spin
                  hint   => "ALWAYS_RUN"
                 );
       }
+   }
+
+   #
+   # update ban data every hour
+   #
+   if(!defined @info{httpd_ban_last_check} ||
+      (scalar localtime()) - @info{httpd_ban_last_check} > 3600) {
+      @info{httpd_ban_last_check} = scalar localtime();
+      manage_httpd_bans();
    }
 
    eval {
@@ -7343,7 +7456,6 @@ sub spin
                unshift(@$command,pop(@$stack));
             }
             $$program{stack} = $tmp;                  # unhide original stack
-
 
             # input() returned that there was no data. In a loop, the process
             # probably will waste time checking for more no data. Because of
@@ -7515,22 +7627,32 @@ sub spin_run
    ($$last{user},$$last{cmd}) = ($self,$command);
    $$prog{cmd_last} = $command;
 
-# find command set to use
-   if($$prog{hint} eq "ALWAYS_RUN") {
-      $hash = \%command;                                    # connected users
-   } elsif($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") {
+#   # find command set to use
+#      if($$command{hint} eq "ALWAYS_RUN") {
+#         $hash = \%command;                                    # connected users
+#      } elsif($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") {
+#         if(defined $$prog{from} && $$prog{from} eq "ATTR") {
+#            $hash = \%command;
+#         } else {
+#            $hash = \%switch;                                      # no commands
+#         }
+#      } elsif($$prog{hint} eq "INTERNAL" || $$prog{hint} eq "WEB") {
+#         $hash = \%command;
+#   #      delete @$prog{hint};
+#      } elsif(hasflag($self,"PLAYER") && !loggedin($self)) {
+#         $hash = \%offline;                                     # offline users
+#      } else {
+#         $hash = \%command;                                    # connected users
+#      }
+
+   if($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") {
       if(defined $$prog{from} && $$prog{from} eq "ATTR") {
          $hash = \%command;
       } else {
          $hash = \%switch;                                      # no commands
       }
-   } elsif($$prog{hint} eq "INTERNAL" || $$prog{hint} eq "WEB") {
-      $hash = \%command;
-#      delete @$prog{hint};
-   } elsif(hasflag($self,"PLAYER") && !loggedin($self)) {
-      $hash = \%offline;                                     # offline users
    } else {
-      $hash = \%command;                                    # connected users
+      $hash = \%command;
    }
 
    if($$command{cmd} =~ /^\s*([^ \/]+)/) {         # split cmd from args
@@ -7538,6 +7660,8 @@ sub spin_run
    } else {
       return;                                                 # only spaces
    }
+
+# find command set to use
    if(defined $$hash{$cmd}) {                                  # internal cmd
       return run_internal($hash,$cmd,$command,$prog,$arg);
   } elsif(defined $$hash{substr($cmd,0,1)} &&
@@ -10856,12 +10980,15 @@ sub http_accept
 
    my $new = $web->accept();
 
+   my $addr = server_hostname($new);
+
    $readable->add($new);
 
    @http{$new} = { sock => $new,
-                    data => {},
-                    ip   => server_hostname($new),
-                  };
+                   data => {},
+                   ip   => $addr,
+                 };
+
 #   printf("   %s\@web Connect\n",@{@http{$new}}{ip});
 }
 
@@ -10875,10 +11002,69 @@ sub http_disconnect
 
 }
 
+
+sub manage_httpd_bans
+{
+   my $sock = shift;
+   my $count;
+
+   # setup structures
+   @info{http_ban} = {} if(!defined @info{httpd_ban}); 
+   @info{httpd_invalid_data} = {} if(!defined @info{httpd_invalid_data});
+
+   # add new invalid request if provided
+   if($sock ne undef) {
+      my $ip = @http{$sock}->{ip};
+      if(!defined @{@http{$sock}}{$ip}) {
+         @{@http{$sock}}{$ip} = {};
+      }
+      @info{httpd_invalid_data}->{$ip}->{scalar localtime()} = 1;
+   }
+
+   #
+   # clean up / manage ban data
+   #
+   if(!defined @info{httpd_invalid_data}) {          # no invalid hits at all
+      @info{httpd_invalid_data} = {} if(!defined @info{httpd_invalid_data});
+   } else {
+      # clean up old requests
+      for my $key (keys %{@info{httpd_invalid_data}}) {
+         my $count = 0;
+         for my $ts (keys %{@info{httpd_invalid_data}->{$key}}) {
+            if((scalar localtime()) - 300 > $ts) {              # rm, too old
+               delete @info{httpd_invalid_data}->{$key}->{$ts};
+            } else {
+               $count++;
+            }
+         }
+         if(scalar keys %{@info{httpd_invalid_data}->{$key}} == 0) {
+            delete @info{httpd_invalid_data}->{$key};        # no current hits
+         } elsif($count >= @info{"conf.httpd_invalid"}) {
+            if(!defined @{@info{httpd_ban}}{$key}) {
+               @{@info{httpd_ban}}{$key} = scalar localtime();     # too many
+               printf("   %s\@web *** BANNNED **\n",$key);          # add ban
+            }
+         } elsif(defined @{@info{httpd_ban}}{$key} ) {  # too little,remove ban
+            printf("   %s\@web Un-BANNNED\n",$key);
+            delete @{@info{httpd_ban}}{$key};
+         }
+      }
+   }
+}
+
 sub http_error
 {
    my ($s,$fmt,@args) = @_;
 
+   if(defined @http{$s} && defined @http{$s}->{data}) {
+      if(@http{$s}->{data}->{get}  !~ /^\s*favicon\.ico\s*$/i) {
+         manage_httpd_bans($s);
+      }
+   }
+
+   #
+   # show the invalid page responce
+   #
    http_out($s,"HTTP/1.1 404 Not Found");
    http_out($s,"Date: %s",scalar localtime());
    http_out($s,"Last-Modified: %s",scalar localtime());
@@ -10970,21 +11156,20 @@ sub http_process_line
          my $id = @info{"conf.webuser"};
          my $self = obj(@info{"conf.webuser"});
 
-         my $msg =  uri_unescape($$data{get});
-#         $msg = $' if($msg =~ /^\s*\/+/);
-         $msg =~ s/\// /g;
+         $$data{get} = uri_unescape($$data{get});
+         $$data{get} =~ s/\// /g;
+         $$data{get} =~ s/^\s+|\s+$//g;
 
          # run the $default mush command as the default webpage.
-         $msg = "default" if($msg =~ /^\s*$/);
+         $$data{get} = "default" if($$data{get} =~ /^\s*$/);
 
          my $addr = @{@http{$s}}{hostname};
          $addr = @{@http{$s}}{ip} if($addr =~ /^\s*$/);
          $addr = $s->peerhost if($addr =~ /^\s*$/);
          return http_error($s,"Malformed Request or IP") if($addr =~ /^\s*$/);
+         @http{$s}->{ip} = $addr;
 
-         printf("   %s\@web [%s]\n",$addr,$msg);
-
-         if(mysqldb && $msg !~ /^\s*favicon\.ico\s*$/i) {
+         if(mysqldb && $$data{get} !~ /^\s*favicon\.ico\s*$/i) {
             sql("insert into socket_history ".
                 "( obj_id, " .
                 "  skh_hostname, " .
@@ -10998,7 +11183,7 @@ sub http_process_line
                 ")",
                 @info{"conf.webuser"},
                 $addr,
-                substr($msg,0,254),
+                substr($$data{get},0,254),
                 2
                );
             if(@info{rows} != 1) {
@@ -11006,14 +11191,21 @@ sub http_process_line
             }
          }
 
+         @info{httpd_ban} = {} if(!defined @info{httpd_ban});
          # html/js/css should be a static file, so just return the file
-         if($msg =~ /\.(html|js|css)$/i && -e "txt/" . trim($msg)) {
-            http_reply_simple($s,$1,"%s",getfile(trim($msg)));
+         if($$data{get} =~ /\.(html|js|css)$/i && 
+            -e "txt/" . trim($$data{get})) {
+            printf("   %s\@web [%s]\n",$addr,$$data{get});
+            http_reply_simple($s,$1,"%s",getfile(trim($$data{get})));
+         } elsif(defined @{@info{httpd_ban}}{$addr}) {
+            printf("   %s\@web [BANNED-%s]\n",$addr,$$data{get});
+            http_error($s,"%s","BANNED for invalid requests");
          } else {                                          # mush command
+            printf("   %s\@web [%s]\n",$addr,$$data{get});
             my $prog = mushrun(self   => $self,
                                runas  => $self,
                                source => 0,
-                               cmd    => $msg,
+                               cmd    => $$data{get},
                                hint   => "WEB",
                                sock   => $s,
                                output => [],
@@ -11351,17 +11543,37 @@ sub code
    my $type = shift;
    my @stack;
 
-#   if(Carp::shortmess =~ /#!\/usr\/bin\/perl/) {
+   my $prev = @info{source_prev};
 
    if(!$type || $type eq "short") {
       for my $line (split(/\n/,Carp::shortmess)) {
          if($line =~ /at ([^ ]+) line (\d+)\s*$/) {
-            push(@stack,"$1:$2");
+            my ($fun,$ln) = ($1,$2);
+     
+            if(defined $$prev{$fun}) {
+               push(@stack,@{$$prev{$fun}}{ln} + $2);
+            } else {
+               push(@stack,"$fun:$ln");
+            }
          }
       }
       return join(',',@stack);
    } else {
-      return Carp::shortmess;
+      for my $line (split(/\n/,Carp::shortmess)) {
+         if($line =~ /called at ([^ ]+) line (\d+)\s*$/) {
+            my ($before,$fun,$ln) = ($`,$1,$2);
+     
+            if(defined $$prev{$fun}) {
+               push(@stack,
+                    $before . "on line " . 
+                    (@{$$prev{$fun}}{ln} + $2)
+                   );
+            } else {
+               push(@stack,$line);
+            }
+         }
+      }
+      return join("\n",@stack);
    }
 }
 
@@ -11404,9 +11616,17 @@ sub evaluate_substitutions
       } elsif($seq eq "%t") {                                          # tab
          $out .= "\t";
       } elsif($seq eq "%#") {                                # current dbref
-         $out .= "#" . @{$$prog{created_by}}{obj_id};
+         if(!defined $$prog{cmd}) {
+            $out .= "#" . $$self{obj_id};
+         } else {
+            $out .= "#" . @{@{$$prog{cmd}}{self}}{obj_id};
+         }
       } elsif(lc($seq) eq "%n") {                          # current dbref
-         $out .= name($$prog{created_by});
+         if(!defined $$prog{cmd}) {
+            $out .= name($self);
+         } else {
+            $out .= name(@{@{$$prog{cmd}}{self}}{obj_id});
+         }
       } elsif($seq =~ /^%m([0-9])$/) {
          if(defined $$prog{cmd} && 
             defined @{$$prog{cmd}}{match}) {
@@ -13751,7 +13971,6 @@ sub lookup_command
       } elsif($$user{site_restriction} == 69) {
          return ('huh',trim($txt));
       } elsif($txt =~ /^\s*$/ && $type && find_exit($self,{},$cmd)) {  # exit?
-         printf("CMD: '$cmd'\n");
          return ("go",$cmd);
       } elsif(mush_command($self,$hash,trim($cmd . " " . $txt,1))) { #mush cmd
          return ("\@\@",$cmd . " " . $txt);    

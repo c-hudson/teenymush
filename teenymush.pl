@@ -11057,7 +11057,7 @@ sub http_error
    my ($s,$fmt,@args) = @_;
 
    if(defined @http{$s} && defined @http{$s}->{data}) {
-      if(@http{$s}->{data}->{get}  !~ /^\s*favicon\.ico\s*$/i) {
+      if(@http{$s}->{data}->{get}  !~ /^\s*(favicon\.ico|robots.txt)\s*$/i) {
          manage_httpd_bans($s);
       }
    }

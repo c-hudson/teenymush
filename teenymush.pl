@@ -49,6 +49,7 @@ my (%command,                  #!# commands for after player has connected
     %cache,                    #!# cached data from sql database
     %c,                        #!#
     %default,                  #!# default values for config.
+    %engine,                   #!# process holder for running
 
     #----[memory database structures]---------------------------------------#
     %help,                     #!# online-help
@@ -403,7 +404,7 @@ sub main
 {
    $SIG{HUP} = sub {
       my $count = reload_code();
-      delete @info{engine};
+      delete @engine{keys %engine};
       printf("HUP signal caught, reloading: %s\n",$count ? $count : "none");
    };
 
@@ -1016,6 +1017,7 @@ sub cmd_while
               );
        return "RUNNING";
     }
+    return "DONE";
 }
 
 
@@ -1381,6 +1383,7 @@ sub cmd_trigger
               runas  => $target,
               source => 0,
               cmd    => $$attr{value},
+              child  => 1,
               wild   => [ @wild ],
              );
    } else {
@@ -1621,13 +1624,11 @@ sub cmd_killpid
 {
    my ($self,$prog,$txt) = @_;
 
-   my $engine = @info{engine};
-
    if(!hasflag($self,"WIZARD")) {
       return err($self,$prog,"Permission Denied.");
    } elsif($txt =~ /^\s*(\d+)\s*$/) {
-      if(defined $$engine{$1}) {
-         delete @$engine{$1};
+      if(defined @engine{$1}) {
+         delete @engine{$1};
          necho(self   => $self,                           # target's room
                prog   => $prog,
                source => [ "PID '%s' has been killed", $1 ],
@@ -1650,39 +1651,28 @@ sub cmd_killpid
 sub cmd_ps
 {
    my ($self,$prog) = @_;
-   my $engine = @info{engine};
 
    necho(self   => $self,                           # target's room
          prog   => $prog,
          source => [ "----[ Start ]----" ],
         );
-   for my $key (keys %$engine) {
-      my $data = @{$$engine{$key}}[0];
-      for my $pid (@{$$engine{$key}}) {
-         my $stack = $$pid{stack};
 
-         if($#$stack >= 0) {
-            necho(self   => $self,
-                  prog   => $prog,
-                  source => [ "  PID: %s for %s",$key,
-                              obj_name($self,$$data{user}) 
-                            ]
-                 );
-            for my $i (0 .. $#$stack) {
-               my $cmd = @{$$stack[$i]}{cmd};
-               if(length($cmd) > 67) {
-                  necho(self   => $self,
-                        prog   => $prog,
-                        source => [ "    Cmd: %s...", substr($cmd,0,64) ],
-                       );
-               } else {
-                  necho(self   => $self,
-                        prog   => $prog,
-                        source => [ "    Cmd: %s ($#$stack)", $cmd ],
-                       );
-               }
-            }
-         }
+   for my $pid (keys %engine) {
+      $prog = @engine{$pid};
+
+      if(defined $$prog{stack} && ref($$prog{stack}) eq "ARRAY") {
+         my $cmd = @{$$prog{stack}}[0];
+
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "  PID: %s for %s\n     %s%s",
+                           $pid,
+                           obj_name($self,$$prog{created_by}),
+                           substr(single_line($$cmd{cmd}),0,64),
+                           (length(single_line($$cmd{cmd})) > 67) ? "..." : ""
+                         ]
+
+               );
       }
    }
    necho(self   => $self,                           # target's room
@@ -1698,29 +1688,32 @@ sub cmd_ps
 sub cmd_halt
 {
    my ($self,$prog) = @_;
-   my $engine = @info{engine};
-   my %owner;                                            # cache owner calls
-   my $obj = @{owner($self)}{obj_id};
+   my $obj = owner($self);
+   my $count = 0;
 
-   printf("--[ halt start ]------\n");
-   for my $pid (keys %$engine) {                          # look at each pid
-      #  peek to see who created the process [ick]
-      my $creator = @{@{@{@$engine{$pid}}[0]}{created_by}}{obj_id};
-      my $program = @{@$engine{$pid}}[0];
+   for my $pid (keys %engine) {                          # look at each pid
+      $prog = @engine{$pid};
 
-      # cache owner of object
-      @owner{$obj} = @{owner($creator)}{obj_id} if(!defined @owner{$creator});
-
-      if(@owner{$obj} == $obj) {                  # are the owners the same?
-         close_telnet($$program{socket_id});
-         delete @$engine{$pid};
+      # kill only your stuff but not the halt command
+      if($$prog{pid} != $pid && $$obj{obj_id} == @{$$prog{created_by}}{obj_id}){
+         my $cmd = @{$$prog{stack}}[0];
          necho(self => $self,
                prog => $prog,
-               source => [ "Pid %s stopped." , $pid ]
+               source => [ "Pid %s stopped : %s%s" ,
+                           $pid,
+                           substr(single_line($$cmd{cmd}),0,40),
+                           (length(single_line($$cmd{cmd})) > 40) ? "..." : ""
+                         ]
               );
+         close_telnet($$prog{socket_id});
+         delete @engine{$pid};
+         $count++;
       }
    }
-   printf("--[ halt end   ]------\n");
+   necho(self => $self,
+            prog => $prog,
+            source => [ "%s queue entries removed." , $count]
+        );
 }
          
 
@@ -2043,11 +2036,16 @@ sub cmd_dolist
    my $cmd = $$prog{cmd_last};
    my ($delim, %last);
 
+   if(defined $$prog{nomushrun}) {
+      out($prog,"#-1 \@DOLIST is not a valid command to use in RUN function");
+      return;
+   }
+
    verify_switches($self,$prog,$switch,"delimit") || return;
 
-   if(defined $$switch{delimit}) {
+   if(defined $$switch{delimit}) {                       # handle delimiter
       if($txt =~ /^\s*([^ ]+)\s*/) {
-         $txt = $';
+         $txt = $';                        # first word of list is delimiter
          $delim = $1;
       } else {
          return err($self,$prog,"Could not determine delimiter");
@@ -2056,16 +2054,10 @@ sub cmd_dolist
       $delim = " ";
    }
 
-   if(defined $$prog{nomushrun}) {
-      out($prog,"#-1 \@DOLIST is not a valid command to use in RUN function");
-      return;
-   }
 
-#safe_split($txt,($delim eq undef) ? " " : $delim))
-   if(!defined $$cmd{dolist_list}) {                       # initalize list
+   if(!defined $$cmd{dolist_list}) {                      # initialize dolist
        my ($first,$second) = max_args(2,"=",balanced_split($txt,"=",3));
        $$cmd{dolist_cmd}   = $second;
-#       $$cmd{dolist_list}  = [ split(' ',evaluate($self,$prog,$first)) ];
        $$cmd{dolist_list} = [safe_split(evaluate($self,$prog,$first),$delim)];
        $$cmd{dolist_count} = 0;
    }
@@ -2082,13 +2074,6 @@ sub cmd_dolist
    if($item !~ /^\s*$/) {
       my $cmds = $$cmd{dolist_cmd};
       $cmds =~ s/\#\#/$item/g;
-#      mushrun(self   => $$cmd{self},
-#              prog   => $prog,
-#              runas  => $self,
-              source => 0,
-#              cmd    => $cmds,
-#              child  => 1,
-#             );
       mushrun(self   => $self,
               prog   => $prog,
               runas  => $self,
@@ -2097,11 +2082,14 @@ sub cmd_dolist
               child  => 1,
              );
    }
-  
-#   printf("Returning: '%s'\n",($#{$$cmd{dolist_list}} >= 0) ? "RUNNING" : "DONE"); 
-   return ($#{$$cmd{dolist_list}} >= 0) ? "RUNNING" : "DONE"; 
+
+   return ($#{$$cmd{dolist_list}} == -1) ? "DONE" : "RUNNING";
 }
 
+#
+# good_password
+#    enforce password pollicy
+#
 sub good_password
 {
    my $txt = shift;
@@ -2112,7 +2100,7 @@ sub good_password
       return "#-1 Passwords must one digit [0-9]";
    } elsif($txt !~ /[A-Z]/) {
       "#-1 Passwords must contain at least one upper case character";
-   } elsif($txt !~ /[A-Z]/) {
+   } elsif($txt !~ /[a-z]/) {
       return "#-1 Passwords must contain at least one lower case character";
    } else {
       return undef;
@@ -2227,10 +2215,7 @@ sub cmd_sleep
        $$prog{idle} = 1;
        return "RUNNING";
    }
-
-#   if($$cmd{sleep} >= time()) {
-#      signal_still_running($prog);
-#   }
+   return "DONE";
 }
 
 #
@@ -2474,6 +2459,7 @@ sub cmd_switch
              $pat = glob2re($txt);
           }
           my $cmd = shift(@list);
+          $cmd =~ s/^[\s\n]+//g;
           $txt =~ s/^\s+|\s+$//g;
           if($txt =~ /^\s*(<|>)\s*/) {
              if($1 eq ">" && $first > $' || $1 eq "<" && $first < $') {
@@ -2481,6 +2467,7 @@ sub cmd_switch
                                prog   => $prog,
                                runas  => $self,
                                source => 0,
+                               child  => 1,
                                cmd    => $cmd,
                               );
              }
@@ -2492,6 +2479,7 @@ sub cmd_switch
                            runas  => $self,
                            source => 0,
                            cmd    => $cmd,
+                           child  => 1,
                            match  => { 0 => $1, 1 => $2, 2 => $3, 
                                        3 => $4, 4 => $5, 5 => $6,
                                        6 => $7, 7 => $8, 8 => $9 }
@@ -2508,6 +2496,7 @@ sub cmd_switch
                          prog   => $prog,
                          runas  => $self,
                          source => 0,
+                               child  => 1,
                          cmd    => @list[0],
                         );
        }
@@ -2823,6 +2812,7 @@ sub cmd_force
                source   => 0,
                cmd      => evaluate($self,$prog,$'),
                cmdself  => $target,
+               child    => 1,
                hint     => "ALWAYS_RUN"
               );
    } else {
@@ -3235,12 +3225,7 @@ sub cmd_drop
          room2   => [ $self, "%s has arrived.",name($target) ]
         );
 
-   mushrun(self   => $self,
-           prog   => $prog,
-           runas  => $target,
-           source => 0,
-           cmd    => "look"
-          );
+   cmd_look($target,$prog);
 }
 
 sub cmd_leave
@@ -3277,12 +3262,7 @@ sub cmd_leave
          room2  => [ $self, "%s has arrived.",name($self) ]
         );
 
-   mushrun(self   => $self,
-           prog   => $prog,
-           runas  => $self,
-           source => 0,
-           cmd    => "look"
-          );
+   cmd_look($self,$prog);
 }
 
 sub cmd_take
@@ -3337,12 +3317,7 @@ sub cmd_take
          room   => [ $target, "%s has arrived.",name($target) ]
         );
 
-   mushrun(self   => $self,
-           prog   => $prog,
-           runas  => $target,
-           source => 0,
-           cmd    => "look"
-          );
+   cmd_look($target,$prog);
 }
 
 sub cmd_name
@@ -3453,12 +3428,7 @@ sub cmd_enter
          room2  => [ $self, "%s has arrived.", name($self) ]
         );
 
-   mushrun(self   => $self,
-           prog   => $prog,
-           runas  => $self,
-           source => 0,
-           cmd    => "look"
-          );
+   cmd_look($self,$prog);
 }
 
 sub cmd_to
@@ -3798,12 +3768,8 @@ sub cmd_teleport
          all_room   => [ $target, "%s has arrived.",name($target) ]
         );
 
-   mushrun(self   => $self,
-           prog   => $prog,
-           runas  => $target,
-           source => 0,
-           cmd    => "look"
-          );
+
+   cmd_look($target,$prog);
 }
 
 #
@@ -3927,7 +3893,8 @@ sub cmd_help
               prog   => $prog,
               runas  => $self,
               source => 0,
-              cmd    => $1
+              cmd    => $1,
+              child  => 1,
              );
    } else {
       necho(self   => $self,
@@ -4493,8 +4460,10 @@ sub cmd_set
       return err($self,$prog,"Permission Denied.");
     } elsif($txt =~ /^\s*([^ =]+?)\s*\/\s*([^ =]+?)\s*=(.*)$/s) { # attribute
       if(@{$$prog{cmd}}{source} == 1) {                          # user input
+         printf("CMD_SET: no eval\n");
          ($name,$attr) = ($1,$2);
       } else {                                               # non-user input
+         printf("CMD_SET: evalled\n");
          ($name,$attr) = (evaluate($self,$prog,$1),evaluate($self,$prog,$2));
       }
       
@@ -5111,6 +5080,7 @@ sub reload_code
    my $count = 0;
    my $prev = @info{source_prev};
    my $curr = get_source_checksums(1);
+   eval("my %engine;");
 
    for my $key (sort keys %$curr) {
 #      if(@{$$curr{$key}}{src} =~ /^#line (\d+)/) {
@@ -5123,7 +5093,7 @@ sub reload_code
          eval(@{$$curr{$key}}{src});
 
          if($@) {
-            printf("*FAILED*\n%s\n",$@);
+            printf("*FAILED*\n%s\n",renumber_code($@));
             @{$$curr{$key}}{chk} = -1;
             if($self ne undef) {
                necho(self   => $self,
@@ -7142,6 +7112,29 @@ sub prog
    };
 }
 
+sub mushrun_add_cmd
+{
+   my ($cmd,$arg) = @_;
+
+   # add to command stack or program stack
+   my $prog = @$arg{prog};
+   my $stack = $$prog{stack};
+
+   my $data = { runas   => $$arg{runas},
+                cmd     => $cmd,
+                source  => $$arg{source},
+                invoker => $$arg{invoker},
+                prog    => $$arg{prog},
+                mdigits => $$arg{match}
+              };
+
+   if($$arg{child}) {
+      unshift(@$stack,$data);
+   } else {
+      push(@$stack,$data);
+   }
+}
+
 #
 # mushrun
 #    Add the command to the que of what to run. The command will be run
@@ -7151,58 +7144,35 @@ sub prog
 sub mushrun
 {
    my %arg = @_;
-   my $multi = inattr($arg{self},$arg{source});
-   my $cmdself;
+   my $prog;
+
+   # initialize variables.
+   my $multi = inattr(@arg{self},@arg{source});              # multi-line attr
+   @arg{invoker} = @arg{self} if(@arg{invoker} eq undef); 
+   @arg{match} = {} if(!defined @arg{match});
 
    if(!$multi) {
-       return if($arg{cmd} =~ /^\s*$/);                        # empty command
-       @arg{cmd} = $1 if($arg{cmd} =~ /^\s*{(.*)}\s*$/s);       # strip braces
+      return if($arg{cmd} =~ /^\s*$/);
+      @arg{cmd} = $1 if($arg{cmd} =~ /^\s*{(.*)}\s*$/s);
    }
 
-   if(defined @arg{cmdself}) {
-      $cmdself = @arg{cmdself};
-   } elsif(defined @arg{prog} && 
-      defined @arg{prog}->{cmd} &&
-      defined @arg{prog}->{cmd}->{self} &&
-      defined @arg{prog}->{cmd}->{self}->{obj_id}) {
-      $cmdself = @{@{@arg{prog}}{cmd}}{self};
-   } else {
-      $cmdself = @arg{self};
+   if(@arg{prog} eq undef) {                                       # new prog
+      $prog = prog(@arg{self},@arg{runas});
+      @arg{prog} = $prog;
+      @engine{++$info{pid}} = $prog;                    # add to process list
+      $$prog{pid} = $info{pid};
    }
+   
+   $$prog{attr} = @arg{attr} if(defined @arg{attr});     # attr this came from
+   $$prog{sock} = @arg{sock} if(defined @arg{sock} && !defined $$prog{sock});
 
-   if(!defined $arg{prog}) {                                     # new program
-      @arg{prog} = prog($arg{self},$arg{runas});
-      @info{engine} = {} if not defined $info{engine}; # add to all programs
-      @{$info{engine}}{++$info{pid}} = [ $arg{prog} ];
-      $arg{pid} = $info{pid};
-   }
-
-   if(defined @arg{attr} && defined @arg{prog}) {
-      @{@arg{prog}}{attr} = @arg{attr};
-   }
-
-   # prevent RUN() from adding commands to the queue
-   if(defined @{@arg{prog}}{output} &&
-      defined @{@arg{prog}}{nomushrun} && @{@arg{prog}}{nomushrun}) {
-      my $stack = @{@arg{prog}}{output};
+   # prevent RUN() from adding commands into the queue
+   if(defined $$prog{output} &&
+      defined $$prog{nomushrun} &&
+      $$prog{nomushrun}) {
+      my $stack = $$prog{stack};
       push(@$stack,"#-1 Not a valid command inside RUN function");
       return;
-   }
-
-   if(defined $arg{from}) {
-      @{@arg{prog}}{from} = $arg{from} if(!defined @{@arg{prog}}{from});
-   }
-
-   if(!defined @{@arg{prog}}{hint}) {
-      @{@arg{prog}}{hint} = ($arg{hint} eq undef) ? "PLAYER" : $arg{hint};
-   }
-
-   if(defined @arg{output} && !defined @{@arg{prog}}{output}) {
-      @{@arg{prog}}{output} = @arg{output};
-   }
-
-   if(defined @arg{sock} && !defined @{@arg{prog}}{sock}) {
-      @{@arg{prog}}{sock} = @arg{sock};
    }
 
    # handle multi-line && command
@@ -7230,66 +7200,19 @@ sub mushrun
       }
    };
 
-    # copy over command(s)
-    my $stack=@{$arg{prog}}{stack};
+   if(@arg{source} == 1) {                         # from user input, no split
+      mushrun_add_cmd(@arg{cmd},\%arg);
+   } else {                                   # non-user input, slice and dice
+      for my $cmd ( balanced_split(@arg{cmd},";",3,1) ) {
+         mushrun_add_cmd($cmd,\%arg);
+      }
+   }
 
-    if((defined @arg{source} && $arg{source}) || $arg{hint} eq "WEB") {
-       $arg{cmd} =~ s/^\s+|\s+$//g;        # no split & add to front of list
-       unshift(@$stack,{ runas  => $arg{runas},
-                         cmd    => $arg{cmd}, 
-                         source => ($arg{hint} eq "WEB") ? 0 : 1,
-                         multi  => ($multi eq undef) ? 0 : 1,
-                         match  => @arg{match},
-                         hint   => @arg{hint},
-                         self   => $cmdself,
-                       }
-              );
-       
-
-#       my %last;
-#       my $result = spin_run(\%last,
-#                             $arg{prog},
-#                             { runas  => $arg{runas},
-#                               cmd    => $arg{cmd}, 
-#                               source => ($arg{hint} eq "WEB") ? 0 : 1,
-#                               multi  => ($multi eq undef) ? 0 : 1
-#                             }
-#                            );   # run cmd
-    } elsif(defined $arg{child} && $arg{child}) {    # add to front of list
-       for my $i ( reverse balanced_split($arg{cmd},";",3,1) ) {
-          $i  =~ s/^\s+|\s+$//g;
-          unshift(@$stack,{runas  => $arg{runas},
-                           cmd    => $i,
-                           source => 0,
-                           multi  => ($multi eq undef) ? 0 : 1,
-                           match  => @arg{match},
-                           hint   => @arg{hint},
-                           self   => $cmdself,
-                          }
-                 );
-       }
-   } else {                                             # add to end of list
-       for my $i ( balanced_split($arg{cmd},";",3,1) ) {
-          $i  =~ s/^\s+|\s+$//g;
-          push(@$stack,{runas  => $arg{runas},
-                           cmd    => $i,
-                           source => 0,
-                           multi  => ($multi eq undef) ? 0 : 1,
-                           match  => @arg{match},
-                           hint   => @arg{hint},
-                           self   => $cmdself,
-                        }
-                 );
-        }
+   if(defined $arg{wild}) {
+      set_digit_variables($arg{self},$arg{prog},"",@{$arg{wild}}); # copy %0-%9
     }
-
-    if(defined $arg{wild}) {
-       set_digit_variables($arg{self},$arg{prog},"",@{$arg{wild}}); # copy %0-%9
-    }
-    
-    delete @{$arg{self}}{child};
-    return @arg{prog};
 }
+
 
 #
 # it was assumed that variables going into %0 - %9 should be
@@ -7347,209 +7270,105 @@ sub is_running
    }
 }
 
+sub mushrun_done
+{
+   my $prog = shift;
+   my $cost = ($$prog{command} + ($$prog{function} / 10)) / 128;
+   my $attr;
+
+   
+   if($cost > .5) {                                        # handle cost
+      if(defined $$prog{attr}) {
+         $attr = "#@{$$prog{attr}}{atr_owner}/@{$$prog{attr}}{atr_name} => ";
+      }
+      printf("Cost: %s%.3f pennies in %.3fs [%sc/%sf]\n",
+             $attr,
+             $cost,
+             $$prog{function_duration} + $$prog{command_duration},
+             nvl($$prog{command},0),
+             nvl($$prog{function},0)
+            );
+   }
+
+   if($$prog{hint} eq "WEBSOCKET") {
+      my $msg = join("",@{@$prog{output}});
+      $prog->{sock}->send_utf8(ansi_remove($msg));
+   } elsif($$prog{hint} eq "WEB") {
+      if(defined $$prog{output}) {
+         http_reply($$prog{sock},"%s",join("",@{@$prog{output}}));
+      } else {
+         http_reply($$prog{sock},"%s","No data returned");
+      }
+   }
+   close_telnet($prog);
+   delete @engine{$$prog{pid}};
+}
+
 #
 # spin
 #    Run one command from each program that is running
 #
 sub spin
 {
-   my (%last);
-   my $count = 0;
-
-   my $total = 0;
-   $SIG{ALRM} = \&spin_done;
-
    my $start = Time::HiRes::gettimeofday();
-   @info{engine} = {} if(!defined @info{engine});
+   my ($count,$pid);
 
-   if(memorydb) {
-      #
-      # dump database every hour
-      #
-      if(time()-@info{db_last_dump} > @info{"conf.backup_interval"}) {
-          @info{db_last_dump} = time();
-          my $self = obj(0);
-          mushrun(self   => $self,
-                  runas  => $self,
-                  source => 0,
-                  cmd    => "\@dump",
-                  from   => "ATTR",
-                  hint   => "ALWAYS_RUN"
-                 );
-      } elsif(time() - @info{"conf.freefind_last"} > 
-              @info{"conf.freefind_interval"}) {
-         #
-         # update free objects list every hour
-         #
-         @info{"conf.freefind_last"} = time();
-         if(!defined @info{"conf.freefind_interval"}) {
-            @info{"conf.freefind_interval"} = 86400;
-         }
-         my $self = obj(0);
-         mushrun(self   => $self,
-                 runas  => $self,
-                 source => 0,
-                 cmd    => "\@freefind",
-                 from   => "ATTR",
-                 hint   => "ALWAYS_RUN"
-                );
-      }
-   }
-
-   #
-   # update ban data every hour
-   #
-   if(!defined @info{httpd_ban_last_check} ||
-      (scalar localtime()) - @info{httpd_ban_last_check} > 3600) {
-      @info{httpd_ban_last_check} = scalar localtime();
-      manage_httpd_bans();
-   }
-
+   ualarm(8_000_000);                                 # err out at 8 seconds
    eval {
        local $SIG{__DIE__} = sub {
+          delete @engine{@info{current_pid}};
           printf("----- [ Crash REPORT@ %s ]-----\n",scalar localtime());
-          printf("User:     %s\nCmd:      %s\n",name($user),
-              @{@last{cmd}}{cmd});
-          if(defined @info{sql_last}) {
-             printf("LastSQL: '%s'\n",@info{sql_last});
-             printf("         '%s'\n",@info{sql_last_args});
-             delete @info{sql_last};
-             delete @info{sql_last_args};
-          }
           printf("%s",code("long"));
        };
 
-       ualarm(8_000_000);                              # die at 8 milliseconds
+      for $pid (sort {$a cmp $b} keys %engine) {
+         @info{current_pid} = $pid;
+         my $prog = @engine{$pid};
+         my $stack = $$prog{stack};
+         $count = 0;
+  
+         while($#$stack >= 0 && ++$count <= 100) {             # run 100 cmds
+            my $cmd = $$stack[0];
+            my $before = $#$stack;
 
-#      printf("PIDS: '%s'\n",join(',',keys %{@info{engine}}));
-      for my $pid (sort { $a cmp $b } keys %{@info{engine}}) {
-         my $thread = @{@info{engine}}{$pid};
-         my $program = @$thread[0];
-         my $command = $$program{stack};
-         @info{program} = @$thread[0];
-         $$program{pid} = $pid;
-
-         my $sc = $$program{calls};
-         $$program{cycles}++;
-         for(my $i=0;$#$command >= 0 && $$program{calls} - $sc <= 100;$i++) {
-            my $cmd = @$command[0];
-
-
-            #
-            # if any command envoke mushrun(), it becomes difficult to ensure
-            # the execution order. The way around this is to hide the current
-            # stack and add back commands added by mushrun to the original
-            # stack. This could be avoided if each command delt with the
-            # stack better. For ease of coding, i choose to fix it here
-            # instead of a billion other places.
-            #
-            my $tmp = $$program{stack};                 # hide original stack
-            $$program{stack} = [];                          # and add new one
-            my $stack = $$program{stack};
-
-            my $result = spin_run(\%last,$program,$cmd,$command);   # run cmd
-
-            shift(@$command) if($result ne "RUNNING");
-
-            my $stack = $$program{stack};            # copy back new commands
-            while($#$stack >= 0) {
-               unshift(@$command,pop(@$stack));
-            }
-            $$program{stack} = $tmp;                  # unhide original stack
-
-            # input() returned that there was no data. In a loop, the process
-            # probably will waste time checking for more no data. Because of
-            # this, we skip to the next program and hope there will be data
-            # later.
-            if($result eq "RUNNING" && defined $$program{idle}) {
-               delete @$program{idle};                # don't remove it and 
-               last;
-            }
-            
-
-            $$program{calls}++;
-            $count++;
-
-                                                # stop at 7 milliseconds
-            if(Time::HiRes::gettimeofday() - $start >= 1) {
-                printf("   Time slice ran long, exiting correctly [%d cmds]\n",
-                       $count);
-               return;
-            }
-         }
-         if($#$command == -1) { # program is done 
-            my $prog = shift(@$thread);
-
-            my $cost = ($$prog{command} + ($$prog{function} / 10)) / 128;
-
-            if($cost > .5) {
-               if(defined $$prog{attr}) {
-                   printf("Cost: #%s/%s => %.3f pennies in " .
-                          "%.3fs [%sc/%sf]\n",
-                          @{$$prog{attr}}{atr_owner},
-                          @{$$prog{attr}}{atr_name},
-                          $cost,
-                          $$prog{function_duration} + $$prog{command_duration},
-                          $$prog{command},$$prog{function}
-                         );
-#                   for my $key (grep {/^command_/i} keys %$prog) {
-#                      printf("   %s -> %s\n",,substr($key,8),$$prog{$key});
-#                   }
-               } else {
-                   printf("Cost: %.3f pennies in %.3fs [%sc/%sf]\n",
-                          $cost,
-                          $$prog{function_duration} + $$prog{command_duration},
-                          $$prog{command},$$prog{function}
-                         );
+            if(defined $$cmd{done}) {                  # cmd already finished
+               shift(@$stack);                           # safe to delete now
+               next;
+            } else {
+               my $result = spin_run($prog,$cmd);
+    
+               if($result ne "RUNNING") {                      # command done
+                  if($before == $#$stack) {             # stack didn't change
+                     shift(@$stack);                     # safe to delete cmd
+                  } else {                                   # stack changed,
+                     $$cmd{done} = 1;                   # !safe to delete now
+                  }
+               } elsif(defined $$prog{idle}) {                 # program idle
+                  delete @$prog{idle};
+                  last;
+               }
+               
+               if(Time::HiRes::gettimeofday() - $start >= 1) { # stop
+                  printf("   Time slice ran long, exiting correctly [%d cmds]\n",
+                         $count);
+                  mushrun_done($prog) if($#$stack == -1);     # program is done
+                  ualarm(0);
+                  return;
                }
             }
-
-            if($$prog{hint} eq "WEBSOCKET") {
-               my $msg = join("",@{@$prog{output}});
-               $prog->{sock}->send_utf8(ansi_remove($msg));
-           } elsif($$prog{hint} eq "WEB") {
-               if(defined $$prog{output}) {
-                  http_reply($$prog{sock},"%s",join("",@{@$prog{output}}));
-               } else {
-                  http_reply($$prog{sock},"%s","No data returned");
-               }
-            }
-            close_telnet($prog);
-            delete @{@info{engine}}{$pid};
-#            printf("# $pid Total calls: %s\n",$$prog{calls});
          }
+   
+         mushrun_done($prog) if($#$stack == -1);            # program is done
       }
-       ualarm(0);
    };
-#   printf("Count: $count\n");
-#   printf("Spin: finish -> $count\n");
-#   printf("Spin: finish -> %s [%s]\n",$count,Time::HiRes::gettimeofday() - $start) if $count > 1;
-#   printf("      total: '%s'\n",$total) if $count > 1;
-
+   ualarm(0);
 
    if($@ =~ /alarm/i) {
       printf("Time slice timed out (%2f w/%s cmd) $@\n",
          Time::HiRes::gettimeofday() - $start,$count);
-      if(defined @last{user} && defined @{@last{user}}{var}) {
-         my $var = @{@last{user}}{var};
-         printf("   #%s: %s (%s,%s,%s,%s,%s,%s,%s,%s,%s)\n",
-            @{@last{user}}{obj_id},@last{cmd},$$var{0},$$var{1},$$var{2},
-            $$var{3},$$var{4},$$var{5},$$var{6},$$var{7},$$var{8});
-      } else {
-         printf("   #%s: %s\n",@{@last{user}}{obj_id},@{@last{cmd}}{cmd});
-      }
-   } elsif($@) {                               # oops., you sunk my battle ship
-      my_rollback if(mysqldb);
-
-      my $msg = sprintf("%s CRASHed the server with: %s",name($user),
-          @{@last{cmd}}{cmd});
-      delete @info{engine};
-      necho(self => $user,
-            prog => prog($user,$user),
-            source => [ "%s", $msg ]
-           );
    }
 }
+
 
 #
 # run_internal
@@ -7573,13 +7392,12 @@ sub run_internal
       }
    }
 
-#   if($type) {
-#      printf("RUN: '%s%s'\n",$cmd,$arg);
-#   } else {
-#      printf("RUN: '%s %s (%s)'\n",$$hash{$cmd},$arg,code());
-#   }
-#   printf("RUN(%s->%s): '%s%s'\n",@{$$prog{created_by}}{obj_id},@{$$command{runas}}{obj_id},$cmd,$arg);
-
+#   printf("RUN(%s->%s): '%s%s'\n",
+#          @{$$prog{created_by}}{obj_id},
+#          @{$$command{runas}}{obj_id},
+#          substr($cmd.$arg,0,60),
+#          (length($cmd.$arg) > 60) ? "..." : ""
+#         );
  
    if(hasflag($$command{runas},"VERBOSE")) {
       my $owner= owner($$command{runas});
@@ -7621,29 +7439,11 @@ sub run_internal
 
 sub spin_run
 {
-   my ($last,$prog,$command,$foo) = @_;
+   my ($prog,$command,$foo) = @_;
    my $self = $$command{runas};
    my ($cmd,$hash,$arg,%switch);
-   ($$last{user},$$last{cmd}) = ($self,$command);
    $$prog{cmd_last} = $command;
 
-#   # find command set to use
-#      if($$command{hint} eq "ALWAYS_RUN") {
-#         $hash = \%command;                                    # connected users
-#      } elsif($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") {
-#         if(defined $$prog{from} && $$prog{from} eq "ATTR") {
-#            $hash = \%command;
-#         } else {
-#            $hash = \%switch;                                      # no commands
-#         }
-#      } elsif($$prog{hint} eq "INTERNAL" || $$prog{hint} eq "WEB") {
-#         $hash = \%command;
-#   #      delete @$prog{hint};
-#      } elsif(hasflag($self,"PLAYER") && !loggedin($self)) {
-#         $hash = \%offline;                                     # offline users
-#      } else {
-#         $hash = \%command;                                    # connected users
-#      }
 
    if($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") {
       if(defined $$prog{from} && $$prog{from} eq "ATTR") {
@@ -7655,7 +7455,7 @@ sub spin_run
       $hash = \%command;
    }
 
-   if($$command{cmd} =~ /^\s*([^ \/]+)/) {         # split cmd from args
+   if($$command{cmd} =~ /^\s*([^ \/]+)/s) {         # split cmd from args
       ($cmd,$arg) = (lc($1),$'); 
    } else {
       return;                                                 # only spaces
@@ -7686,17 +7486,6 @@ sub spin_run
       return 1;                                   # mush_command runs command
    } else {
       my $match;
-
-#      for my $key (keys %$hash) {              #  find partial unique match
-#         if(substr($key,0,length($cmd)) eq $cmd) {
-#            if($match eq undef) {
-#               $match = $key;
-#            } else {
-#               $match = undef;
-#               last;
-#            }
-#         }
-#      }
 
       if($match ne undef && lc($cmd) ne "q") {                  # found match
          return run_internal($hash,$match,$command,$prog,$arg);
@@ -11559,22 +11348,29 @@ sub code
       }
       return join(',',@stack);
    } else {
-      for my $line (split(/\n/,Carp::shortmess)) {
-         if($line =~ /called at ([^ ]+) line (\d+)\s*$/) {
-            my ($before,$fun,$ln) = ($`,$1,$2);
-     
-            if(defined $$prev{$fun}) {
-               push(@stack,
-                    $before . "on line " . 
-                    (@{$$prev{$fun}}{ln} + $2)
-                   );
-            } else {
-               push(@stack,$line);
-            }
-         }
-      }
-      return join("\n",@stack);
+      return renumber_code(Carp::shortmess);
    }
+}
+
+#
+# renumber_code
+#    Look for line number references in the provided text and massage
+#    them into the correct line number.
+#
+sub renumber_code
+{
+   my @out;
+
+   my $prev = @info{source_prev};
+
+   for my $line (split(/\n/,shift)) {
+      if($line =~ / at ([^ ]+) line (\d+)/ && defined $$prev{$1}) {
+         push(@out,"$` at $1 line " . ($2 + @{$$prev{$1}}{ln}));
+      } else {
+         push(@out,$line);
+      }
+   }
+   return join("\n",@out);
 }
 
 
@@ -11619,18 +11415,18 @@ sub evaluate_substitutions
          if(!defined $$prog{cmd}) {
             $out .= "#" . $$self{obj_id};
          } else {
-            $out .= "#" . @{@{$$prog{cmd}}{self}}{obj_id};
+            $out .= "#" . @{@{$$prog{cmd}}{invoker}}{obj_id};
          }
       } elsif(lc($seq) eq "%n") {                          # current dbref
          if(!defined $$prog{cmd}) {
             $out .= name($self);
          } else {
-            $out .= name(@{@{$$prog{cmd}}{self}}{obj_id});
+            $out .= name(@{@{$$prog{cmd}}{invoker}}{obj_id});
          }
       } elsif($seq =~ /^%m([0-9])$/) {
          if(defined $$prog{cmd} && 
-            defined @{$$prog{cmd}}{match}) {
-            $out .= @{@{$$prog{cmd}}{match}}{$1};
+            defined @{$$prog{cmd}}{mdigits}) {
+            $out .= @{@{$$prog{cmd}}{mdigits}}{$1};
          }
       } elsif($seq =~ /^%([0-9])$/ || $seq =~ /^%\{([^}]+)\}$/) {  # temp vars
          if($1 eq "hostname") {
@@ -11982,10 +11778,10 @@ sub necho
    my $self = $arg{self};
    my $loc;
 
-   if($arg{self} eq undef) {
-      printf("%s\n",print_var(\%arg));
-      printf("%s\n",code("long"));
-   }
+#   if($arg{self} eq undef) {
+#      printf("%s\n",print_var(\%arg));
+#      printf("%s\n",code("long"));
+#   }
 
    if(loggedin($self)) {
       # skip checks for non-connected players
@@ -13106,7 +12902,7 @@ sub obj
    } else {
       if($id !~ /^\s*\d+\s*$/) {
          printf("ID: '%s' -> '%s'\n",$id,code());
-#         die();
+         die();
       }
       return { obj_id => $id };
    }
@@ -14454,9 +14250,9 @@ __EOF__
 
    # main loop;
    while(1) {
-      eval {
+#      eval {
          server_handle_sockets();
-      };
+#      };
       if($@){
          printf("Server Crashed, minimal details [main_loop]\n");
          if(mysqldb) {

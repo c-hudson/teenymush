@@ -986,10 +986,8 @@ sub cmd_while
    my ($self,$prog,$txt) = @_;
    my (%last,$first);
 
-   if(defined $$prog{nomushrun}) {
-      out($prog,"#-1 \@WHILE is not a valid command to use in RUN function");
-      return;
-   }
+   in_run_function($prog) &&
+      return out($prog,"#-1 \@WHILE can not be called from RUN function");
 
    my $cmd = $$prog{cmd_last};
 
@@ -1008,9 +1006,9 @@ sub cmd_while
        printf("#*****# while exceeded maxium loop of 1000, stopped\n");
        return err($self,$prog,"while exceeded maxium loop of 1000, stopped");
     } elsif(test($self,$prog,$$cmd{while_test})) {
+#       printf("%s\n",print_var($prog));
        mushrun(self   => $self,
                prog   => $prog,
-               runas  => $self,
                source => 0,
                cmd    => $$cmd{while_cmd},
                child  => 1
@@ -1383,7 +1381,7 @@ sub cmd_trigger
               runas  => $target,
               source => 0,
               cmd    => $$attr{value},
-              child  => 1,
+              child  => 0,
               wild   => [ @wild ],
              );
    } else {
@@ -1661,18 +1659,25 @@ sub cmd_ps
       $prog = @engine{$pid};
 
       if(defined $$prog{stack} && ref($$prog{stack}) eq "ARRAY") {
-         my $cmd = @{$$prog{stack}}[0];
-
          necho(self   => $self,
                prog   => $prog,
-               source => [ "  PID: %s for %s\n     %s%s",
-                           $pid,
-                           obj_name($self,$$prog{created_by}),
-                           substr(single_line($$cmd{cmd}),0,64),
-                           (length(single_line($$cmd{cmd})) > 67) ? "..." : ""
+               source => [ "  PID: %s for %s",
+                              $pid,
+                              obj_name($self,$$prog{created_by})
                          ]
-
-               );
+              );
+         for my $i (0 .. $#{$$prog{stack}}) {
+            my $cmd = @{$$prog{stack}}[$i];
+   
+            necho(self   => $self,
+                  prog   => $prog,
+                  source => [ "    '%s%s'",
+                              substr(single_line($$cmd{cmd}),0,64),
+                              (length(single_line($$cmd{cmd})) > 67)?"..." : ""
+                            ]
+   
+                  );
+         }
       }
    }
    necho(self   => $self,                           # target's room
@@ -1692,11 +1697,11 @@ sub cmd_halt
    my $count = 0;
 
    for my $pid (keys %engine) {                          # look at each pid
-      $prog = @engine{$pid};
+      my $program = @engine{$pid};
 
       # kill only your stuff but not the halt command
-      if($$prog{pid} != $pid && $$obj{obj_id} == @{$$prog{created_by}}{obj_id}){
-         my $cmd = @{$$prog{stack}}[0];
+      if($$prog{pid} != $pid && $$obj{obj_id} == @{$$program{created_by}}{obj_id}){
+         my $cmd = @{$$program{stack}}[0];
          necho(self => $self,
                prog => $prog,
                source => [ "Pid %s stopped : %s%s" ,
@@ -1705,7 +1710,8 @@ sub cmd_halt
                            (length(single_line($$cmd{cmd})) > 40) ? "..." : ""
                          ]
               );
-         close_telnet($$prog{socket_id});
+
+         close_telnet($program);
          delete @engine{$pid};
          $count++;
       }
@@ -1798,7 +1804,7 @@ sub cmd_freefind
    my ($self,$prog,$type) = @_;
    my ($file,$start);
 
-   if(defined $$prog{nomushrun}) {
+   if(!in_run_function($prog)) {
       return out($prog,"#-1 \@freefind can not be run in RUN function");
    } elsif(!hasflag($self,"WIZARD") && !hasflag($self,"GOD")) {
       return err($self,$prog,"Permission denied.");
@@ -1844,9 +1850,8 @@ sub cmd_dump
    my ($self,$prog,$type) = @_;
    my ($file,$start);
 
-   if(defined $$prog{nomushrun}) {
-      out($prog,"#-1 \@DUMP is not a valid command to use in RUN function");
-      return;
+   if(!in_run_function($prog)) {
+      return out($prog,"#-1 \@DUMP can not be called from RUN function");
    } elsif(!hasflag($self,"WIZARD") && !hasflag($self,"GOD")) {
       return err($self,$prog,"Permission denied.");
    } elsif(mysqldb) {
@@ -1937,50 +1942,22 @@ sub cmd_dump
    }
 }
 
-   
+  
+sub show_stack
+{ 
+   my ($prog,$txt) = @_;
 
-# cmd_while
-#    Loop while the expression is true
-#
-sub cmd_while
-{
-   my ($self,$prog,$txt) = @_;
-   my (%last,$first);
-
-   if(defined $$prog{nomushrun}) {
-      out($prog,"#-1 \@WHILE is not a valid command to use in RUN function");
-      return;
+   if($txt ne undef) {
+      printf("---[ start ]---- [%s]\n",$txt);
+   } else {
+      printf("---[ start ]----\n",$txt);
    }
-
-   my $cmd = $$prog{cmd_last};
-
-   if(!defined $$cmd{while_test}) {                 # initialize "loop"
-        $first = 1;
-        if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*$/s) {
-           ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
-           $$cmd{while_cmd} = $2;
-        } else {
-           return err($self,$prog,"usage: while (<expression>) { commands }");
-        }
-    }
-    $$cmd{while_count}++;
-
-    if($$cmd{while_count} >= 1000) {
-       printf("#*****# while exceeded maxium loop of 1000, stopped\n");
-       return err($self,$prog,"while exceeded maxium loop of 1000, stopped");
-    } elsif(test($self,$prog,$$cmd{while_test})) {
-       mushrun(self   => $self,
-               prog   => $prog,
-               runas  => $self,
-               source => 0,
-               cmd    => $$cmd{while_cmd},
-               child  => 1
-              );
-       return "RUNNING";
-    }
+   for my $i (0 .. $#{$$prog{stack}}) {
+      my $cmd = @{$$prog{stack}}[$i];
+      printf("   %3s[%s] : %s\n",$i,defined $$cmd{done} ? 1 : 0,substr($$cmd{cmd},0,40));
+   }
+   printf("---[  end  ]----\n");
 }
-
-
 
 sub max_args
 {
@@ -2005,6 +1982,7 @@ sub out
       my $stack = $$prog{output};
       push(@$stack,sprintf($fmt,@args));
    }
+   return undef;
 }
 
 sub verify_switches
@@ -2036,10 +2014,8 @@ sub cmd_dolist
    my $cmd = $$prog{cmd_last};
    my ($delim, %last);
 
-   if(defined $$prog{nomushrun}) {
-      out($prog,"#-1 \@DOLIST is not a valid command to use in RUN function");
-      return;
-   }
+   in_run_function($prog) &&
+      return out($prog,"#-1 \@DOLIST can not be called from RUN function");
 
    verify_switches($self,$prog,$switch,"delimit") || return;
 
@@ -2184,10 +2160,8 @@ sub cmd_sleep
 {
    my ($self,$prog,$txt) = @_;
 
-   if(defined $$prog{nomushrun}) {
-      out($prog,"#-1 \@SLEEP is not a valid command to use in RUN function");
-      return;
-   }
+   in_run_function($prog) &&
+      return out($prog,"#-1 \@SLEEP can not be called from RUN function");
 
    my $cmd = $$prog{cmd_last};
 
@@ -2465,7 +2439,6 @@ sub cmd_switch
              if($1 eq ">" && $first > $' || $1 eq "<" && $first < $') {
                 return mushrun(self   => $self,
                                prog   => $prog,
-                               runas  => $self,
                                source => 0,
                                child  => 1,
                                cmd    => $cmd,
@@ -2476,7 +2449,6 @@ sub cmd_switch
                 if($first =~ /$pat/) {
                    mushrun(self   => $self,
                            prog   => $prog,
-                           runas  => $self,
                            source => 0,
                            cmd    => $cmd,
                            child  => 1,
@@ -2492,13 +2464,13 @@ sub cmd_switch
        } else {
           @list[0] = $1 if(@list[0] =~ /^\s*{(.*)}\s*$/);
           @list[0] =~ s/\r|\n//g;
-          return mushrun(self   => $self,
-                         prog   => $prog,
-                         runas  => $self,
-                         source => 0,
-                               child  => 1,
-                         cmd    => @list[0],
-                        );
+          mushrun(self   => $self,
+                  prog   => $prog,
+                  source => 0,
+                  child  => 1,
+                  cmd    => @list[0],
+                 );
+          return;
        }
     }
 }
@@ -3179,6 +3151,7 @@ sub cmd_pemit
               );
       }
    } else {
+      printf("   pemit: SYNTAX\n");
       err($self,$prog,"syntax: \@pemit <object> = <message>");
    }
 }
@@ -4364,10 +4337,11 @@ sub cmd_connect
       if(@info{"conf.master"} ne undef) {
          for my $obj (lcon(@info{"conf.master"}),$player) {
             if(($atr = get($obj,"ACONNECT")) && $atr ne undef){
-               mushrun(self   => $self,                 # handle aconnect
-                       runas  => $self,
-                       source => 0,
-                       cmd    => $atr
+               mushrun(self    => $self,                 # handle aconnect
+                       runas   => $self,
+                       invoker => $self,
+                       source  => 0,
+                       cmd     => $atr
                       );
             }
          }
@@ -4460,10 +4434,8 @@ sub cmd_set
       return err($self,$prog,"Permission Denied.");
     } elsif($txt =~ /^\s*([^ =]+?)\s*\/\s*([^ =]+?)\s*=(.*)$/s) { # attribute
       if(@{$$prog{cmd}}{source} == 1) {                          # user input
-         printf("CMD_SET: no eval\n");
          ($name,$attr) = ($1,$2);
       } else {                                               # non-user input
-         printf("CMD_SET: evalled\n");
          ($name,$attr) = (evaluate($self,$prog,$1),evaluate($self,$prog,$2));
       }
       
@@ -7027,11 +6999,12 @@ sub run_container_commands
                   mushrun(self   => $self,
                           prog   => $prog,
                           runas  => $obj,
-                          source => 0,
+                          invoker=> $self,
                           cmd    => single_line($$hash{atr_value}),
                           wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ],
                           from   => "ATTR",
                           attr   => $hash,
+                          source => 0,
                           cmdself=> $self
                          );
                   $match=1;                       # signal mush command found
@@ -7120,6 +7093,12 @@ sub mushrun_add_cmd
    my $prog = @$arg{prog};
    my $stack = $$prog{stack};
 
+   if($$arg{invoker} eq undef) {
+       printf("### NO INVOKE: '%s'\n",code());
+       if($cmd =~ /^\s*\@while/) {
+#          printf("%s\n",print_var($prog));
+       }
+   }
    my $data = { runas   => $$arg{runas},
                 cmd     => $cmd,
                 source  => $$arg{source},
@@ -7132,6 +7111,54 @@ sub mushrun_add_cmd
       unshift(@$stack,$data);
    } else {
       push(@$stack,$data);
+   }
+}
+
+sub multiline
+{
+   my ($arg,$multi) = @_;
+
+   # handle multi-line && command
+   if($$arg{source} == 1 && $multi eq undef) {
+      if($$arg{cmd} =~ /^\s*&&([^& =]+)\s+([^ =]+)\s*= *(.*?) *$/) {
+         @{@connected{@{$$arg{self}}{sock}}}{inattr} = {
+            attr    => $1,
+            object  => $2,
+            content => ($3 eq undef) ? [] : [ $3 ],
+            prog    => $$arg{prog},
+         };
+         return 1;
+      }
+   } elsif($$arg{source} == 1 && $multi ne undef) {
+      my $stack = $$multi{content};
+      if($$arg{cmd} =~ /^\s*$/) {                                # attr is done
+         $$arg{cmd} = "&$$multi{attr} $$multi{object}=" . join("\r\n",@$stack);
+         delete @{$connected{@{$$arg{self}}{sock}}}{inattr};
+         return 0;
+      } elsif($$arg{cmd} =~  /^\s*\.\s*$/) {                       # blank line
+         push(@$stack,"");
+         return 1;
+      } else {                                          # another line of atr
+         push(@$stack,$$arg{cmd});
+         return 1;
+      }
+   };
+   return 0;
+}
+
+
+#
+# in_run_function
+#   Determine if the run() function has already been called or not.
+#
+sub in_run_function
+{
+   my $prog = shift;
+
+   if(defined $$prog{output} && defined $$prog{nomushrun} && $$prog{nomushrun}){
+      return 1;
+   } else {
+      return 0;
    }
 }
 
@@ -7148,8 +7175,9 @@ sub mushrun
 
    # initialize variables.
    my $multi = inattr(@arg{self},@arg{source});              # multi-line attr
-   @arg{invoker} = @arg{self} if(@arg{invoker} eq undef); 
    @arg{match} = {} if(!defined @arg{match});
+   @arg{runas} = @arg{self} if !defined @arg{runas};
+   @arg{source} = 0 if(@arg{hint} eq "WEB");
 
    if(!$multi) {
       return if($arg{cmd} =~ /^\s*$/);
@@ -7161,49 +7189,46 @@ sub mushrun
       @arg{prog} = $prog;
       @engine{++$info{pid}} = $prog;                    # add to process list
       $$prog{pid} = $info{pid};
+   } else {                                                   # existing prog
+      $prog = @arg{prog};
+      if(!defined $$prog{pid}) {
+         @engine{++$info{pid}} = $prog;                 # add to process list
+         $$prog{pid} = $info{pid};
+      }
    }
    
-   $$prog{attr} = @arg{attr} if(defined @arg{attr});     # attr this came from
-   $$prog{sock} = @arg{sock} if(defined @arg{sock} && !defined $$prog{sock});
 
-   # prevent RUN() from adding commands into the queue
-   if(defined $$prog{output} &&
-      defined $$prog{nomushrun} &&
-      $$prog{nomushrun}) {
+   if(!defined @arg{invoker}) {              # handle who issued the command
+      if(defined $$prog{cmd_last} && defined @$prog{cmd_last}->{invoker}) {
+         @arg{invoker} = @$prog{cmd_last}->{invoker};
+#         printf("     INVOKER1: '%s'\n",@arg{invoker});
+      } elsif(defined $$prog{invoker}) {
+         @arg{invoker} = $$prog{invoker};
+#         printf("     INVOKER2: '%s'\n",@arg{invoker});
+      } else {
+         printf("     INVOKER: NONE\n",@arg{invoker});
+      }
+    } else {
+#         printf("     INVOKER: ALREADY SET\n",@arg{invoker});
+    }
+
+   # copy over program level data
+   for my $i ("hint", "attr", "sock", "output", "from") {
+      if(defined @arg{$i} && !defined $$prog{$i}) {
+         $$prog{$i} = @arg{$i};
+      }
+   }
+
+   if(in_run_function($prog)) {
       my $stack = $$prog{stack};
       push(@$stack,"#-1 Not a valid command inside RUN function");
       return;
-   }
-
-   # handle multi-line && command
-   if($arg{source} == 1 && $multi eq undef) {
-      if($arg{cmd} =~ /^\s*&&([^& =]+)\s+([^ =]+)\s*= *(.*?) *$/) {
-         @{@connected{@{$arg{self}}{sock}}}{inattr} = {
-            attr    => $1,
-            object  => $2,
-            content => ($3 eq undef) ? [] : [ $3 ],
-            prog    => $arg{prog},
-         };
-         return;
-      }
-   } elsif($arg{source} == 1 && $multi ne undef) {
-         my $stack = $$multi{content};
-      if($arg{cmd} =~ /^\s*$/) {                                # attr is done
-         @arg{cmd} = "&$$multi{attr} $$multi{object}=" . join("\r\n",@$stack);
-         delete @{$connected{@{$arg{self}}{sock}}}{inattr};
-      } elsif($arg{cmd} =~  /^\s*\.\s*$/) {                       # blank line
-         push(@$stack,"");
-         return;
-      } else {                                          # another line of atr
-         push(@$stack,$arg{cmd});
-         return;
-      }
-   };
-
-   if(@arg{source} == 1) {                         # from user input, no split
+   } elsif(multiline(\%arg,$multi)) {          # multiline handled in function
+      return;
+   } elsif(@arg{source} == 1) {                    # from user input, no split
       mushrun_add_cmd(@arg{cmd},\%arg);
    } else {                                   # non-user input, slice and dice
-      for my $cmd ( balanced_split(@arg{cmd},";",3,1) ) {
+      for my $cmd ( reverse balanced_split(@arg{cmd},";",3,1) ) {
          mushrun_add_cmd($cmd,\%arg);
       }
    }
@@ -7304,6 +7329,11 @@ sub mushrun_done
    delete @engine{$$prog{pid}};
 }
 
+sub spin_done
+{
+    die("alarm");
+}
+
 #
 # spin
 #    Run one command from each program that is running
@@ -7313,12 +7343,14 @@ sub spin
    my $start = Time::HiRes::gettimeofday();
    my ($count,$pid);
 
-   ualarm(8_000_000);                                 # err out at 8 seconds
+   $SIG{ALRM} = \&spin_done;
+
    eval {
+       ualarm(8_000_000);                              # err out at 8 seconds
        local $SIG{__DIE__} = sub {
           delete @engine{@info{current_pid}};
           printf("----- [ Crash REPORT@ %s ]-----\n",scalar localtime());
-          printf("%s",code("long"));
+          printf("%s\n",code("long"));
        };
 
       for $pid (sort {$a cmp $b} keys %engine) {
@@ -7360,8 +7392,8 @@ sub spin
    
          mushrun_done($prog) if($#$stack == -1);            # program is done
       }
+      ualarm(0);
    };
-   ualarm(0);
 
    if($@ =~ /alarm/i) {
       printf("Time slice timed out (%2f w/%s cmd) $@\n",
@@ -7385,6 +7417,7 @@ sub run_internal
    return if($$hash{cmd} =~ /^CODE\(.*\)$/);
 
    $$prog{cmd} = $command;
+#   printf("CMD:\n%s\n",print_var($command));
    if(length($cmd) ne 1) {
       while($arg =~ /^\/([^ =]+)( |$)/) {                  # find switches
          @switch{lc($1)} = 1;
@@ -7496,12 +7529,6 @@ sub spin_run
    return 1;
 }
 
-
-
-sub spin_done
-{
-    die("alarm");
-}
 
 #
 # signal_still_running
@@ -10636,7 +10663,7 @@ sub balanced_split
    }
 
    if($type == 3) {
-      push(@stack,substr($txt,$last));
+      push(@stack,substr($txt,$last)) if(substr($txt,$last) !~ /^\s*$/);
       return @stack;
    } else {
       unshift(@stack,substr($txt,$last));
@@ -10867,7 +10894,7 @@ sub http_error
    http_out($s,"}");
    http_out($s,"</style>");
    http_out($s,"<center><h1 class=big>404</h1><hr>#-1 Page Not Found</center>");
-   http_out($s,"<center>$fmt</center>",@args);
+   http_out($s,"<center>%s - $fmt</center>",code(),@args);
    http_disconnect($s);
 }
 
@@ -10993,6 +11020,7 @@ sub http_process_line
             printf("   %s\@web [%s]\n",$addr,$$data{get});
             my $prog = mushrun(self   => $self,
                                runas  => $self,
+                               invoker=> $self,
                                source => 0,
                                cmd    => $$data{get},
                                hint   => "WEB",
@@ -11587,7 +11615,8 @@ sub handle_listener
             $$hash{atr_regexp} =~ s/^\(\?msix/\(\?msx/; # make case sensitive
             if($msg =~ /$$hash{atr_regexp}/) {
                mushrun(self   => $self,
-                       runas => $obj,
+                       runas  => $obj,
+                       prog   => $prog,
                        cmd    => $$hash{atr_value},
                        wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
                        source => 0,
@@ -11597,7 +11626,8 @@ sub handle_listener
             }
          } elsif($msg =~ /$$hash{atr_regexp}/i) {
             mushrun(self   => $self,
-                    runas => $obj,
+                    runas  => $obj,
+                    prog   => $prog,
                     cmd    => $$hash{atr_value},
                     wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
                     source => 0,
@@ -13844,6 +13874,7 @@ sub server_process_line
                io($user,1,$input);
                return mushrun(self   => $user,
                               runas  => $user,
+                              invoker=> $user,
                               source => 1,
                               cmd    => $input,
                              );
@@ -13930,7 +13961,7 @@ sub get_free_port
 #
 sub server_handle_sockets
 {
-#   eval {
+   eval {
          local $SIG{__DIE__} = sub {
             printf("----- [ Crash Report@ %s ]-----\n",scalar localtime());
             printf("User:     %s\nCmd:      %s\n",name($user),$_[0]);
@@ -14026,7 +14057,7 @@ sub server_handle_sockets
 
      spin();
 
-#   };
+   };
    if($@){
       printf("Server Crashed, minimal details [main_loop]\n");
 
@@ -14250,9 +14281,9 @@ __EOF__
 
    # main loop;
    while(1) {
-#      eval {
+      eval {
          server_handle_sockets();
-#      };
+      };
       if($@){
          printf("Server Crashed, minimal details [main_loop]\n");
          if(mysqldb) {
@@ -14451,4 +14482,8 @@ sub websock_wall
    }
 }
 
+while(1) {
+eval {
 main();                                                   #!# run only once
+};
+}

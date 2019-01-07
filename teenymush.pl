@@ -1006,7 +1006,6 @@ sub cmd_while
        printf("#*****# while exceeded maxium loop of 1000, stopped\n");
        return err($self,$prog,"while exceeded maxium loop of 1000, stopped");
     } elsif(test($self,$prog,$$cmd{while_test})) {
-#       printf("%s\n",print_var($prog));
        mushrun(self   => $self,
                prog   => $prog,
                source => 0,
@@ -1369,9 +1368,9 @@ sub cmd_trigger
 
       for my $i (balanced_split($',',',2)) {             # split param list
          if($last eq undef) {
-            $last = evaluate($self,$prog,$i);
+            $last = $i;
          } else {
-            push(@wild,evaluate($self,$prog,$i));
+            push(@wild,$i);
          }
       }
       push(@wild,$last) if($last ne undef);
@@ -1381,7 +1380,7 @@ sub cmd_trigger
               runas  => $target,
               source => 0,
               cmd    => $$attr{value},
-              child  => 0,
+              child  => 2,
               wild   => [ @wild ],
              );
    } else {
@@ -1564,57 +1563,72 @@ sub cmd_var
 sub cmd_boot
 {
    my ($self,$prog,$txt,$switch) = @_;
+   my $boot = 0;
 
-   if(hasflag($self,"WIZARD")) {
+   if(hasflag($self,"GUEST")) {
+      return err($self,$prog,"Permission denied.");
+   }
+      
+   my $god = hasflag($self,"GOD");
    
-      $txt =~ s/^\s+|\s+$//g;
-      if(defined $$switch{port} && $txt !~ /^\d+$/) {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "Port numbers must be numeric." ]
-              );
-      }
+   $txt =~ s/^\s+|\s+$//g;
+   if(defined $$switch{port} && $txt !~ /^\d+$/) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Port numbers must be numeric." ]
+           );
+      return;
+   }
 
-      for my $key (keys %connected) {
-         my $hash = @connected{$key};
-   
-         if((defined $$switch{port} && $$hash{port} == $txt) ||
-            (!defined $$switch{port} && lc($$hash{obj_name}) eq lc($txt))) {
+   for my $key (keys %connected) {
+      my $hash = @connected{$key};
 
-            if(!defined $$hash{obj_id}) {
-               necho(self   => $self,
-                     target => $hash,
-                     prog   => $prog,
-                     source => [ "You \@booted port %s off!", $$hash{port} ],
-                    );
-            } else {
-               necho(self   => $self,
-                     target => $hash,
-                     prog   => $prog,
-                     target => [ $hash, "%s has \@booted you.", name($self)],
-                     source => [ "You \@booted %s off!", obj_name($self,$hash)],
-                     room   => [ $hash, "%s has been \@booted.",name($hash) ],
-                    );
-            }
-         
-            my $sock=$$hash{sock};
-            server_disconnect($sock);
-            return;
+      if(!$god && hasflag(@connected{$key},"GOD") ||
+         !controls($self,@connected{$key})) {
+         # god can not be booted by non-god. 
+         # must control the object to boot it
+
+         # skip
+      } elsif((defined $$switch{port} && $$hash{port} == $txt) ||
+         (!defined $$switch{port} && lc($$hash{obj_name}) eq lc($txt))) {
+
+         if(defined $$switch{port}) {
+            necho(self   => $self,
+                  target => $hash,
+                  prog   => $prog,
+                  source => [ "You \@booted port %s off!", $$hash{port} ],
+                 );
+         } else {
+            necho(self   => $self,
+                  target => $hash,
+                  prog   => $prog,
+                  target => [ $hash, "%s has \@booted you.", name($self)],
+                  source => [ "You \@booted %s off!", obj_name($self,$hash)],
+                  room   => [ $hash, "%s has been \@booted.",name($hash) ],
+                 );
          }
+         
+         my $sock=$$hash{sock};
+         server_disconnect($sock);
+         $boot++;
       }
-      if(defined $$switch{port}) {
-         necho(self   => $self,                           # target's room
-               prog   => $prog,
-               source => [ "Unknown port specified." ],
-              );
-      } else {
-         necho(self   => $self,                           # target's room
-               prog   => $prog,
-               source => [ "Unknown person specified." ],
-              );
-      }
+   }
+
+   if(defined $$switch{port} && $boot == 0) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Unknown port specified." ],
+           );
+   } elsif($boot == 0) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Unknown connected person specified." ],
+           );
    } else {
-      return err($self,$prog,"Permission Denied.");
+      necho(self   => $self,                           # target's room
+            prog   => $prog,
+            source => [ "Unknown connected person/port specified." ],
+           );
    }
 }
 
@@ -1625,19 +1639,29 @@ sub cmd_killpid
    if(!hasflag($self,"WIZARD")) {
       return err($self,$prog,"Permission Denied.");
    } elsif($txt =~ /^\s*(\d+)\s*$/) {
-      if(defined @engine{$1}) {
-         delete @engine{$1};
-         necho(self   => $self,                           # target's room
-               prog   => $prog,
-               source => [ "PID '%s' has been killed", $1 ],
-              );
-      } else {
+      if(!defined @engine{$1}) {
          necho(self   => $self,                           # target's room
                prog   => $prog,
                source => [ "PID '%s' does not exist.", $1 ],
               );
+      } elsif(hasflag(@engine{$1}->{created_by},"GOD") &&
+              !hasflag($self,"GOD")) {
+         necho(self   => $self,                           # target's room
+               prog   => $prog,
+               source => [ "Permission denied, pid $1 owned by a GOD." ],
+              );
+      } elsif(!controls($self,@engine{$1}->{created_by})) {
+         necho(self   => $self,                           # target's room
+               prog   => $prog,
+               source => [ "Permission denied, you do not control pid $1." ],
+              );
+      } else {
+         delete @engine{$1};
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "PID '%s' has been killed", $1 ],
+              );
       }
-
    } else {
       necho(self   => $self,                           # target's room
             prog   => $prog,
@@ -1656,18 +1680,27 @@ sub cmd_ps
         );
 
    for my $pid (keys %engine) {
-      $prog = @engine{$pid};
+      my $p = @engine{$pid};
+      $$p{command} = 0 if !defined $$prog{command};
+      $$p{function} = 0 if !defined $$p{function};
 
-      if(defined $$prog{stack} && ref($$prog{stack}) eq "ARRAY") {
+      if(defined $$p{stack} && ref($$p{stack}) eq "ARRAY" &&
+         controls($self,$$p{created_by}) &&
+         (!hasflag($$p{created_by},"GOD") || hasflag($self,"GOD"))) {
+         # can only see processes they control
+         # non-gods can not see god processes
+
          necho(self   => $self,
                prog   => $prog,
-               source => [ "  PID: %s for %s",
+               source => [ "  PID: %s for %s [%sc/%sf]",
                               $pid,
-                              obj_name($self,$$prog{created_by})
+                              obj_name($self,$$p{created_by}),
+                              $$p{command},
+                              $$p{function}
                          ]
               );
-         for my $i (0 .. $#{$$prog{stack}}) {
-            my $cmd = @{$$prog{stack}}[$i];
+         for my $i (0 .. $#{$$p{stack}}) {
+            my $cmd = @{$$p{stack}}[$i];
    
             necho(self   => $self,
                   prog   => $prog,
@@ -1696,11 +1729,14 @@ sub cmd_halt
    my $obj = owner($self);
    my $count = 0;
 
+   my $iswiz = hasflag($self,"WIZARD");
+
    for my $pid (keys %engine) {                          # look at each pid
       my $program = @engine{$pid};
 
       # kill only your stuff but not the halt command
-      if($$prog{pid} != $pid && $$obj{obj_id} == @{$$program{created_by}}{obj_id}){
+      if($$prog{pid} != $pid && 
+         ($$obj{obj_id} == @{$$program{created_by}}{obj_id} || $iswiz)) {
          my $cmd = @{$$program{stack}}[0];
          necho(self => $self,
                prog => $prog,
@@ -1942,7 +1978,11 @@ sub cmd_dump
    }
 }
 
-  
+ 
+#
+# show_stack
+#    print out the stack to the console for a program
+#
 sub show_stack
 { 
    my ($prog,$txt) = @_;
@@ -1954,7 +1994,11 @@ sub show_stack
    }
    for my $i (0 .. $#{$$prog{stack}}) {
       my $cmd = @{$$prog{stack}}[$i];
-      printf("   %3s[%s] : %s\n",$i,defined $$cmd{done} ? 1 : 0,substr($$cmd{cmd},0,40));
+      printf("   %3s[%s] : %s\n",
+             $i,
+             defined $$cmd{done} ? 1 : 0,
+             substr(single_line($$cmd{cmd}),0,40)
+            );
    }
    printf("---[  end  ]----\n");
 }
@@ -2115,7 +2159,7 @@ sub cmd_password
             db_set($self,"obj_password",mushhash($2));
             necho(self   => $self,
                   prog   => $prog,
-                  source => [ "Passworld changed." ],
+                  source => [ "Password changed." ],
                  );
          }
       } else {                                                      # mysql
@@ -2249,11 +2293,11 @@ sub read_atr_config
 
 sub cmd_read
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$flag) = @_;
    my ($file, $data, $name);
    my $count = 0;
 
-   if(!hasflag($self,"WIZARD")) {
+   if(!hasflag($self,"WIZARD") && !$flag) {
       necho(self   => $self,
             prog   => $prog,
             source => [ "Permission denied." ],
@@ -2435,7 +2479,7 @@ sub cmd_switch
           my $cmd = shift(@list);
           $cmd =~ s/^[\s\n]+//g;
           $txt =~ s/^\s+|\s+$//g;
-          if($txt =~ /^\s*(<|>)\s*/) {
+          if($txt =~ /^\s*(<|>)\s*\d+\s*$/) {
              if($1 eq ">" && $first > $' || $1 eq "<" && $first < $') {
                 return mushrun(self   => $self,
                                prog   => $prog,
@@ -2783,8 +2827,7 @@ sub cmd_force
                runas    => $target,
                source   => 0,
                cmd      => evaluate($self,$prog,$'),
-               cmdself  => $target,
-               child    => 1,
+               child    => 2,
                hint     => "ALWAYS_RUN"
               );
    } else {
@@ -2976,7 +3019,11 @@ sub cmd_list
             prog   => $prog,
             source => [ "%s", $out ]
            );
-
+   } elsif($txt =~ /^\s*last request\s*$/) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s", @info{socket_buffer} ]
+           );
    } else {
        err($self,
            $prog,
@@ -3838,7 +3885,7 @@ sub cmd_help
 
    if(memorydb) {
       # initalize help variable if needed
-      cmd_read($self,$prog,"help") if(scalar keys %help == 0);
+      cmd_read($self,$prog,"help",1) if(scalar keys %help == 0);
 
       if(defined @help{lc(trim($txt))}) {
          $help = @help{lc(trim($txt))};
@@ -4443,6 +4490,10 @@ sub cmd_set
 
       return err($self,$prog,"Unknown object '%s'",$name) if !$target;
       controls($self,$target) || return err($self,$prog,"Permission denied");
+
+      if(hasflag($target,"GOD") && !hasflag($self,"GOD")) {
+         return err($self,$prog,"Permission denied");
+      }
 
       if(isatrflag($value)) {
          necho(self   => $self,
@@ -6070,8 +6121,13 @@ sub ansi_substr
 sub ansi_length
 {
    my $txt = shift;
+   my $data = shift;
 
-   my $data = ansi_init($txt);
+   if(ref($txt) eq "HASH") {                           # already inited txt?
+      $data = $txt;
+   } else {
+      $data = ansi_init($txt);
+   }
 
    if($#{$$data{ch}} == -1) {                                       # empty
       return 0;
@@ -7005,7 +7061,6 @@ sub run_container_commands
                           from   => "ATTR",
                           attr   => $hash,
                           source => 0,
-                          cmdself=> $self
                          );
                   $match=1;                       # signal mush command found
                }
@@ -7087,33 +7142,37 @@ sub prog
 
 sub mushrun_add_cmd
 {
-   my ($cmd,$arg) = @_;
+   my ($arg,@cmd) = @_;
 
    # add to command stack or program stack
    my $prog = @$arg{prog};
    my $stack = $$prog{stack};
 
-   if($$arg{invoker} eq undef) {
-       printf("### NO INVOKE: '%s'\n",code());
-       if($cmd =~ /^\s*\@while/) {
-#          printf("%s\n",print_var($prog));
-       }
-   }
-   my $data = { runas   => $$arg{runas},
-                cmd     => $cmd,
-                source  => $$arg{source},
-                invoker => $$arg{invoker},
-                prog    => $$arg{prog},
-                mdigits => $$arg{match}
-              };
-
-   if($$arg{child}) {
-      unshift(@$stack,$data);
-   } else {
-      push(@$stack,$data);
+   for my $i (0 .. $#cmd) {
+      my $data = { runas   => $$arg{runas},
+                   source  => $$arg{source},
+                   invoker => $$arg{invoker},
+                   prog    => $$arg{prog},
+                   mdigits => $$arg{match}
+                 };
+      if($$arg{child} == 1) {                         # add to top of stack
+         $$data{cmd} = @cmd[$#cmd - $i];
+         unshift(@$stack,$data);
+         $$prog{mutated} = 1;                # current cmd changed location
+      } elsif($$arg{child} == 2) {                  # add after current cmd
+         $$data{cmd} = @cmd[$#cmd - $i];
+         splice(@$stack,1,0,$data);
+      } else {                                              # add to bottom
+         $$data{cmd} = @cmd[$i];
+         push(@$stack,$data);
+      }
    }
 }
 
+#
+# multiline
+#    handle multiline input from the user
+#
 sub multiline
 {
    my ($arg,$multi) = @_;
@@ -7206,7 +7265,7 @@ sub mushrun
          @arg{invoker} = $$prog{invoker};
 #         printf("     INVOKER2: '%s'\n",@arg{invoker});
       } else {
-         printf("     INVOKER: NONE\n",@arg{invoker});
+         printf("     INVOKER: NONE '%s'\n",@arg{invoker},code());
       }
     } else {
 #         printf("     INVOKER: ALREADY SET\n",@arg{invoker});
@@ -7226,16 +7285,15 @@ sub mushrun
    } elsif(multiline(\%arg,$multi)) {          # multiline handled in function
       return;
    } elsif(@arg{source} == 1) {                    # from user input, no split
-      mushrun_add_cmd(@arg{cmd},\%arg);
+      mushrun_add_cmd(\%arg,@arg{cmd});
    } else {                                   # non-user input, slice and dice
-      for my $cmd ( reverse balanced_split(@arg{cmd},";",3,1) ) {
-         mushrun_add_cmd($cmd,\%arg);
-      }
+      mushrun_add_cmd(\%arg,balanced_split(@arg{cmd},";",3,1));
    }
 
    if(defined $arg{wild}) {
       set_digit_variables($arg{self},$arg{prog},"",@{$arg{wild}}); # copy %0-%9
-    }
+   }
+   return @arg{prog};
 }
 
 
@@ -7368,18 +7426,20 @@ sub spin
                next;
             } else {
                my $result = spin_run($prog,$cmd);
-    
+   
                if($result ne "RUNNING") {                      # command done
-                  if($before == $#$stack) {             # stack didn't change
-                     shift(@$stack);                     # safe to delete cmd
-                  } else {                                   # stack changed,
-                     $$cmd{done} = 1;                   # !safe to delete now
+                  if(defined $$prog{mutated}) {       # cmd moved from pos 0,
+                     delete @$cmd{keys %$cmd};      # but where? delete later
+                     $$cmd{done} = 1;
+                  } else {
+                     my $c  = shift(@$stack);           # safe to delete cmd
                   }
                } elsif(defined $$prog{idle}) {                 # program idle
                   delete @$prog{idle};
                   last;
                }
-               
+               delete @$prog{mutated};
+
                if(Time::HiRes::gettimeofday() - $start >= 1) { # stop
                   printf("   Time slice ran long, exiting correctly [%d cmds]\n",
                          $count);
@@ -8301,6 +8361,115 @@ sub initialize_functions
    @fun{money}      = sub { return &fun_money(@_);                 };
    @fun{ip}         = sub { return &fun_ip(@_);                    };
    @fun{entities}   = sub { return &fun_entities(@_);              };
+   @fun{setunion}   = sub { return &fun_setunion(@_);              };
+   @fun{setdiff}    = sub { return &fun_setdiff(@_);               };
+}
+
+
+
+#
+# add_union_element
+#     Dbrefs can not be sorted directly, so safe the dbref minus the "#"
+#     as the hash value so it can be used to sort the list.
+#
+sub add_union_element
+{
+   my ($list,$item,$type) = @_;
+
+   if($type eq "d") {
+      if($item =~ /^\s*#(\d+)\s*$/) {
+         $$list{$item} = $1;
+      } else {
+         $$list{$item} = $item;
+      }
+   } else {
+      $$list{$item} = $item;
+   }
+}
+
+
+#
+# fun_setunion
+#    Join two lists together removing duplicates and return sorted.
+#
+sub fun_setunion
+{
+   my ($self,$prog) = (obj(shift),shift);
+   my %list;
+
+   #--- [ handle arguments ]---------------------------------------------#
+   good_args($#_,2 .. 5) ||
+      return "#-1 FUNCTION (SETUNION) EXPECTS 2 to 5 ARGUMENTS";
+
+   my $list1 = evaluate($self,$prog,shift);
+   my $list2 = evaluate($self,$prog,shift);
+   my $delim = evaluate($self,$prog,shift);
+   my $sep = evaluate($self,$prog,shift);
+   my $type  = evaluate($self,$prog,shift);
+
+   $delim = " " if($delim eq undef);
+   $sep   = " " if($sep eq undef);
+
+   #--- [ do the work ]--------------------------------------------------#
+
+   for my $i (safe_split($list1,$delim), safe_split($list2,$delim)) {
+      add_union_element(\%list,$i,$type);
+   }
+
+   #--- [ return the results sorted ]------------------------------------#
+
+   if($type eq "d") {                                           # dbref sort
+      return join($sep,sort({@list{$a} <=> @list{$b}} keys %list));
+   } elsif($type eq "f" || $type eq "n") {                     # number sort
+      return join($sep,sort({$a <=> $b} keys %list));
+   } else {                                              # alphanumeric sort
+      return join($sep,sort({$a cmp $b} keys %list));
+   }
+}
+
+#
+# fun_setdiff
+#    Returns the difference of two sets of lists
+#
+sub fun_setdiff
+{
+   my ($self,$prog) = (obj(shift),shift);
+   my (%list, %result);
+
+   #--- [ handle arguments ]---------------------------------------------#
+   good_args($#_,2 .. 5) ||
+      return "#-1 FUNCTION (SETUNION) EXPECTS 2 to 5 ARGUMENTS";
+
+   my $list1 = evaluate($self,$prog,shift);
+   my $list2 = evaluate($self,$prog,shift);
+   my $delim = evaluate($self,$prog,shift);
+   my $sep = evaluate($self,$prog,shift);
+   my $type  = evaluate($self,$prog,shift);
+
+   $delim = " " if($delim eq undef);
+   $sep   = " " if($sep eq undef);
+
+   #--- [ do the work ]--------------------------------------------------#
+
+   for my $i (safe_split($list2,$delim)) {
+      add_union_element(\%list,$i,$type);
+   }
+
+   for my $i (safe_split($list1,$delim)) {
+      if(!defined @list{$i}) {
+         add_union_element(\%result,$i,$type);
+      }
+   }
+
+   #--- [ return the results sorted ]------------------------------------#
+
+   if($type eq "d") {                                           # dbref sort
+      return join($sep,sort({@result{$a} <=> @result{$b}} keys %result));
+   } elsif($type eq "f" || $type eq "n") {                     # number sort
+      return join($sep,sort({$a <=> $b} keys %result));
+   } else {                                              # alphanumeric sort
+      return join($sep,sort({$a cmp $b} keys %result));
+   }
 }
 
 sub fun_entities
@@ -8508,6 +8677,7 @@ sub fun_url
 
       # make request as curl (helps with wttr.in)
       $path =~ s/ /%20/g;
+      set_var($prog,"url",$path);
 
       eval {                        # protect against uncontrollable problems
          $sock->write_request(GET => "/$path", 'User-Agent' => 'curl/7.52.1');
@@ -9091,32 +9261,35 @@ sub fun_run
 
 sub safe_split
 {
-    my ($txt,$delim) = @_;
+   my ($txt,$delim) = @_;
+   my ($start,$pos,@result) = (0,0);
+   my $orig = $txt;
 
-    if($delim =~ /^\s*\n\s*/m) {
-       $delim = "\n";
-    } else {
-       $delim =~ s/^\s+|\s+$//g;
+   if($delim =~ /^\s*\n\s*/m) {
+      $delim = "\n";
+   } else {
+      $delim =~ s/^\s+|\s+$//g;
  
-       if($delim eq " " || $delim eq undef) {
-          $txt =~ s/\s+/ /g;
-          $txt =~ s/^\s+|\s+$//g;
-          $delim = " ";
-       }
-    }
+      if($delim eq " " || $delim eq undef) {
+         $txt =~ s/\s+/ /g;
+         $txt =~ s/^\s+|\s+$//g;
+         $delim = " ";
+      }
+   }
 
-    my ($start,$pos,$size,$dsize,@result) = (0,0,length($txt),length($delim));
+   my $txt = ansi_init($txt);
+   my $size = ansi_length($txt);
+   my $dsize = ansi_length($delim);
+   for($pos=0;$pos < $size;$pos++) {
+      if(ansi_substr($txt,$pos,$dsize) eq $delim) {
+         push(@result,ansi_substr($txt,$start,$pos-$start));
+         $result[$#result] =~ s/^\s+|\s+$//g if($delim eq " ");
+         $start = $pos + $dsize;
+      }
+   }
 
-    for($pos=0;$pos < $size;$pos++) {
-       if(substr($txt,$pos,$dsize) eq $delim) {
-          push(@result,substr($txt,$start,$pos-$start));
-          $result[$#result] =~ s/^\s+|\s+$//g if($delim eq " ");
-          $start = $pos + $dsize;
-       }
-    }
-
-    push(@result,substr($txt,$start)) if($start < $size);
-    return @result;
+   push(@result,ansi_substr($txt,$start,$size)) if($start < $size);
+   return @result;
 }
 
 sub list_functions
@@ -9570,7 +9743,7 @@ sub fun_member
    good_args($#_,2,3) ||
       return "#-1 FUNCTION (MEMBER) EXPECTS 2 OR 3 ARGUMENTS";
 
-   my $txt    = evaluate($self,$prog,shift);
+   my $txt   = evaluate($self,$prog,shift);
    my $word  = evaluate($self,$prog,shift);
    my $delim = evaluate($self,$prog,shift);
 
@@ -9821,19 +9994,25 @@ sub fun_add
    return $result;
 }
 
+
+#
+# fun_sub
+#    Subtract some numbers
+#
 sub fun_sub
 {
    my ($self,$prog) = (shift,shift);
 
-   my $result = @_[0];
-
    return "#-1 Sub requires at least one argument" if $#_ < 0;
 
-   for my $i (1 .. $#_) {
-      $result -= @_[$i];
+   my $result = evaluate($self,$prog,shift);
+
+   while($#_ >= 0) {
+      $result -= evaluate($self,$prog,shift);
    }
    return $result;
 }
+
 
 sub lord
 {
@@ -9857,7 +10036,6 @@ sub fun_edit
 
    for(my $i = 0, $start=0;$i <= $#{$$txt{ch}};$i++) {
       if(ansi_substr($txt,$i,$size) eq $from) {
-#         printf("MAT[$size]: '%s' -> '%s'  *MATCH*\n",ansi_substr($txt,$i,$size),$from);
          if($start ne undef or $i != $start) {
             $out .= ansi_substr($txt,$start,$i - $start);
          }
@@ -9865,7 +10043,6 @@ sub fun_edit
          $i += $size;
          $start = $i;
       } else {
-#         printf("MAT: '%s' -> '%s' [%s -> %s]\n",ansi_substr($txt,$i,$size),$from,lord(ansi_substr($txt,$i,$size)),lord($from));
       }
    }
 
@@ -9874,20 +10051,6 @@ sub fun_edit
    }
    return $out;
 }
-
-# sub fun_edit
-# {
-#    my ($self,$prog) = (shift,shift);
-# 
-#    good_args($#_,3) ||
-#       return "#-1 FUNCTION (EDIT) EXPECTS 3 ARGUMENTS";
-# 
-#    my $txt = evaluate($self,$prog,shift);
-#    my $from = quotemeta(evaluate($self,$prog,shift));
-#    my $to= evaluate($self,$prog,shift);
-#    $txt =~ s/$from/$to/ig;
-#    return $txt;
-# }
 
 sub fun_num
 {
@@ -10095,7 +10258,12 @@ sub fun_extract
    $text =~ s/\r|\n//g;
    $text =~ s/\n/<RETURN>/g;
    @list = safe_split($text,$idelim);
-   return join($odelim,@list[$first .. ($first+$last)]);
+   if($first + $length > $#list) {
+      $length = $#list - $first;
+   } else {
+      $length--;
+   }
+   return join($odelim,@list[$first .. ($first+$length)]);
 }
 
 
@@ -10825,7 +10993,7 @@ sub manage_httpd_bans
    my $count;
 
    # setup structures
-   @info{http_ban} = {} if(!defined @info{httpd_ban}); 
+   @info{httpd_ban} = {} if(!defined @info{httpd_ban}); 
    @info{httpd_invalid_data} = {} if(!defined @info{httpd_invalid_data});
 
    # add new invalid request if provided
@@ -10834,7 +11002,7 @@ sub manage_httpd_bans
       if(!defined @{@http{$sock}}{$ip}) {
          @{@http{$sock}}{$ip} = {};
       }
-      @info{httpd_invalid_data}->{$ip}->{scalar localtime()} = 1;
+      @info{httpd_invalid_data}->{$ip}->{time()}++;
    }
 
    #
@@ -10850,7 +11018,7 @@ sub manage_httpd_bans
             if((scalar localtime()) - 300 > $ts) {              # rm, too old
                delete @info{httpd_invalid_data}->{$key}->{$ts};
             } else {
-               $count++;
+               $count += @info{httpd_invalid_data}->{$key}->{$ts};
             }
          }
          if(scalar keys %{@info{httpd_invalid_data}->{$key}} == 0) {
@@ -10858,7 +11026,7 @@ sub manage_httpd_bans
          } elsif($count >= @info{"conf.httpd_invalid"}) {
             if(!defined @{@info{httpd_ban}}{$key}) {
                @{@info{httpd_ban}}{$key} = scalar localtime();     # too many
-               printf("   %s\@web *** BANNNED **\n",$key);          # add ban
+               printf("   %s\@web *** BANNED **\n",$key);          # add ban
             }
          } elsif(defined @{@info{httpd_ban}}{$key} ) {  # too little,remove ban
             printf("   %s\@web Un-BANNNED\n",$key);
@@ -10894,7 +11062,7 @@ sub http_error
    http_out($s,"}");
    http_out($s,"</style>");
    http_out($s,"<center><h1 class=big>404</h1><hr>#-1 Page Not Found</center>");
-   http_out($s,"<center>%s - $fmt</center>",code(),@args);
+   http_out($s,"<center>$fmt</center>",@args);
    http_disconnect($s);
 }
 
@@ -10944,6 +11112,40 @@ sub http_out
    my ($s,$fmt,@args) = @_;
 
    printf({@{@http{$s}}{sock}} "$fmt\r\n", @args) if(defined @http{$s});
+}
+
+sub banable_urls
+{
+   my $data = shift;
+
+   if($$data{get} =~ /wget http/i) {
+      return 1;
+   } elsif($$data{get} =~ /phpMyAdmin/i) {
+      return 1;
+   } elsif($$data{get} =~ /trinity/i) {
+      return 1;
+   } elsif($$data{get} =~ /w00tw00t/i) {
+      return 1;
+   } else {
+      return 0;
+   }
+}
+
+sub ban_add
+{
+   my $sock = shift;
+
+   # setup structures
+   @info{httpd_ban} = {} if(!defined @info{httpd_ban}); 
+   @info{httpd_invalid_data} = {} if(!defined @info{httpd_invalid_data});
+
+   if($sock ne undef) {
+      my $ip = @http{$sock}->{ip};
+      if(!defined @{@http{$sock}}{$ip}) {
+         @{@http{$sock}}{$ip} = {};
+      }
+      @info{httpd_invalid_data}->{$ip}->{time()} = 999999;
+   }
 }
 
 #
@@ -11013,6 +11215,10 @@ sub http_process_line
             -e "txt/" . trim($$data{get})) {
             printf("   %s\@web [%s]\n",$addr,$$data{get});
             http_reply_simple($s,$1,"%s",getfile(trim($$data{get})));
+         } elsif(banable_urls($data)) {
+            ban_add($s);
+            printf("   %s\@web [BANNED-%s]\n",$addr,$$data{get});
+            http_error($s,"%s","BANNED for HACKING");
          } elsif(defined @{@info{httpd_ban}}{$addr}) {
             printf("   %s\@web [BANNED-%s]\n",$addr,$$data{get});
             http_error($s,"%s","BANNED for invalid requests");
@@ -11566,8 +11772,8 @@ sub controls
 
    if(hasflag($enactor,"GOD")) {                   # gods control everything
       return 1;
-   } elsif(hasflag($target,"GOD") && !hasflag($enactor,"GOD")) {
-      return 0;                        # nothing can modify a god, but a god
+#   } elsif(hasflag($target,"GOD") && !hasflag($enactor,"GOD")) {
+#      return 0;                        # nothing can modify a god, but a god
    } elsif(hasflag($enactor,"WIZARD")) {
       return 1;                    # wizards can modify everything but a god
    } elsif(owner_id($enactor) == owner_id($target)) {
@@ -11616,22 +11822,24 @@ sub handle_listener
             if($msg =~ /$$hash{atr_regexp}/) {
                mushrun(self   => $self,
                        runas  => $obj,
-                       prog   => $prog,
-                       cmd    => $$hash{atr_value},
+                       cmd    => single_line($$hash{atr_value}),
                        wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
                        source => 0,
-                       attr   => $hash
+                       attr   => $hash,
+                       invoker=> $self,
+                       from   => "ATTR"
                       );
                 $match=1;
             }
          } elsif($msg =~ /$$hash{atr_regexp}/i) {
             mushrun(self   => $self,
                     runas  => $obj,
-                    prog   => $prog,
-                    cmd    => $$hash{atr_value},
+                    invoker=> $self,
+                    cmd    => single_line($$hash{atr_value}),
                     wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
                     source => 0,
-                    attr   => $hash
+                    attr   => $hash,
+                    from   => "ATTR"
                    );
              $match=1;
          }
@@ -13815,6 +14023,12 @@ sub add_telnet_data
    $$prog{socket_buffer} = [] if(!defined $$prog{socket_buffer});
    my $stack = $$prog{socket_buffer};
 
+   if(!defined $$prog{socket_buffer}) {
+      $$prog{socket_buffer} = [];
+      delete @info{socket_buffer};
+   }
+
+   @info{socket_buffer} .= $txt;
    if($$prog{socket_url}) {
       $$prog{socket_count}++;
 

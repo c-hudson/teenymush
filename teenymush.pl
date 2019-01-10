@@ -684,6 +684,8 @@ sub initialize_commands
    @command{"l"}        = { fun  => sub { return &cmd_look(@_); },          
                             alias => 1                                      };
    @command{"\@\@"}     = { fun  => sub { return;}                          };
+   @command{get}        = { fun  => sub { cmd_take(@_); },               
+                            alias=> 1                                       };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -1346,49 +1348,42 @@ sub cmd_trigger
    my ($self,$prog) = (obj(shift),obj(shift));
    my (@wild,$last,$target,$name);
 
-   my $txt = evaluate($self,$prog,shift);
+   # find where the "=" is without evaluating things.
+   my ($txt,$params) = max_args(2,"=",balanced_split(shift,"=",3));
 
-   if($txt =~ /^\s*([^\/]+)\s*\/\s*([^=]+)\s*={0,1}/ ||
-      $txt =~ /^\s*([^\/]+)\s*/) {
+   # where the / is without evaluating things
+   my ($target,$name) = max_args(2,"\/",balanced_split($txt,"\/",3));
 
-      if($2 eq undef) {
-         ($name,$target) = ($1,$self);
-      } else {
-         ($name,$target) = ($2,find($self,$prog,$1));
-      }
+   # okay to evaluate object / attribute
+   my $target = find($self,$prog,evaluate($self,$prog,$target));
+   my $name = evaluate($self,$prog,$name);
 
-      return err($self,$prog,"No match.") if($target eq undef);
+   return err($self,$prog,"No match.") if($target eq undef);
 
-      my $attr = mget($target,$name) ||
-         return err($self,$prog,"No such attribute.");
+   my $attr = mget($target,$name) ||
+      return err($self,$prog,"No such attribute.");
 
-      if(!defined $$attr{glob} && !controls($self,$target)) {
-         return err($self,$prog,"PermiSsion denied");
-      }
-
-      for my $i (balanced_split($',',',2)) {             # split param list
-         if($last eq undef) {
-            $last = $i;
-         } else {
-            push(@wild,$i);
-         }
-      }
-      push(@wild,$last) if($last ne undef);
-
-      mushrun(self   => $self,
-              prog   => $prog,
-              runas  => $target,
-              source => 0,
-              cmd    => $$attr{value},
-              child  => 2,
-              wild   => [ @wild ],
-             );
-   } else {
-       necho(self   => $self,
-             prog   => $prog,
-             source => [ "usage: \@trigger <object>/<attr> [=<parm>]" ],
-            );
+   if(!defined $$attr{glob} && !controls($self,$target)) {
+      return err($self,$prog,"PermiSsion denied");
    }
+
+   for my $i (balanced_split($params,',',2)) {             # split param list
+      if($last eq undef) {
+         $last = evaluate($self,$prog,$i);
+      } else {
+         push(@wild,evaluate($self,$prog,$i));
+      }
+   }
+   push(@wild,$last) if($last ne undef);
+
+   mushrun(self   => $self,
+           prog   => $prog,
+           runas  => $target,
+           source => 0,
+           cmd    => $$attr{value},
+           child  => 2,
+           wild   => [ @wild ],
+          );
 }
 
 sub cmd_huh
@@ -1886,7 +1881,7 @@ sub cmd_dump
    my ($self,$prog,$type) = @_;
    my ($file,$start);
 
-   if(!in_run_function($prog)) {
+   if(in_run_function($prog)) {
       return out($prog,"#-1 \@DUMP can not be called from RUN function");
    } elsif(!hasflag($self,"WIZARD") && !hasflag($self,"GOD")) {
       return err($self,$prog,"Permission denied.");
@@ -4303,6 +4298,7 @@ sub cmd_connect
 
       # --- log connnect ----------------------------------------------------#
       if(memorydb) {
+         @{@connected{$sock}}{connect} = time();
          db_set_hash($$user{obj_id},
                      "obj_lastsite",
                      time(),
@@ -4501,7 +4497,6 @@ sub cmd_set
                source => [ "%s", set_atr_flag($target,$attr,$value) ]
               );
       } else {
-
          if(@{$$prog{cmd}}{source} == 0) {                      # user input
             $value = evaluate($self,$prog,$value);
          }
@@ -5465,35 +5460,43 @@ sub cache_atrflag
 
 sub atr_case
 {
-   my ($obj,$atr) = (obj(shift),shift);
+    return atr_hasflag(shift,shift,"CASE");
+}
 
-   if(ref($obj) ne "HASH" || !defined $$obj{obj_id}) {
+sub atr_hasflag
+{
+   my ($obj,$atr,$flag) = (obj(shift),shift,shift);
+
+   if(ref($obj) ne "HASH" || !defined $$obj{obj_id} || !valid_dbref($obj)) {
      return undef;
    } elsif(memorydb) {
       my $attr = mget($obj,$atr);
-      if(!defined $$attr{flag} || !defined @{$$attr{flag}}{case}) {
+      if($attr eq undef || 
+         !defined $$attr{flag} || 
+         !defined $$attr{flag}->{uc($flag)}) {
          return 0;
       } else {
          return 1;
       }
-   } elsif(!incache_atrflag($obj,$atr,"CASE")) {
+   } elsif(!incache_atrflag($obj,$atr,uc($flag))) {
       my $val = one_val("select count(*) value " .
                         "  from attribute atr, " .
                         "       flag flg, " .
                         "       flag_definition fde " .
                         " where atr.obj_id = flg.obj_id ".
                         "   and fde.fde_flag_id = flg.fde_flag_id ".
-                        "   and fde_name = 'CASE' ".
+                        "   and fde_name = ? ".
                         "   and fde_type = 2 ".
                         "   and atr_name = ? " .
                         "   and atr.atr_id = flg.atr_id " .
                         "   and atr.obj_id = ? ",
+                        uc($flag),
                         $atr,
                         $$obj{obj_id}
                        );
-      set_cache_atrflag($obj,$atr,"CASE",$val);
+      set_cache_atrflag($obj,$atr,$flag,$val);
    }
-   return cache_atrflag($obj,$atr,"CASE");
+   return cache_atrflag($obj,$atr,$flag);
 }
 
 sub latr_regexp
@@ -5702,7 +5705,7 @@ sub flag_list
          my $hash = $$attr{value};
 
          # connected really isn't a flag, but should be
-         for my $key (sort {@{@flag{uc($a)}}{ord} <=> @{@flag{uc($b)}}{ord}} 
+         for my $key (sort {@flag{uc($a)}->{ord} <=> @flag{uc($b)}->{ord}} 
                       keys %$hash) {
             push(@list,$flag ? uc($key) : flag_letter($key));
          }
@@ -6315,7 +6318,7 @@ sub initialize_flags
    @flag{ABODE}        ={ letter => "A", perm => "!GUEST", type => 1, ord=>18 };
    @flag{LINK_OK}      ={ letter => "L", perm => "!GUEST", type => 1, ord=>19 };
    @flag{ENTER_OK}     ={ letter => "E", perm => "!GUEST", type => 1, ord=>20 };
-   @flag{VISUAL}       ={ letter => "V", perm => "!GUEST", type => 1, ord=>21 };
+   @flag{VISUAL}       ={ letter => "V", perm => "!GUEST", type => 3, ord=>21 };
    @flag{ANSI}         ={ letter => "X", perm => "!GUEST", type => 1, ord=>22 };
    @flag{LOG}          ={ letter => "l", perm => "WIZARD", type => 1, ord=>23 };
    @flag{NO_COMMAND}   ={ letter => "n", perm => "!GUEST", type => 1, ord=>24 };
@@ -6543,7 +6546,7 @@ sub flag_letter
    my $txt = shift;
 
    if(defined @flag{uc($txt)}) {
-      return @{@flag{uc($txt)}}{letter};
+      return @flag{uc($txt)}->{letter};
    } else {
       return undef;
    }
@@ -6557,7 +6560,9 @@ sub flag
 {
    my $txt = shift;
 
-   if(defined @flag{lc($txt)} && @{@flag{lc($txt)}}{type} == 1) {
+   if(defined @flag{lc($txt)} && 
+      (@flag{uc($txt)}->{type} == 1 ||
+      @flag{uc($txt)}->{type} == 3)) {
       return 1;
    } else {
       return 0;
@@ -6572,7 +6577,9 @@ sub flag_attr
 {
    my $txt = shift;
 
-   if(defined @flag{uc($txt)} && @{@flag{uc($txt)}}{type} == 2) {
+   if(defined @flag{uc($txt)} && 
+      (@flag{uc($txt)}->{type} == 2 ||
+      @flag{uc($txt)}->{type} == 3)) {
       return 1;
    } else {
       return 0;
@@ -7378,9 +7385,9 @@ sub mushrun_done
       $prog->{sock}->send_utf8(ansi_remove($msg));
    } elsif($$prog{hint} eq "WEB") {
       if(defined $$prog{output}) {
-         http_reply($$prog{sock},"%s",join("",@{@$prog{output}}));
+         http_reply($prog,"%s",join("",@{@$prog{output}}));
       } else {
-         http_reply($$prog{sock},"%s","No data returned");
+         http_reply($prog,"%s","No data returned");
       }
    }
    close_telnet($prog);
@@ -8260,7 +8267,7 @@ use Compress::Zlib;
 
 sub initialize_functions
 {
-   @fun{ansi}      = sub { return &color($_[2],$_[3]);             };
+   @fun{ansi}      = sub { return &fun_ansi(@_);                   };
    @fun{ansi_debug}= sub { return &ansi_debug($_[2]);              };
    @fun{substr}    = sub { return &fun_substr(@_);                 };
    @fun{file}      = sub { return &fun_file(@_);                   };
@@ -8363,8 +8370,8 @@ sub initialize_functions
    @fun{entities}   = sub { return &fun_entities(@_);              };
    @fun{setunion}   = sub { return &fun_setunion(@_);              };
    @fun{setdiff}    = sub { return &fun_setdiff(@_);               };
+   @fun{lit}        = sub { return &fun_lit(@_);               };
 }
-
 
 
 #
@@ -8387,6 +8394,25 @@ sub add_union_element
    }
 }
 
+sub fun_lit
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   return join(',',@_);
+}
+
+sub fun_ansi
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,2) ||
+      return "#-1 FUNCTION (ANSI) EXPECTS 2 ARGUMENTS";
+
+   my $type = evaluate($self,$prog,shift);
+   my $txt = evaluate($self,$prog,shift);
+
+   return color($type,$txt);
+}
 
 #
 # fun_setunion
@@ -10142,15 +10168,19 @@ sub fun_u
 
    if($obj eq undef) {
       return "#-1 Unknown object";
-   } elsif(!controls($self,$obj)) {
+   } elsif(!(controls($self,$obj) || 
+             hasflag($obj,"VISUAL") || 
+             atr_hasflag($obj,$attr,"VISUAL")
+          )) {
       return "#-1 PerMISSion Denied";
    }
 
    my $data = get($obj,$attr);
    $data =~ s/^\s+|\s+$//gm;
    $data =~ s/\n|\r//g;
-
+  
    my $result = evaluate($self,$prog,$data);
+
    set_digit_variables($self,$prog,"",$prev);            # restore %0 .. %9
    return $result;
 }
@@ -10173,7 +10203,8 @@ sub fun_get
 
    if($target eq undef ) {
       return "#-1 Unknown object";
-   } elsif(!controls($self,$target) && !hasflag($target,"VISUAL")) {
+   } elsif(!(controls($self,$target) ||
+      hasflag($target,"VISUAL") || atr_hasflag($target,$atr,"VISUAL"))) {
       return "#-1 Permission Denied $$self{obj_id} -> $$target{obj_id}";
    } 
 
@@ -11068,7 +11099,8 @@ sub http_error
 
 sub http_reply
 {
-   my ($s,$fmt,@args) = @_;
+   my ($prog,$fmt,@args) = @_;
+   my $s = $$prog{sock};
 
    my $msg = sprintf($fmt,@args);
 
@@ -11082,7 +11114,11 @@ sub http_reply
    http_out($s,"Connection: close");
    http_out($s,"Content-Type: text/html; charset=ISO-8859-1");
    http_out($s,"");
-   http_out($s,"%s\n",@info{"conf.httpd_template"});
+   http_out($s,"%s\n",evaluate($$prog{user},
+                               $prog,
+                               @info{"conf.httpd_template"}
+                              )
+           );
    http_out($s,"<body>\n");
    http_out($s,"<div id=\"Content\">\n");
    http_out($s,"<pre>%s\n</pre>\n",ansi_remove($msg));
@@ -11211,10 +11247,17 @@ sub http_process_line
 
          @info{httpd_ban} = {} if(!defined @info{httpd_ban});
          # html/js/css should be a static file, so just return the file
-         if($$data{get} =~ /\.(html|js|css)$/i && 
+
+         if(($$data{get} =~ /_notemplate\.(html)$/i ||     # no template used
+            $$data{get} =~ /\.(js|css)$/i) &&
             -e "txt/" . trim($$data{get})) {
             printf("   %s\@web [%s]\n",$addr,$$data{get});
             http_reply_simple($s,$1,"%s",getfile(trim($$data{get})));
+         } elsif($$data{get} =~ /\.html$/i && -e "txt/" . trim($$data{get})) {
+            my $prog = prog($self,$self);                    # uses template
+            $$prog{sock} = $s;
+            printf("   %s\@web [%s]\n",$addr,$$data{get});
+            http_reply($prog,getfile(trim($$data{get})));
          } elsif(banable_urls($data)) {
             ban_add($s);
             printf("   %s\@web [BANNED-%s]\n",$addr,$$data{get});
@@ -11518,7 +11561,8 @@ sub validate_switches
 #
 sub err
 {
-   my ($self,$prog,$fmt,@args) = @_;
+   my ($self,$prog,$fmt) = (obj(shift),obj(shift),shift);
+   my (@args) = @_;
 
    necho(self => $self,
          prog => $prog,
@@ -11626,8 +11670,9 @@ sub string_escaped
 sub evaluate_substitutions
 {
    my ($self,$prog,$t) = @_;
-   my ($out,$seq);
+   my ($out,$seq,$debug);
 
+   my $orig = $t;
    while($t =~ /(\[|\]|\\|%m[0-9]|%[brtn#0-9]|%v[0-9]|%w[0-9]|\[|\]|%=<[^>]+>|%\{[^}]+\})/i) {
       ($seq,$t)=($1,$');                                   # store variables
       $out .= $`;
@@ -13452,7 +13497,7 @@ sub isatrflag
    $txt = $' if($txt =~ /^\s*!/);
 
    if(memorydb) {
-      return flag_attr($txt);
+      return flag_attr(trim($txt));
    } else {
       return one_val("select count(*) value " .
                      "  from flag_definition " .
@@ -14297,6 +14342,25 @@ sub server_disconnect
    if(defined @connected{$id}) {
       my $hash = @connected{$id};
 
+      if(memorydb) {                             # update disconnect time
+         my $attr = mget(@connected{$id},"obj_lastsite");
+
+         if($attr ne undef && defined $$attr{value} &&
+            ref($$attr{value}) eq "HASH" && defined $$hash{connect}) {
+            my $last = $$attr{value};
+
+            my $ctime = $$hash{connect};
+            if(defined $$last{$ctime} && $$last{$ctime} =~ /,([^,]+)$/) {
+                db_set_hash(@connected{$id},
+                            "obj_lastsite",
+                            $ctime,
+                            time() . ",1,$1"
+                           );
+            }
+         }
+      }
+
+
       if(defined @connected{$id} && defined @{@connected{$id}}{prog}) {
          $prog = @{@connected{$id}}{prog};
       } else {
@@ -14659,6 +14723,7 @@ sub ws_process
 
       my $prog = mushrun(self   => $self,
                          runas  => $self,
+                         invoker=> $self,
                          source => 0,
                          cmd    => $',
                          hint   => "WEBSOCKET",

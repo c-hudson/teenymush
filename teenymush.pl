@@ -660,8 +660,6 @@ sub initialize_commands
    @command{"\@dbread"} = { fun  => sub { fun_dbread(@_); }                 };
    @command{"\@dump"}   = { fun  => sub { cmd_dump(@_); }                   };
    @command{"\@freefind"}={ fun  => sub { cmd_freefind(@_); }               };
-   @command{"\@test"}    ={ fun  => sub { cmd_test(@_); }                   };
-   @command{"\@delta"}   ={ fun  => sub { cmd_delta(@_); }                  };
    # --[ aliases ]-----------------------------------------------------------#
    
    @command{"\@poll"}  =  { fun => sub { cmd_doing(@_[0],@_[1],@_[2],
@@ -720,117 +718,127 @@ sub atr_first
    }
 }
 
+#
+# get_mail_idx
+#    Build an index of attributes for email messages.
+#
+sub get_mail_idx
+{
+   my $self = shift;
+
+   return sort { substr($a,9) <=> substr($b,9) } # build index
+                grep(/^obj_mail_/i,lattr($self));
+}
+
 sub get_mail
 {
    my ($self,$num) = @_;
 
-   my $list = mget($self,"obj_mail");
+   return undef if($num !~ /^\s*(\d+)\s*$/ || $num <= 0);   # invalid number
 
-   if($num !~ /^\s*(\d+)\s*$/ || $num <= 0) {
-      return "MAIL: Invalid message number.";
-   } elsif(scalar keys %{$$list{value}} < $num) {
-      return "MAIL: You don't have that many messages.";
-   }
+   my @list = get_mail_idx($self);
 
-   # pull attribute name from index list
-   my $attr = (sort {substr($a,9) <=> substr($b,9)} keys %{$$list{value}})[$num-1];
+   return undef if(!defined @list[$num-1]);          # invalid email number
+   
+   my $attr = get($self,@list[$num-1]) ||
+      return undef;
 
-   if($attr eq undef) {
-      return "MAIL: Internal error, unknown mail message.";
-   } elsif($attr =~ /^obj_mail_/) {                 # timestamp in attr name
-      my $sent = $';
-      my $mail = get($self,$attr);
-
-      # seperate sender,new, and message
-      if($mail ne undef && $mail =~ /^\s*(\d+)\s*,\s*(\d+)\s*,/) {
-         return { sent => $sent,
-                  from => $1,
-                  new => $2,
-                  msg => $',
-                  sub => "Not implimented yet.",
-                  attr => $attr,
-                  num => trim($num)
+   if($attr =~ /^\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/) {
+       return { sent => $1,
+                from => $2,
+                new  => $3,
+                msg  => $',
+                attr => @list[$num-1],
+                num  => trim($num)
          };
-      } else {
-         return { attr => $attr, err => 1 };
-      }
+   } else {
+      return undef;
    }
 }
 
 sub cmd_mail
 {
-   my ($self,$prog,$txt,$switch) = @_;
-   my ($count,$out) = (0,undef);
+   my ($self,$prog) = (obj(shift),obj(shift));
 
-   if(mysqldb) {
-      return err($self,$prog,"MAIL: Not written for mysql db yet.");
-   } elsif(!hasflag($self,"PLAYER")) {
-      return err($self,$prog,"MAIL: Only players may send/recieve mail.");
-   }
+   my ($txt,$value) = max_args(2,"=",balanced_split(shift,"=",3));
+   $txt = evaluate($self,$prog,$txt);
+   my $switch = shift;
 
-   if($$switch{delete}) {                                     # delete email
+   if(defined $$switch{delete}) {                            # handle delete
+      return err($self,$prog,"Invalid email message.") if ($value ne undef);
+
       my $mail = get_mail($self,$txt);
 
-      if(ref($mail) ne "HASH") {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "%s", $mail ]
-              );
-      } else {
-         db_set($self,$$mail{attr});                            # remove email
-         db_remove_list($self,"obj_mail",$$mail{attr});    # remove from index
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "MAIL: Message %s deleted", $$mail{num} ]
-              );
-      }
-   } elsif($txt =~ /^\s*short\s*/) {                       # show short list
-      my ($list,$count) = (mget($self,"obj_mail"),undef);
+      return err($self,$prog,"Invalid email message.") if ($mail eq undef);
 
-      if($list eq undef || scalar keys %{$$list{value}} == 0) {
-         $count = "no mail";
-      } elsif(scalar keys %{$$list{value}} == 1) {
-         $count = "1 message";
-      } else {
-         $count = (scalar keys %{$$list{value}}) . " messages";
-      }
+      set($self,$prog,$self,$$mail{attr},undef,1);
+
       necho(self   => $self,
             prog   => $prog,
-            source => [ "MAIL: You have %s", $count ]
+            source => [ "MAIL: Deleted." ]
            );
-   } elsif($txt =~ /^\s*$/) {                           # show mail headers
-      my $list = mget($self,"obj_mail");
+   } elsif($value ne undef) {                           # handle mail send
+      $value = evaluate($self,$prog,$value) if(@{$$prog{cmd}}{source} == 0);
+      
+      my $target = find_player($self,$prog,$txt) ||
+         return err($self,$prog,"Unknown player.");
 
-      if($list ne undef) {
-         for my $num ( 1 .. (scalar keys %{$$list{value}}) ) {
-            my $mail = get_mail($self,$num);
+      my @list = (get_mail_idx($target));              # get next seq number
+      my $seq = ($#list == -1) ? 1 : (substr(@list[$#list],9)+1);
 
-            if($mail eq undef || ref($mail) ne "HASH") { 
-               # ooops?
-            } elsif($$mail{err}) {                             # corrupt index
-               db_set($self,$$mail{attr});                  # delete attribute
-               db_remove_list($self,"obj_mail",$$mail{attr}); # rm index entry
-            } else {
-               my $name = ansi_substr(name($$mail{from}),0,15);
-               my ($sec,$min,$hr,$day,$mon,$yr) = localtime($$mail{sent});
-               my $mynum=$num;
-               if(length($num) == 1) {
-                  $mynum = " $num ";
-               } elsif(length($num) == 2) {
-                  $mynum = "$num ";
-               }
-               $out .= sprintf("%3s|%4s | %02d:%02d %02d:%02d/%02d | %s%s " .
-                               "| %s\n",
-                               $mynum,
-                               $$mail{new} ? "Yes" : "",
-                               $hr,$min,$mon+1,$day,$yr%100,$name,
-                               (" " x (15 - ansi_length($name))),
-                               (ansi_length($$mail{msg}) > 29) ? 
-                                    (ansi_substr($$mail{msg},0,26) . "...") :
-                                    $$mail{msg}
-                              );
-            }
-         }
+      set($self,$prog,$target,"OBJ_MAIL_$seq",           # save email message
+          time() .",". owner_id($self) . ",1," . trim($value),1);
+
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "MAIL: You have sent mail to %s.", name($target) ],
+            target => [ $target, "MAIL: You have a new message from %s.",
+                        name(owner($self))]
+           );
+   } elsif($txt =~ /^\s*short\s*$/) {
+      my @list = get_mail_idx($self);
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "MAIL: You have %s messages.", $#list + 1 ]
+           );
+   } elsif($txt =~ /^\s*(\d+)\s*$/) {                       # display 1 email
+      my $mail = get_mail($self,$1) ||
+         return err($self,$prog,"Invalid email message.");
+
+      necho(self   => $self,                                  # show results
+            prog   => $prog,
+            source => [ "%s\nFrom:    %-37s At: %s\n%s\n%s\n%s\n", 
+                        ("-" x 75),
+                        name($$mail{from}),
+                        scalar localtime($$mail{sent}),
+                        ("-" x 75),
+                        trim($$mail{msg}),
+                        ("-" x 75)
+                      ]
+           );
+
+      set($self,$prog,$self,$$mail{attr},                      # set read flag
+          "$$mail{sent},$$mail{from},0,$$mail{msg}",1);
+
+   } else {                                         # show detailed mail list
+      my $out;
+      my @list = get_mail_idx($self);
+      for my $pos (0 .. $#list) {
+         my $mail = get_mail($self,$pos+1);
+
+         my ($sec,$min,$hr,$day,$mon,$yr) = localtime($$mail{sent});
+         my $name = ansi_substr(name($$mail{from}),0,15);
+         $out .= sprintf("%3s|%4s | %02d:%02d %02d:%02d/%02d | %s%s " .
+                         "| %s\n",
+                         $pos+1,
+                         $$mail{new} ? "Yes" : "",
+                         $hr,$min,$mon+1,$day,$yr%100,$name,
+                         (" " x (15 - ansi_length($name))),
+                         (ansi_length($$mail{msg}) > 29) ?
+                         (ansi_substr($$mail{msg},0,26) . "...") :
+                         $$mail{msg}
+                        );
+
       }
       $out .= "           * No email *\n" if $out eq undef;
 
@@ -838,56 +846,13 @@ sub cmd_mail
             prog   => $prog,
             source => [ " # | New | Sent           | Sender          |" .
                            " Message\n" .
-                        "---|-----|----------------|" . ("-"x17) ."|" . 
+                        "---|-----|----------------|" . ("-"x17) ."|" .
                             ("-" x30)."\n" .
                         $out .
-                        "---|-----|----------------|" . ("-"x17) ."|" . 
+                        "---|-----|----------------|" . ("-"x17) ."|" .
                             ("-" x30) . "\n"
                       ]
            );
-   } elsif($txt =~ /^\s*(\d+)\s*$/) {                       # display 1 email
-      my $mail = get_mail($self,$1);                            # build email
-
-      if(ref($mail) ne "HASH") {
-         return necho(self   => $self,
-                      prog   => $prog,
-                      source => [ "%s", $mail ]
-              );
-      }
-      $out .= ("-" x 75) . "\n";
-      $out .= sprintf("From:    %-46s At: %s\n",
-                      name($$mail{from}),
-                      scalar localtime($$mail{sent})
-                     );
-#      $out .= sprintf("Subject: %s\n",$$mail{sub});
-      $out .= ("-" x 75) . "\n";
-      $out .= "$$mail{msg}\n";
-      $out .= ("-" x 75) . "\n";
-      db_set($self,$$mail{attr},"$$mail{from},0,$$mail{msg}");   # set read flag
-
-      necho(self   => $self,                                  # show results
-            prog   => $prog,
-            source => [ "%s", $out  ]
-           );
-   } elsif($txt =~ /^\s*([^=]+)\s*=\s*/) {                     # send message
-      my $target = find_player($self,$prog,$1) ||
-         return err($self,$prog,"Unknown player.");
-
-      my $attr = "obj_mail_" . time();
-      db_set_list($target,"obj_mail",$attr);                   # add to index
-      db_set($target,$attr,"$$self{obj_id},1,".
-             evaluate($self,$prog,$'));              # add message
-
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "MAIL: You sent your message to %s.", name($target)]
-           );
-      if(hasflag($target,"CONNECTED")) {
-         necho(self   => $target,
-               prog   => $prog,
-               source => [ "MAIL: You have a new message from %s.",name($self)]
-              );
-      }
    }
 }
 
@@ -961,25 +926,6 @@ sub cmd_backupmode
      );
 }
 
-sub cmd_delta
-{
-   my ($self,$prog,$txt) = @_;
-#   printf("%s\n",print_var(\@delta));
-
-#   $web->close();
-#   my $web = IO::Socket::INET->new(LocalPort => @info{"conf.httpd"},
-#                                      Listen    =>1,
-#                                      Reuse=>1
-#                                     );
-   $ws->{select_readable}->remove($web);
-#$ws->{select_readable}->add($listener)
-
-   necho(self   => $self,
-      prog   => $prog,
-      source => [ "Done" ]
-     );
-}
-
 # cmd_while
 #    Loop while the expression is true
 #
@@ -987,6 +933,9 @@ sub cmd_while
 {
    my ($self,$prog,$txt) = @_;
    my (%last,$first);
+
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
 
    in_run_function($prog) &&
       return out($prog,"#-1 \@WHILE can not be called from RUN function");
@@ -1126,6 +1075,9 @@ sub cmd_find
 {
    my ($self,$prog,$txt) = @_;
    my ($start,@out);
+ 
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
 
    if(memorydb) {
       if(defined $$prog{nomushrun}) {
@@ -1235,16 +1187,7 @@ sub cmd_sex
 {
     my ($self,$prog,$txt) = @_;
 
-    if(hasflag($self,"GUEST")) {
-      return err($self,$prog,"Permission Denied.");
-    } elsif($txt =~ /=/) {
-       cmd_set($self,$prog,"$`/sex=" . trim($'));
-    } else {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "I don't know which one you mean!" ],
-           );
-    }
+    cmd_set2($self,$prog,"sex $txt",1);
 }
 
 #
@@ -1271,12 +1214,19 @@ sub cmd_score
 sub cmd_give
 {
    my ($self,$prog) = (obj(shift),obj(shift));
+ 
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
+ 
 
    my $txt = evaluate($self,$prog,shift);
 
    if($txt =~ /=/) {
       my ($target,$what) = (find($self,$prog,$`),$');
       return err($self,$prog,"Give to whom?") if $target eq undef;
+
+      hasflag(owner($target),"GUEST") &&
+         return err($self,$prog,"Guests don't need that.");
 
       if($what =~ /^\s*\-{0,1}(\d+)\s*$/) {
          $what = $1 . $2;
@@ -1327,26 +1277,13 @@ sub cmd_give
 }
 
 
-sub cmd_test
-{
-   my ($self,$prog,$txt) = @_;
-
-   for my $key (keys %connected) {
-      my $hash = @connected{$key};
-
-      if($$hash{raw} == 0) {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "%s -> %s", name($$hash{obj_id}),$$hash{ip} ],
-              );
-      }
-   }
-}
-
 sub cmd_trigger
 {
    my ($self,$prog) = (obj(shift),obj(shift));
    my (@wild,$last,$target,$name);
+
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
 
    # find where the "=" is without evaluating things.
    my ($txt,$params) = max_args(2,"=",balanced_split(shift,"=",3));
@@ -1426,6 +1363,9 @@ sub cmd_crash
 {
    my ($self,$prog) = @_;
 
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
+
    necho(self   => $self,
          prog   => $prog,
          source => [ "You \@crash the server, yee haw.\n%s",code("long") ],
@@ -1456,6 +1396,8 @@ sub cmd_lock
 {
    my ($self,$prog,$txt) = @_;
 
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
 
    if($txt =~ /^\s*([^ ]+)\s*=\s*/) {
 
@@ -1724,6 +1666,9 @@ sub cmd_halt
    my $obj = owner($self);
    my $count = 0;
 
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
+
    my $iswiz = hasflag($self,"WIZARD");
 
    for my $pid (keys %engine) {                          # look at each pid
@@ -1790,11 +1735,14 @@ sub test
 
 sub cmd_split
 {
-    my ($self,$prog,$txt) = @_;
-    my $max = 10;
-    my @stack;
+   my ($self,$prog,$txt) = @_;
+   my $max = 10;
+   my @stack;
    
-    if($txt =~ /,/) {
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
+
+   if($txt =~ /,/) {
        my $target = find($self,$prog,$`) ||
          return err($self,$prog,"I can't find that");
        my $txt = get($target,$');
@@ -1965,6 +1913,10 @@ sub cmd_dump
                    "CONNECTED,PLAYER,LOG",
                    "<LOG> Database finished."
                   );
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "\@dump completed." ],
+              );
          prune_dumps("dumps",@info{"conf.mudname"} . "\..*\.tdb");
       }
       return;
@@ -2052,6 +2004,9 @@ sub cmd_dolist
    my ($self,$prog,$txt,$switch) = @_;
    my $cmd = $$prog{cmd_last};
    my ($delim, %last);
+
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
 
    in_run_function($prog) &&
       return out($prog,"#-1 \@DOLIST can not be called from RUN function");
@@ -2198,6 +2153,9 @@ sub cmd_password
 sub cmd_sleep
 {
    my ($self,$prog,$txt) = @_;
+
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
 
    in_run_function($prog) &&
       return out($prog,"#-1 \@SLEEP can not be called from RUN function");
@@ -2410,6 +2368,9 @@ sub cmd_squish
    my ($self,$prog,$txt) = @_;
    my ($obj,$atr,$out);
 
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
+
    if($txt =~ /[\/,]/) {
       ($obj,$atr) = ($`,$');
    } else {
@@ -2451,6 +2412,9 @@ sub cmd_switch
     my ($self,$prog,@list) = (shift,shift,balanced_split(shift,',',3));
     my $switch = shift;
     my (%last, $pat,$done);
+
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
 
     my ($first,$second) = (get_segment2(shift(@list),"="));
     $first = trim(ansi_remove(evaluate($self,$prog,$first)));
@@ -2518,6 +2482,9 @@ sub cmd_switch
 sub cmd_newpassword
 {
    my ($self,$prog,$txt) = @_;
+
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
 
    if(!hasflag($self,"PLAYER")) {
      return err($self,$prog,"Permission Denied, non-players do not need " .
@@ -2801,6 +2768,9 @@ sub cmd_force
 {
     my ($self,$prog,$txt) = @_;
 
+    hasflag($self,"GUEST") &&
+       return err($self,$prog,"Permission denied.");
+
     if($txt =~ /^\s*([^ ]+)\s*=\s*/) {
        my $target = find($self,$prog,$1) ||
           return err($self,$prog,"I can't find that");
@@ -2940,15 +2910,14 @@ sub cmd_list
                       ]
            );
    } elsif($txt =~ /^\s*flags{0,1}\s*$/) {
+       my @out;
+
+       for my $key (keys %flag) {
+          push(@out,$key . "(" . @flag{$key}->{letter} . ")");
+       }
        necho(self => $self,
              prog => $prog,
-             source => [ "%s" ,
-                         table("  select fde_name flag, " .
-                               "         fde_letter letter " .
-                               "    from flag_definition " .
-                               "order by fde_name"
-                              )
-                       ]
+             source => [ "Flags: %s", join(', ',@out) ]
             );
    } elsif(!hasflag($self,"WIZARD")) {
       return err($self,$prog,"Permission Denied.");
@@ -3082,6 +3051,9 @@ sub cmd_destroy
 {
    my ($self,$prog,$txt) = @_;
 
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
+
    return err($self,$prog,"syntax: \@destroy <object>") if($txt =~ /^\s*$/);
    my $target = find($self,$prog,$txt) ||
        return err($self,$prog,"I can't find an object named '%s'",$txt);
@@ -3176,6 +3148,9 @@ sub cmd_pemit
 {
    my ($self,$prog,$txt) = @_;
 
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
+
    if($txt =~ /^\s*([^ =]+)\s*=/s) {
       my $target = find($self,$prog,evaluate($self,$prog,$1));
       my $txt=$';
@@ -3201,6 +3176,9 @@ sub cmd_pemit
 sub cmd_emit
 {
    my ($self,$prog,$txt) = @_;
+
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
 
    my $txt = evaluate($self,$prog,$txt);
 
@@ -3284,9 +3262,8 @@ sub cmd_take
 {
    my ($self,$prog,$txt) = @_;
  
-   if(hasflag($self,"GUEST")) {
+   hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission Denied.");
-   }
 
    my $target = find($self,$prog,$txt) ||
       return err($self,$prog,"I don't see that here.");
@@ -3405,6 +3382,9 @@ sub cmd_enter
 {
    my ($self,$prog,$txt) = @_;
 
+   hasflag($self,"GUEST") &&
+     return err($self,$prog,"Permission denied.");
+   
    my $target = find($self,$prog,$txt) ||
       return err($self,$prog,"I don't see that here.");
 
@@ -3589,6 +3569,9 @@ sub cmd_last
       $target = find_player($self,$prog,$txt) ||
          return err($self,$prog,"I couldn't find that player.");
    }
+
+   !controls($self,$target) &&
+      return err($self,$prog,"Permission denied.");
 
    if(memorydb) {
       my $attr = mget($target,"obj_lastsite");
@@ -3817,7 +3800,7 @@ sub cmd_clear
 {
    my ($self,$prog,$txt) = @_;
 
-   if(!hasflag($self,"WIZARD")) {
+   if(hasflag($self,"WIZARD")) {
       err($self,$prog,"Permission denied.");
    } elsif($txt ne undef) {
       err($self,$prog,"\@clear expect no arguments");
@@ -3997,7 +3980,9 @@ sub cmd_create
 {
    my ($self,$prog,$txt) = (@_[0],@_[1],trim(@_[2]));
 
-   if(quota_left($self) <= 0) {
+   if(hasflag($self,"GUEST")) {
+      return err($self,$prog,"Permission denied.");
+   } elsif(quota_left($self) <= 0) {
       return err($self,$prog,"You are out of QUOTA to create objects.");
    } elsif(length($txt) > 50) {
       return err($self,$prog,
@@ -4026,6 +4011,9 @@ sub cmd_link
 {
    my ($self,$prog,$txt) = @_;
    my ($name,$target,$destination);
+
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
 
    if($txt =~ /^\s*([^=]+)\s*=\s*(.+?)\s*$/) {
       ($name,$destination) = ($1,$2);
@@ -4161,6 +4149,9 @@ sub cmd_open
    my ($self,$prog,$txt) = @_;
    my ($exit,$destination,$dest);
   
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
+
    if($txt =~ /^\s*([^=]+)\s*=\s*([^ ]+)\s*$/ ||
       $txt =~ /^\s*([^ ]+)\s*$/) {
       ($exit,$destination) = ($1,$2);
@@ -4408,7 +4399,12 @@ sub cmd_doing
 {
    my ($self,$prog,$txt,$switch) = @_;
 
-   if(!defined @connected{$$self{sock}}) {
+   if(hasflag($self,"GUEST")) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Permission denied." ]
+           );
+   } elsif(!defined @connected{$$self{sock}}) {
       necho(self   => $self,
             prog   => $prog,
             source => [ "Permission denied." ]
@@ -4457,13 +4453,7 @@ sub cmd_describe
 {
    my ($self,$prog,$txt) = @_;
 
-   if(hasflag($self,"GUEST")) {
-      return err($self,$prog,"Permission Denied.");
-   } elsif($txt =~ /^\s*([^ \/]+?)\s*=\s*(.*?)\s*$/) {
-      cmd_set($self,$prog,trim($1) . "/DESCRIPTION=" . $2);
-   } else {
-      err($self,$prog,"syntax: \@describe <object> = <Text of Description>");
-   }
+   cmd_set2($self,$prog,"description $txt",1);
 }
 
 # @set object = wizard
@@ -4591,6 +4581,11 @@ sub list_attr_flags
    return $result;
 }
 
+#
+# viewable
+#    Determine if an attribute should be viewable or not. Providing a
+#    pattern will show more attributes.
+#
 sub viewable
 {
    my ($obj,$name,$pat) = @_;
@@ -5019,21 +5014,85 @@ sub cmd_pose
         );
 }
 
-sub cmd_set2
+#
+# cmd_set
+#    Set flags on objects or attributes. Setting attributes is no longer
+#    supported, use &attribute object = value synax.
+#
+sub cmd_set
 {
-   my ($self,$prog,$txt) = @_;
-#   $txt =~ s/\r\n/<BR>/g;
+   my ($self,$prog) = (obj(shift),obj(shift));
 
-   if($txt =~ /^\s*([^& =]+)\s+([^ =]+)\s*=(.*?) *$/s) {
-      cmd_set($self,$prog,"$2/$1=$3");
-   } elsif($txt =~ /^\s*([^ =]+)\s+([^ =]+)\s*$/s) {
-      cmd_set($self,$prog,"$2/$1=");
-   } elsif($txt =~ /^\s*([^ =]+)\s*=/s) {
-      err($self,$prog,"No object specified in &attribute command.");
-   } else {
-      err($self,$prog,"Unable to parse &attribute command");
+   return err($self,$prog,"Permission denied") if hasflag($self,"GUEST");
+
+   # find object / value
+   my ($obj,$value) = max_args(2,"=",balanced_split(shift,"=",3));
+
+   # find attr name if provided
+   my ($name,$attr) = max_args(2,"\/",balanced_split($obj,"\/",3));
+
+   my $target = find($self,$prog,evaluate($self,$prog,$name)) || # find target
+      return err($self,$prog,"I don't see that here.");
+
+   !controls($self,$target) &&
+      return err($self,$prog,"Permission denied");
+
+   if($attr ne undef) {                                          # attr flag
+       $attr = evaluate($self,$prog,$attr);
+
+       if(!isatrflag($value)) {
+          return err($self,$prog,"Invalid attribute flag");
+       } else {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "%s", set_atr_flag($target,$attr,$value) ]
+              );
+       }
+   } else {                                                  # standard flag
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ set_flag($self,$prog,$target,$value) ]
+           );
    }
 }
+
+#
+# cmd_set2
+#    Set a user defined attribute.
+#
+sub cmd_set2
+{
+   my ($self,$prog) = (obj(shift),obj(shift));
+   my ($obj,$attr);
+
+   return err($self,$prog,"Permission denied") if hasflag($self,"GUEST");
+
+   my ($txt,$value) = max_args(2,"=",balanced_split(shift,"=",3));
+   my $flag = shift;
+
+   if($txt =~ /^\s*([^ ]+)\s*/) {                 # pick off attribute name
+      $obj = $';                    # never evaluate value if from user input
+      $attr = (@{$$prog{cmd}}{source}==0) ? evaluate($self,$prog,$1) : $1;
+   } else {
+      return err($self,$prog,"Unable to parse &attribute command");
+   }
+
+   my $target = find($self,$prog,evaluate($self,$prog,$obj)) || # find target
+      return err($self,$prog,"I don't see that here.");
+
+   if(!controls($self,$target)) {                                    # nope
+      return err($self,$prog,"Permission denied");
+   } elsif(reserved($attr) && !$flag) {                     # don't set that!
+      return err($self,$prog,"Thats not a good name for an attribute.");
+   } else {
+      set($self,$prog,$target,$attr,trim($value));
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Set." ],
+           );
+   }
+}
+
 
 sub cmd_say
 {
@@ -5152,11 +5211,11 @@ sub cmd_reload_code
    my ($self,$prog,$txt) = @_;
    my $count = 0;
 
-   if(!hasflag($self,"GOD")) {
-      return err($self,$prog,"Permission denied.");
-   } elsif(@info{"conf.md5"} == -1) {
-      return err($self,$prog,"#-1 DISABLED");
-   }
+#   if(!hasflag($self,"GOD")) {
+#      return err($self,$prog,"Permission denied.");
+#   } elsif(@info{"conf.md5"} == -1) {
+#      return err($self,$prog,"#-1 DISABLED");
+#   }
 
    $count = reload_code($self,$prog);
 
@@ -6655,14 +6714,16 @@ sub reserved
 
 sub db_attr_exist
 {
-   my ($id,$key) = (obj(shift),lc(shift));
+   my ($id,$key) = (obj(shift),trim(lc(shift)));
 
    my $obj = dbref($id);
 
-   if($obj eq undef || !defined $$obj{$key}) {
+   if($obj eq undef) {
       return 0;
+   } elsif(reserved($key)) {
+      return (defined $$obj{obj_$key}) ? 1 : 0;
    } else {
-      return 1;
+      return (defined $$obj{$key}) ? 1 : 0;
    }
 }
 
@@ -7417,6 +7478,37 @@ sub spin
           printf("----- [ Crash REPORT@ %s ]-----\n",scalar localtime());
           printf("%s\n",code("long"));
        };
+
+
+      if(time()-@info{db_last_dump} > @info{"conf.backup_interval"}) {
+         @info{db_last_dump} = time();
+         my $self = obj(0);
+         mushrun(self   => $self,
+                 runas  => $self,
+                 invoker=> $self,
+                 source => 0,
+                 cmd    => "\@dump",
+                 from   => "ATTR",
+                 hint   => "ALWAYS_RUN"
+         );
+      } elsif(time() - @info{"conf.freefind_last"} >
+              @info{"conf.freefind_interval"}) {
+         @info{"conf.freefind_last"} = time();
+         if(!defined @info{"conf.freefind_interval"}) {
+            @info{"conf.freefind_interval"} = 86400;
+         }
+         my $self = obj(0);
+         mushrun(self   => $self,
+                 runas  => $self,
+                 invoker=> $self,
+                 source => 0,
+                 cmd    => "\@freefind",
+                 from   => "ATTR",
+                 hint   => "ALWAYS_RUN"
+                );
+      }
+
+
 
       for $pid (sort {$a cmp $b} keys %engine) {
          @info{current_pid} = $pid;
@@ -12293,7 +12385,7 @@ sub owner_id
 sub set_flag
 {
    my ($self,$prog,$obj,$flag,$override) = 
-      (obj($_[0]),$_[1],obj($_[2]),uc($_[3]),$_[4]);
+      (obj($_[0]),$_[1],obj($_[2]),trim(uc($_[3])),$_[4]);
    my $who = $$user{obj_name};;
    my ($remove,$count);
 
@@ -12427,13 +12519,14 @@ sub set_atr_flag
     $flag = uc(trim($flag));
 
     if(memorydb) {
+       $atr = "obj_$atr" if reserved($atr);
        if($flag =~ /^\s*!\s*(.+?)\s*$/) {
           ($remove,$flag) = (1,$1);
        }
        if(!$override && !can_set_flag($object,$object,$flag)) {
           return "#-1 Permission Denied.";
        } elsif(!db_attr_exist($object,$atr)) {
-          return "#-1 UNKNOWN ATTRIBUTE.";
+          return "#-1 UNKNOWN ATTRIBUTE ($atr).";
        } else {
           db_set_flag($$object{obj_id},$atr,$flag,$remove ? undef : 1);
           return "Set.";
@@ -13457,6 +13550,10 @@ sub quota_left
 
   if(hasflag($obj,"WIZARD")) {
      return 99999999;
+  } elsif(hasflag($obj,"GUEST")) {
+     return 0;
+  } elsif(memorydb) {
+     return get(owner($self),"obj_quota");
   } else {
      return one_val("select max(obj_quota) - count(*) + 1 value " .
                     "  from object " .

@@ -82,7 +82,7 @@ sub load_modules
       if(!defined @info{"conf.@mod{$key}"} || @info{"conf.@mod{$key}"} == 1) {
          eval "use $key; 1;" or @info{"conf.@mod{$key}"} = -1;
          if(@info{"conf.@mod{$key}"} == -1) {
-            printf("WARNING: Missing $key  module, @mod{$key} disabled\n");
+            con("WARNING: Missing $key  module, @mod{$key} disabled\n");
          } elsif(!defined @info{"conf.@mod{$key}"}) {
             @info{"conf.@mod{$key}"} = 0;
          }
@@ -113,6 +113,8 @@ sub mysqldb
 #
 sub memorydb                                                                    
 {                                                                               
+#   @info{"conf.memorydb"} = 1;
+#   @info{"conf.mysqldb"} = 0;
    if(@info{"conf.mysqldb"} == 1  && @info{"conf.memorydb"} == 1) {             
       die("Only conf.mysqldb or conf.memorydb may be defined as 1");            
    } elsif(@info{"conf.mysqldb"} == 0  && @info{"conf.memorydb"} == 0) {
@@ -174,6 +176,8 @@ sub load_config_default
    @default{backup_interval}          = 3600;                  # once an hour
    @default{freefind_interval}        = 84600;                   # once a day
    @default{function_invocation_limit}= 2500;
+   @default{weblog}                   = "teenymush.web.log";
+   @default{conlog}                   = "teenymush.log";
    @default{httpd_invalid}            = 3;
    @default{login}                    = "Welcome to @info{version}\r\n\r\n" .
                                         "   Type the below command to " .
@@ -211,7 +215,7 @@ sub read_config
       return;
    }
 
-   printf("Reading Config: $fn\n") if $flag;
+   con("Reading Config: $fn\n") if $flag;
    for my $line (split(/\n/,getfile($fn))) {
       $line =~ s/\r|\n//g;
       if($line =~/^\s*#/ || $line =~ /^\s*$/) {
@@ -221,15 +225,13 @@ sub read_config
       } elsif($line =~ /^\s*([^ =]+)\s*=\s*(.*?)\s*$/) {
          @info{$1} = $2 if @info{$1} != -1
       } else {
-         printf("Invalid data in $fn:\n") if($count == 0);
-         printf("    '%s'\n",$line);
+         con("Invalid data in $fn:\n") if($count == 0);
+         con("    '%s'\n",$line);
          $count++;
       }
    }
 
-   # i'd rather this be in read_attr_conf() but the database needs to be
-   # read before we can pull attributes out of it.
-   @info{"conf.mudname"} = "TeenyMUSH" if @info{"conf.mudname"} eq undef;
+   load_config_default();
 }
 
 
@@ -246,7 +248,7 @@ sub prompt
    $| = 1;                                        # set input to unbuffered
 
    while($result eq undef) {
-      printf("%s ",$txt);                                     # show prompt
+      con("%s ",$txt);                                     # show prompt
       $result = <STDIN>;                         # grab one line from stdin
       $result =~ s/^\s+|\s+$//g;
       $result =~ s/\n|\r//g;                 # strip leading spaces/returns
@@ -263,7 +265,7 @@ sub write_to_file
       die("Source file $fn already exists, not over-writing");
    }
  
-   printf("Writing out: %s\n",$fn);
+   con("Writing out: %s\n",$fn);
 
    open($file,"> $fn") ||
       die("Could not open $fn for writing");
@@ -330,14 +332,14 @@ sub load_new_db
                      "   and table_schema = database()"
                     ) != 0);
 
-   printf("##############################################################\n");
-   printf("##                                                          ##\n");
-   printf("##                  Empty database found                    ##\n");
-   printf("##                                                          ##\n");
-   printf("##############################################################\n");
+   con("##############################################################\n");
+   con("##                                                          ##\n");
+   con("##                  Empty database found                    ##\n");
+   con("##                                                          ##\n");
+   con("##############################################################\n");
    @info{no_db_found} = 1;
 
-   printf("\nDatabase: %s@%s on %s\n\n",
+   con("\nDatabase: %s@%s on %s\n\n",
           @info{user},@info{database},$info{host});
    while($result ne "y" && $result ne "yes") {
        $result = prompt("No database found, load default database [yes/no]?");
@@ -346,7 +348,7 @@ sub load_new_db
           return;
        }
    }
-   printf("Default database creation log: tm_db_create.log");
+   con("Default database creation log: tm_db_create.log");
    system("mysql -u @info{user} -p{pass} {database} " .
           "< base_structure.sql >> tm_db_create.log");
    system("mysql -u @info{user} -p@info{pass} {database} " .
@@ -369,8 +371,8 @@ sub load_db_backup
    return if(!defined @info{no_db_found} || arg("restore"));
 
    if(!-e "tm_backup.sql") {
-      printf("\nLoading backup requires backup stored as tm_backup.sql\n\n");
-      printf("tm_backup.sql file not found, aborting.\n");
+      con("\nLoading backup requires backup stored as tm_backup.sql\n\n");
+      con("tm_backup.sql file not found, aborting.\n");
       exit();
    }
 
@@ -385,11 +387,14 @@ sub load_db_backup
    system("mysql -u @info{user} -p@info{pass} @info{database} < " .
           "tm_backup.sql >> tm_db_load.log");
    if(!rename("tm_backup.sql","tm_backup.sql.loaded")) {
-      printf("WARNING: Unable to rename tm_backup.sql, backup will be " .
+      con("WARNING: Unable to rename tm_backup.sql, backup will be " .
              "reloaded upon next run unless the file is renamed/deleted.");
    }
 }
 
+#
+# handle command line arguements
+#
 sub arg
 {
    my $txt = shift;
@@ -405,14 +410,14 @@ sub main
    $SIG{HUP} = sub {
       my $count = reload_code();
       delete @engine{keys %engine};
-      printf("HUP signal caught, reloading: %s\n",$count ? $count : "none");
+      con("HUP signal caught, reloading: %s\n",$count ? $count : "none");
    };
 
    $SIG{'INT'} = sub {  if(memorydb && $#db > -1) {
-                           printf("**** Program Exiting ******\n");
+                           con("**** Program Exiting ******\n");
                            cmd_dump(obj(0),{},"CRASH");
                            @info{crash_dump_complete} = 1;
-                           printf("**** Dump Complete Exiting ******\n");
+                           con("**** Dump Complete Exiting ******\n");
                         }
                         exit(1);
                      };
@@ -760,7 +765,7 @@ sub cmd_mail
 {
    my ($self,$prog) = (obj(shift),obj(shift));
 
-   my ($txt,$value) = max_args(2,"=",balanced_split(shift,"=",3));
+   my ($txt,$value) = balanced_split(shift,"=",4);
    $txt = evaluate($self,$prog,$txt);
    my $switch = shift;
 
@@ -954,7 +959,7 @@ sub cmd_while
     $$cmd{while_count}++;
 
     if($$cmd{while_count} >= 1000) {
-       printf("#*****# while exceeded maxium loop of 1000, stopped\n");
+       con("#*****# while exceeded maxium loop of 1000, stopped\n");
        return err($self,$prog,"while exceeded maxium loop of 1000, stopped");
     } elsif(test($self,$prog,$$cmd{while_test})) {
        mushrun(self   => $self,
@@ -1012,7 +1017,7 @@ sub cmd_bad
 
             for my $obj (lcon($$cmd{bad_pos})) {
                if(!valid_dbref($obj)) {
-                  printf("Removing \@destroyed obj #%s from contents of #%s\n",
+                  con("Removing \@destroyed obj #%s from contents of #%s\n",
                      $$obj{obj_id},$$cmd{bad_pos});
                   db_remove_list($$cmd{bad_pos},"obj_content",$$obj{obj_id});
                }
@@ -1020,7 +1025,7 @@ sub cmd_bad
 
             for my $obj (lexits($$cmd{bad_pos})) {
                if(!valid_dbref($obj)) {
-                  printf("Removing \@destroyed obj #%s from exit list of #%s\n",
+                  con("Removing \@destroyed obj #%s from exit list of #%s\n",
                      $$obj{obj_id},$$cmd{bad_pos});
                   db_remove_list($$cmd{bad_pos},"obj_exits",$$obj{obj_id});
                }
@@ -1286,10 +1291,11 @@ sub cmd_trigger
       return err($self,$prog,"Permission denied.");
 
    # find where the "=" is without evaluating things.
-   my ($txt,$params) = max_args(2,"=",balanced_split(shift,"=",3));
+   my ($txt,$params) = balanced_split(shift,"=",4);
+ 
 
    # where the / is without evaluating things
-   my ($target,$name) = max_args(2,"\/",balanced_split($txt,"\/",3));
+   my ($target,$name) = balanced_split($txt,"\/",4);
 
    # okay to evaluate object / attribute
    my $target = find($self,$prog,evaluate($self,$prog,$target));
@@ -1334,13 +1340,17 @@ sub cmd_huh
         );
 }
                   
-sub cmd_offline_huh { my $sock = $$user{sock};
-                      if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
-                         ws_echo($sock,@info{"conf.login"});
-                      } else {
-                         printf($sock "%s\r\n",@info{"conf.login"});
-                      }
-                    };
+sub cmd_offline_huh
+{ 
+   my $sock = $$user{sock};
+   if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
+      ws_echo($sock,@info{"conf.login"});
+   } else {
+      printf($sock "%s\r\n",@info{"conf.login"});
+   }
+}
+
+
 sub cmd_version
 {
    my ($self,$prog) = @_;
@@ -1935,34 +1945,19 @@ sub show_stack
    my ($prog,$txt) = @_;
 
    if($txt ne undef) {
-      printf("---[ start ]---- [%s]\n",$txt);
+      con("---[ start ]---- [%s]\n",$txt);
    } else {
-      printf("---[ start ]----\n",$txt);
+      con("---[ start ]----\n",$txt);
    }
    for my $i (0 .. $#{$$prog{stack}}) {
       my $cmd = @{$$prog{stack}}[$i];
-      printf("   %3s[%s] : %s\n",
+      con("   %3s[%s] : %s\n",
              $i,
              defined $$cmd{done} ? 1 : 0,
              substr(single_line($$cmd{cmd}),0,40)
             );
    }
-   printf("---[  end  ]----\n");
-}
-
-sub max_args
-{
-   my ($count,$delim,@array) = @_;
-   my @result;
-
-   for my $i (0 .. $#array) {
-      if($i <= $count-1) {
-         @result[$i] = @array[$i];
-      } elsif($i > $count-1) {
-         @result[$count-1] .= $delim . @array[$i];
-      }
-   }
-   return @result;
+   con("---[  end  ]----\n");
 }
 
 sub out
@@ -2026,7 +2021,7 @@ sub cmd_dolist
 
 
    if(!defined $$cmd{dolist_list}) {                      # initialize dolist
-       my ($first,$second) = max_args(2,"=",balanced_split($txt,"=",3));
+       my ($first,$second) = balanced_split($txt,"=",4);
        $$cmd{dolist_cmd}   = $second;
        $$cmd{dolist_list} = [safe_split(evaluate($self,$prog,$first),$delim)];
        $$cmd{dolist_count} = 0;
@@ -2198,8 +2193,6 @@ sub read_atr_config
 {
    my ($self,$prog) = @_;
    my %updated;
-
-   load_config_default();
 
    for my $atr (lattr(0)) {
       if($atr =~ /^conf\./i) {
@@ -3168,7 +3161,6 @@ sub cmd_pemit
               );
       }
    } else {
-      printf("   pemit: SYNTAX\n");
       err($self,$prog,"syntax: \@pemit <object> = <message>");
    }
 }
@@ -3800,15 +3792,15 @@ sub cmd_clear
 {
    my ($self,$prog,$txt) = @_;
 
-   if(hasflag($self,"WIZARD")) {
+   if(!hasflag($self,"WIZARD")) {
       err($self,$prog,"Permission denied.");
    } elsif($txt ne undef) {
       err($self,$prog,"\@clear expect no arguments");
    } elsif(perm($self,"CLEAR")) {
       $| = 1;
-      printf("%s\n%s\n%s\n","#" x 65,"-" x 65,"#" x 65);
-      print "\033[2J";    #clear the screen
-      print "\033[0;0H";  #jump to 0,0
+      con("%s\n%s\n%s\n","#" x 65,"-" x 65,"#" x 65);
+      con("\033[2J");    #clear the screen
+      con("\033[0;0H");  #jump to 0,0
       necho(self   => $self,
             prog   => $prog,
             source => [ "Done." ]
@@ -4352,7 +4344,7 @@ sub cmd_connect
 
       cmd_look($user,prog($user,$user));                    # show room
 
-      printf("    %s@%s\n",name($user),$$user{hostname});
+      con("    %s@%s\n",name($user),$$user{hostname});
 
 
       # notify users local and users with monitor flag
@@ -5026,10 +5018,10 @@ sub cmd_set
    return err($self,$prog,"Permission denied") if hasflag($self,"GUEST");
 
    # find object / value
-   my ($obj,$value) = max_args(2,"=",balanced_split(shift,"=",3));
+   my ($obj,$value) = balanced_split(shift,"=",4);
 
    # find attr name if provided
-   my ($name,$attr) = max_args(2,"\/",balanced_split($obj,"\/",3));
+   my ($name,$attr) = balanced_split($obj,"\/",4);
 
    my $target = find($self,$prog,evaluate($self,$prog,$name)) || # find target
       return err($self,$prog,"I don't see that here.");
@@ -5067,7 +5059,7 @@ sub cmd_set2
 
    return err($self,$prog,"Permission denied") if hasflag($self,"GUEST");
 
-   my ($txt,$value) = max_args(2,"=",balanced_split(shift,"=",3));
+   my ($txt,$value) = balanced_split(shift,"=",4);
    my $flag = shift;
 
    if($txt =~ /^\s*([^ ]+)\s*/) {                 # pick off attribute name
@@ -5145,7 +5137,7 @@ sub get_source_checksums
 
     for my $pos (keys %data) {
        if(@{@data{$pos}}{chk} =~ /^Digest::MD5=SCALAR\((.*)\)$/) {
-          printf("WARNING: Didn't end to $pos -> '%s'\n",@{@data{$pos}}{chk});
+          con("WARNING: Didn't find end to $pos -> '%s'\n",@{@data{$pos}}{chk});
        }
     }
     return \%data;
@@ -5165,12 +5157,14 @@ sub reload_code
 #      }
       if(@{$$prev{$key}}{chk} ne @{$$curr{$key}}{chk}) {
          $count++;
-         printf("Reloading: %-40s",$key);
+         con("Reloading: %-40s",$key);
+         con("    before: '%s'\n",@{$$prev{$key}}{chk});
+         con("    after:  '%s'\n",@{$$curr{$key}}{chk});
 
          eval(@{$$curr{$key}}{src});
 
          if($@) {
-            printf("*FAILED*\n%s\n",renumber_code($@));
+            con("*FAILED*\n%s\n",renumber_code($@));
             @{$$curr{$key}}{chk} = -1;
             if($self ne undef) {
                necho(self   => $self,
@@ -5179,7 +5173,7 @@ sub reload_code
                     );
             }
          } else {
-            printf("Successful\n");
+            con("Successful\n");
             if($self ne undef) {
                necho(self   => $self,
                      prog   => $prog,
@@ -6499,9 +6493,6 @@ sub dbref_mutate
 {
    my $obj = obj(shift);
 
-   if($$obj{obj_id} =~ /^hash/i) {
-      printf("BAD!\n");
-   }
    if(defined @info{backup_mode} && @info{backup_mode}) {
       if(defined @deleted{$$obj{obj_id}}) {
          return undef;
@@ -6933,7 +6924,7 @@ sub db_sql_dump
    }
 
    open(FILE,"> json.txt") ||
-      return printf("Could not open json.txt for writing");
+      return con("Could not open json.txt for writing");
 
    printf(FILE "server: %s, dbversion=%s, exported=%s\n",
       @info{version},@info{dbversion},scalar localtime());
@@ -7016,7 +7007,7 @@ sub db_process_line
       delete @$state{type};
       delete @$state{loc};
    } else {
-      printf("Unable to parse[$$state{obj}]: '%s'\n",$line);
+      con("Unable to parse[$$state{obj}]: '%s'\n",$line);
    }
 }
 
@@ -7040,19 +7031,19 @@ sub db_read
    return if($#db >= 0);                        # don't re-read the database
 
    open($file,"< $name") ||
-      printf("Unable to read file '$name'\n");
+      con("Unable to read file '$name'\n");
 
-   printf("Opening database file: %s\n",$name);
+   con("Opening database file: %s\n",$name);
 
    while(<$file>) {
       db_process_line($state,$_);
    }
 
    if(!$$state{complete} && arg("forceload")) {
-      printf("\n### File %s is not complete, aborting ###\n\n",$name);
+      con("\n### File %s is not complete, aborting ###\n\n",$name);
       exit(1);
    }
-   printf("    Database Version %s -- %s bytes read\n",
+   con("    Database Version %s -- %s bytes read\n",
           $$state{ver},
           $$state{chars}
          );
@@ -7060,20 +7051,20 @@ sub db_read
 }
 
 $SIG{'INT'} = sub {  if(memorydb) {
-                        printf("**** Program Exiting ******\n"); 
+                        con("**** Program Exiting ******\n"); 
                         cmd_dump(obj(0),{},"CRASH");
                         @info{crash_dump_complete} = 1;
-                        printf("**** Dump Complete Exiting ******\n");
+                        con("**** Dump Complete Exiting ******\n");
                      }
-                     printf("CALLED\n");
+                     con("CALLED\n");
                      exit(1);
                   };
 
 END {
    if(memorydb && !defined @info{crash_dump_complete} && $#db > -1) {
-      printf("**** Program EXITING ******\n");
+      con("**** Program EXITING ******\n");
       cmd_dump(obj(0),{},"CRASH");
-      printf("**** Dump Complete Exiting 2 ******\n");
+      con("**** Dump Complete Exiting 2 ******\n");
    }
 }
 
@@ -7333,7 +7324,7 @@ sub mushrun
          @arg{invoker} = $$prog{invoker};
 #         printf("     INVOKER2: '%s'\n",@arg{invoker});
       } else {
-         printf("     INVOKER: NONE '%s'\n",@arg{invoker},code());
+         con("     INVOKER: NONE '%s'\n",@arg{invoker},code());
       }
     } else {
 #         printf("     INVOKER: ALREADY SET\n",@arg{invoker});
@@ -7432,13 +7423,14 @@ sub mushrun_done
       if(defined $$prog{attr}) {
          $attr = "#@{$$prog{attr}}{atr_owner}/@{$$prog{attr}}{atr_name} => ";
       }
-      printf("Cost: %s%.3f pennies in %.3fs [%sc/%sf]\n",
-             $attr,
-             $cost,
-             $$prog{function_duration} + $$prog{command_duration},
-             nvl($$prog{command},0),
-             nvl($$prog{function},0)
-            );
+      logit($$prog{hint} eq "WEB" ? "weblog" : "conlog",
+            "Cost: %s%.3f pennies in %.3fs [%sc/%sf]\n",
+            $attr,
+            $cost,
+            $$prog{function_duration} + $$prog{command_duration},
+            nvl($$prog{command},0),
+            nvl($$prog{function},0)
+           );
    }
 
    if($$prog{hint} eq "WEBSOCKET") {
@@ -7475,8 +7467,8 @@ sub spin
        ualarm(8_000_000);                              # err out at 8 seconds
        local $SIG{__DIE__} = sub {
           delete @engine{@info{current_pid}};
-          printf("----- [ Crash REPORT@ %s ]-----\n",scalar localtime());
-          printf("%s\n",code("long"));
+          con("----- [ Crash REPORT@ %s ]-----\n",scalar localtime());
+          con("%s\n",code("long"));
        };
 
 
@@ -7540,7 +7532,7 @@ sub spin
                delete @$prog{mutated};
 
                if(Time::HiRes::gettimeofday() - $start >= 1) { # stop
-                  printf("   Time slice ran long, exiting correctly [%d cmds]\n",
+                  con("   Time slice ran long, exiting correctly [%d cmds]\n",
                          $count);
                   mushrun_done($prog) if($#$stack == -1);     # program is done
                   ualarm(0);
@@ -7555,7 +7547,7 @@ sub spin
    };
 
    if($@ =~ /alarm/i) {
-      printf("Time slice timed out (%2f w/%s cmd) $@\n",
+      con("Time slice timed out (%2f w/%s cmd) $@\n",
          Time::HiRes::gettimeofday() - $start,$count);
    }
 }
@@ -7576,7 +7568,7 @@ sub run_internal
    return if($$hash{cmd} =~ /^CODE\(.*\)$/);
 
    $$prog{cmd} = $command;
-#   printf("CMD:\n%s\n",print_var($command));
+#   con("CMD:\n%s\n",print_var($command));
    if(length($cmd) ne 1) {
       while($arg =~ /^\/([^ =]+)( |$)/) {                  # find switches
          @switch{lc($1)} = 1;
@@ -7584,7 +7576,7 @@ sub run_internal
       }
    }
 
-#   printf("RUN(%s->%s): '%s%s'\n",
+#   con("RUN(%s->%s): '%s%s'\n",
 #          @{$$prog{created_by}}{obj_id},
 #          @{$$command{runas}}{obj_id},
 #          substr($cmd.$arg,0,60),
@@ -10853,9 +10845,9 @@ sub fun_lookup
    my ($self,$prog,$name,$before,$flag) = (shift,shift,lc(shift),shift,shift);
 
    if(!defined @fun{$name} && !$flag) {
-      printf("undefined function '%s'\n",$name);
-      printf("                   '%s'\n",ansi_debug($before));
-      printf("%s",code("long"));
+      con("undefined function '%s'\n",$name);
+      con("                   '%s'\n",ansi_debug($before));
+      con("%s",code("long"));
    }
    return (defined @fun{$name}) ? $name: "huh";
 }
@@ -10890,12 +10882,17 @@ sub parse_function
    }
 }
 
-
 #
 # balanced_split
 #    Split apart a string but allow the string to have "",{},()s
 #    that keep segments together... but only if they have a matching
 #    pair.
+#
+# types:
+#    1 : function split?
+#    2 : split until end of function?
+#    3 : split at delim
+#    4 : split until delim, delim not included in result
 #
 sub balanced_split
 {
@@ -10928,9 +10925,13 @@ sub balanced_split
             }
          } elsif($#depth == -1) {
             if($ch eq $delim) {    # delim at right depth
-               push(@stack,$buf);
-               $last = $i+1;
-               $buf = undef;
+               if($type == 4) {                        # found delim, done
+                  return $buf, substr($txt,$i+1);
+               } else {
+                  push(@stack,$buf);
+                  $last = $i+1;
+                  $buf = undef;
+               }
             } elsif($type <= 2 && $ch eq ")") {                   # func end
                push(@stack,$buf);
                $last = $i+1;
@@ -10953,7 +10954,7 @@ sub balanced_split
       }
    }
 
-   if($type == 3) {
+   if($type == 3 || $type == 4) {
       push(@stack,substr($txt,$last)) if(substr($txt,$last) !~ /^\s*$/);
       return @stack;
    } else {
@@ -10972,11 +10973,11 @@ sub script
    my ($fun,$args,$result) = @_;
 
 #   if($result =~ /^\s*$/) {
-#      printf("FUN: '%s(%s) returned undef\n",$fun,$args);
+#      con("FUN: '%s(%s) returned undef\n",$fun,$args);
 #   }
 #   return;
 #   if($args !~ /(v|u|get|r)\(/i && $fun !~ /^(v|u|get|r)$/) {
-#      printf("think [switch(%s(%s),%s,,{WRONG %s(%s) -> %s})]\n",
+#      con("think [switch(%s(%s),%s,,{WRONG %s(%s) -> %s})]\n",
 #          $fun,$args,$result,$fun,$args,$result);
 #   }
 }
@@ -10999,7 +11000,7 @@ sub evaluate
          my $result = parse_function($self,$prog,$fun,"$2)",2);
          if($result ne undef) {
             shift(@$result);
-            printf("undefined function: '%s'\n",$fun) if($fun eq "huh");
+            con("undefined function: '%s'\n",$fun) if($fun eq "huh");
 
             my $start = Time::HiRes::gettimeofday();
             my $r=&{@fun{$fun}}($self,$prog,@$result);
@@ -11096,7 +11097,7 @@ sub http_accept
                    ip   => $addr,
                  };
 
-#   printf("   %s\@web Connect\n",@{@http{$new}}{ip});
+#   web("   %s\@web Connect\n",@{@http{$new}}{ip});
 }
 
 sub http_disconnect
@@ -11110,6 +11111,12 @@ sub http_disconnect
 }
 
 
+#
+# manage_httpd_bans
+#    If a client requests an invalid page, assume its not a typo and instead
+#    assume they are hack attempts. I.E. Ban all hosts after X invalid
+#    attempts for an hour.
+#
 sub manage_httpd_bans
 {
    my $sock = shift;
@@ -11119,7 +11126,7 @@ sub manage_httpd_bans
    @info{httpd_ban} = {} if(!defined @info{httpd_ban}); 
    @info{httpd_invalid_data} = {} if(!defined @info{httpd_invalid_data});
 
-   # add new invalid request if provided
+   # new invalid request has happened, log it.
    if($sock ne undef) {
       my $ip = @http{$sock}->{ip};
       if(!defined @{@http{$sock}}{$ip}) {
@@ -11129,30 +11136,30 @@ sub manage_httpd_bans
    }
 
    #
-   # clean up / manage ban data
+   # clean up / manage existing ban data
    #
    if(!defined @info{httpd_invalid_data}) {          # no invalid hits at all
       @info{httpd_invalid_data} = {} if(!defined @info{httpd_invalid_data});
-   } else {
-      # clean up old requests
-      for my $key (keys %{@info{httpd_invalid_data}}) {
+   } else {                                          # clean up old requests
+      for my $key (keys %{@info{httpd_invalid_data}}) {     # cycle each host
          my $count = 0;
          for my $ts (keys %{@info{httpd_invalid_data}->{$key}}) {
-            if((scalar localtime()) - 300 > $ts) {              # rm, too old
+            if(time() - 3600 > $ts) {                           # rm, too old
                delete @info{httpd_invalid_data}->{$key}->{$ts};
-            } else {
+            } else {                                     # count current hits
                $count += @info{httpd_invalid_data}->{$key}->{$ts};
             }
          }
+
          if(scalar keys %{@info{httpd_invalid_data}->{$key}} == 0) {
             delete @info{httpd_invalid_data}->{$key};        # no current hits
          } elsif($count >= @info{"conf.httpd_invalid"}) {
             if(!defined @{@info{httpd_ban}}{$key}) {
                @{@info{httpd_ban}}{$key} = scalar localtime();     # too many
-               printf("   %s\@web *** BANNED **\n",$key);          # add ban
+               web("   %s\@web *** BANNED **\n",$key);          # add ban
             }
          } elsif(defined @{@info{httpd_ban}}{$key} ) {  # too little,remove ban
-            printf("   %s\@web Un-BANNNED\n",$key);
+            web("   %s\@web Un-BANNNED\n",$key);
             delete @{@info{httpd_ban}}{$key};
          }
       }
@@ -11289,7 +11296,7 @@ sub http_process_line
    my $data = @{@http{$s}}{data};
 
    if($txt =~ /^GET (.*) HTTP\/([\d\.]+)$/i) {              # record details
-#      printf("      %s\@web %s\n",@{@http{$s}}{ip},$1);
+#      web("      %s\@web %s\n",@{@http{$s}}{ip},$1);
       $$data{get} = $1;
    } elsif($txt =~ /^([\w\-]+): /) {
       $$data{lc($1)} = $';
@@ -11333,7 +11340,7 @@ sub http_process_line
                 2
                );
             if(@info{rows} != 1) {
-               printf("Unable to add data to socket_history\n");
+               con("Unable to add data to socket_history\n");
             }
          }
 
@@ -11343,22 +11350,22 @@ sub http_process_line
          if(($$data{get} =~ /_notemplate\.(html)$/i ||     # no template used
             $$data{get} =~ /\.(js|css)$/i) &&
             -e "txt/" . trim($$data{get})) {
-            printf("   %s\@web [%s]\n",$addr,$$data{get});
+            web("   %s\@web [%s]\n",$addr,$$data{get});
             http_reply_simple($s,$1,"%s",getfile(trim($$data{get})));
          } elsif($$data{get} =~ /\.html$/i && -e "txt/" . trim($$data{get})) {
             my $prog = prog($self,$self);                    # uses template
             $$prog{sock} = $s;
-            printf("   %s\@web [%s]\n",$addr,$$data{get});
+            web("   %s\@web [%s]\n",$addr,$$data{get});
             http_reply($prog,getfile(trim($$data{get})));
          } elsif(banable_urls($data)) {
             ban_add($s);
-            printf("   %s\@web [BANNED-%s]\n",$addr,$$data{get});
+            web("   %s\@web [BANNED-%s]\n",$addr,$$data{get});
             http_error($s,"%s","BANNED for HACKING");
          } elsif(defined @{@info{httpd_ban}}{$addr}) {
-            printf("   %s\@web [BANNED-%s]\n",$addr,$$data{get});
+            web("   %s\@web [BANNED-%s]\n",$addr,$$data{get});
             http_error($s,"%s","BANNED for invalid requests");
          } else {                                          # mush command
-            printf("   %s\@web [%s]\n",$addr,$$data{get});
+            web("   %s\@web [%s]\n",$addr,$$data{get});
             my $prog = mushrun(self   => $self,
                                runas  => $self,
                                invoker=> $self,
@@ -11473,9 +11480,9 @@ sub prune_dumps
          $last = $file;
       } else {
          if(!unlink("$name/$$hash{fn}")) {
-            printf("Delete file dumps/$$hash{fn} during cleanup FAILED.");
+            con("Delete file dumps/$$hash{fn} during cleanup FAILED.");
          } else {
-		 #            printf("# Deleting $$hash{fn} as part of db backup cleanup\n");
+		 #            con("# Deleting $$hash{fn} as part of db backup cleanup\n");
          }
       }
       $prev = $$hash{day};
@@ -11613,7 +11620,7 @@ sub close_telnet
       $$prog{socket_closed} = 1;
       my $hash = @connected{$$prog{socket_id}};
       # delete any pending input
-      printf("Closed orphaned mush telnet socket to %s:%s\n",
+      con("Closed orphaned mush telnet socket to %s:%s\n",
           $$hash{hostname},$$hash{port});
       server_disconnect($$prog{socket_id});
       delete @$prog{socket_id};
@@ -12043,14 +12050,56 @@ sub filter_chars
    return $txt;
 }
 
+sub logit
+{
+   my ($type,$fmt,@args) = @_;
+   my ($msg,$fd);
 
+   # add newline if needed except when the fmt starts with a escape code
+   $fmt .= "\n" if(substr($fmt,0,1) ne chr(27) && $fmt !~ /\n$/); 
 
-# echo(self   => $self,
-#      prog   => $prog,
-#      room   => [ $target, "msg", @args ],
-#      source => [ "msg", @args ],
-#      target => [ $target, "msg", @args ]
-# )
+   $fd = @info{"$type.fd"} if defined @info{"$type\.fd"};   # get existing fd
+
+   # do not log requests
+   return if(@info{"conf.$type"} =~ /^\s*nolog\s*$/i);
+
+   # security - filename could be coming from inside the db, don't allow
+   #            bad filenames - overwrite of important files.
+   if(!defined @info{"conf.$type"} || 
+      @info{"conf.$type"} =~ /(\\|\/|..)/ ||      # stay in current dir
+      @info{"conf.$type"} !~ /web.log$/i ) {         # stay named *.web.log
+      @info{"conf.$type"} = @default{$type};
+   }
+
+   # open log as needed if not using console
+   if(@info{"conf.$type"} !~ /^\s*console\s*$/i  &&
+      (!-e @info{"conf.$type"} || !defined @info{"$type\.fd"})) {
+      if(open($fd,">> " . @info{"conf.$type"})) {
+         printf("OPENED: '%s'\n",@info{"conf.$type"});
+         $fd->autoflush(1);
+         @info{"$type\.fd"} = $fd;
+      } else {
+         printf("!!OPENED: '%s' -> '%s'\n",$type,@info{"conf.conlog"});
+         $fd = undef;
+      }
+   }
+
+   if($fd eq undef || !defined @info{initial_load_done}) {       # console
+      printf($fmt, @args);
+   }
+
+   printf($fd "$fmt", @args) if($fd ne undef);
+}
+
+sub web
+{
+   logit("weblog",@_);
+}
+
+sub con
+{
+   logit("conlog",@_);
+}
 
 
 sub log_output
@@ -12154,8 +12203,8 @@ sub necho
    my $loc;
 
 #   if($arg{self} eq undef) {
-#      printf("%s\n",print_var(\%arg));
-#      printf("%s\n",code("long"));
+#      con("%s\n",print_var(\%arg));
+#      con("%s\n",code("long"));
 #   }
 
    if(loggedin($self)) {
@@ -12755,7 +12804,6 @@ sub create_object
          db_set($id,"obj_money",@info{"conf.starting_money"});
          db_set($id,"obj_firstsite",$where);
          @player{lc($name)} = $id;
-         printf("Addiing: %s => '%s'\n",lc($name),$id);
       } else {
          db_set($id,"obj_home",$$self{obj_id});
       }
@@ -13277,7 +13325,7 @@ sub obj
       return $id;
    } else {
       if($id !~ /^\s*\d+\s*$/) {
-         printf("ID: '%s' -> '%s'\n",$id,code());
+         con("ID: '%s' -> '%s'\n",$id,code());
          die();
       }
       return { obj_id => $id };
@@ -13553,7 +13601,7 @@ sub quota_left
   } elsif(hasflag($obj,"GUEST")) {
      return 0;
   } elsif(memorydb) {
-     return get(owner($self),"obj_quota");
+     return get(owner($obj),"obj_quota");
   } else {
      return one_val("select max(obj_quota) - count(*) + 1 value " .
                     "  from object " .
@@ -13936,11 +13984,12 @@ sub sql
    my (@result,$sth);
    @info{sqldone} = 0;
 
+   printf("CODE: '%s'\n",code());
    delete @info{rows};
 
 #   if($sql !~ /^insert into io/) {
-#     printf("SQL: '%s' -> '%s'\n",$sql,join(',',@args));
-##      printf("     '%s'\n",code("short"));
+#     con("SQL: '%s' -> '%s'\n",$sql,join(',',@args));
+##      con("     '%s'\n",code("short"));
 #   }
 
    #
@@ -14199,7 +14248,7 @@ sub server_process_line
    my ($hash,$input) = @_;
 
 #   if($input !~ /^\s*$/) {
-#      printf("#%s# '%s'\n",((defined $$hash{obj_id}) ? obj_name($hash) : "?"),
+#      con("#%s# '%s'\n",((defined $$hash{obj_id}) ? obj_name($hash) : "?"),
 #      $input);
 #   }
    my $data = @connected{$$hash{sock}};
@@ -14211,15 +14260,15 @@ sub server_process_line
    } else {
 #      eval {                                                  # catch errors
          local $SIG{__DIE__} = sub {
-            printf("----- [ Crash Report@ %s ]-----\n",scalar localtime());
-            printf("User:     %s\nCmd:      %s\n",name($user),$_[0]);
+            con("----- [ Crash Report@ %s ]-----\n",scalar localtime());
+            con("User:     %s\nCmd:      %s\n",name($user),$_[0]);
             if(mysqldb && defined @info{sql_last}) {
-               printf("LastSQL: '%s'\n",@info{sql_last});
-               printf("         '%s'\n",@info{sql_last_args});
+               con("LastSQL: '%s'\n",@info{sql_last});
+               con("         '%s'\n",@info{sql_last_args});
                delete @info{sql_last};
                delete @info{sql_last_args};
             }
-            printf("%s",code("long"));
+            con("%s",code("long"));
          };
 
          if($input =~ /^\s*([^ ]+)/ || $input =~ /^\s*$/) {
@@ -14242,10 +14291,10 @@ sub server_process_line
 #      };
 
       if($@) {                                # oops., you sunk my battle ship
-#         printf("# %s crashed the server with: %s\n%s",name($hash),$_[1],$@); 
-#         printf("LastSQL: '%s'\n",@info{sql_last});
-#         printf("         '%s'\n",@info{sql_last_args});
-#         printf("         '%s'\n",@info{sql_last_code});
+#         con("# %s crashed the server with: %s\n%s",name($hash),$_[1],$@); 
+#         con("LastSQL: '%s'\n",@info{sql_last});
+#         con("         '%s'\n",@info{sql_last_args});
+#         con("         '%s'\n",@info{sql_last_code});
          my_rollback if mysqldb;
    
          my $msg;
@@ -14319,15 +14368,15 @@ sub server_handle_sockets
 {
    eval {
          local $SIG{__DIE__} = sub {
-            printf("----- [ Crash Report@ %s ]-----\n",scalar localtime());
+            con("----- [ Crash Report@ %s ]-----\n",scalar localtime());
             printf("User:     %s\nCmd:      %s\n",name($user),$_[0]);
             if(mysqldb && defined @info{sql_last}) {
-               printf("LastSQL: '%s'\n",@info{sql_last});
-               printf("         '%s'\n",@info{sql_last_args});
+               con("LastSQL: '%s'\n",@info{sql_last});
+               con("         '%s'\n",@info{sql_last_args});
                delete @info{sql_last};
                delete @info{sql_last_args};
             }
-            printf("%s",code("long"));
+            con("%s",code("long"));
          };
 
       # wait for IO or 1 second
@@ -14365,9 +14414,9 @@ sub server_handle_sockets
                add_site_restriction($hash);
                @connected{$new} = $hash;
 
-               printf("# Connect from: %s [%s]\n",$$hash{hostname},ts());
+               con("# Connect from: %s [%s]\n",$$hash{hostname},ts());
                if($$hash{site_restriction} <= 2) {                  # banned
-                  printf("   BANNED   [Booted]\n");
+                  con("   BANNED   [Booted]\n");
                   if($$hash{site_restriction} == 2) {
                      printf($new "%s",@info{"conf.badsite"});
                   }
@@ -14405,7 +14454,7 @@ sub server_handle_sockets
 #               if(@{@connected{$s}}{raw} > 0) {
 #                  my $tmp = $`;
 #                  $tmp =~ s/\e\[[\d;]*[a-zA-Z]//g;
-#                  printf("#%s# %s\n",@{@connected{$s}}{raw},$tmp);
+#                  con("#%s# %s\n",@{@connected{$s}}{raw},$tmp);
 #               }
             }
          }
@@ -14415,13 +14464,13 @@ sub server_handle_sockets
 
    };
    if($@){
-      printf("Server Crashed, minimal details [main_loop]\n");
+      con("Server Crashed, minimal details [main_loop]\n");
 
       if(mysqldb) {
-         printf("LastSQL: '%s'\n",@info{sql_last});
-         printf("         '%s'\n",@info{sql_last_args});
+         con("LastSQL: '%s'\n",@info{sql_last});
+         con("         '%s'\n",@info{sql_last_args});
       }
-      printf("%s\n---[end]-------\n",$@);
+      con("%s\n---[end]-------\n",$@);
    }
 }
 
@@ -14554,8 +14603,6 @@ sub server_disconnect
 #
 sub server_start
 {
-   read_config();
-
    #
    # close the loop on connections that have start times but not end times
    #
@@ -14572,8 +14619,8 @@ sub server_start
       my $file = newest_full(@info{"conf.mudname"} . ".FULL.DB");
 
       if($file eq undef) {
-         printf("   No database found, loading starter database.\n");
-         printf("   Connect as: god potrzebie\n\n");
+         con("   No database found, loading starter database.\n");
+         con("   Connect as: god potrzebie\n\n");
          db_read_string(<<__EOF__);
 server: TeenyMUSH 0.9, dbversion=1.0, exported=Wed Oct 17 08:28:30 2018, type=normal
 obj[0] {
@@ -14609,12 +14656,11 @@ __EOF__
    }
 
    read_atr_config();
-   read_config();
 
    my $count = 0;
 
    @info{port} = 4201 if(@info{port} !~ /^\s*\d+\s*$/);
-   printf("TeenyMUSH listening on port @info{port}\n");
+   con("TeenyMUSH listening on port @info{port}\n");
    $listener = IO::Socket::INET->new(LocalPort => @info{port},
                                      Listen    => 1,
                                      Reuse     => 1
@@ -14622,25 +14668,26 @@ __EOF__
  
    if(@info{"conf.httpd"} ne undef && @info{"conf.httpd"} > 0) {
       if(@info{"conf.httpd"} =~ /^\s*(\d+)\s*$/) {
-         printf("HTTP listening on port %s\n",@info{"conf.httpd"});
+         con("HTTP listening on port %s\n",@info{"conf.httpd"});
 
          $web = IO::Socket::INET->new(LocalPort => @info{"conf.httpd"},
                                       Listen    =>1,
                                       Reuse=>1
                                      );
       } else {
-         printf("Invalid httpd port number specified in #0/conf.httpd");
+         con("Invalid httpd port number specified in #0/conf.httpd");
       }
    }
 
    if(@info{"conf.websocket"} ne undef && @info{"conf.websocket"} > 0) {
       if(@info{"conf.websocket"} =~ /^\s*(\d+)\s*$/) {
-         printf("Websocket listening on port %s\n",@info{"conf.websocket"});
+         con("Websocket listening on port %s\n",@info{"conf.websocket"});
          websock_init();
       } else {
-         printf("Invalid websocket port number specified in #0/conf.websocket");
+         con("Invalid websocket port number specified in #0/conf.websocket");
       }
    }
+   @info{initial_load_done} = 1;
 
    if($ws eq undef) {                             # emulate websocket listener
       $ws = {};                                              # when not in use
@@ -14660,12 +14707,12 @@ __EOF__
          server_handle_sockets();
       };
       if($@){
-         printf("Server Crashed, minimal details [main_loop]\n");
+         con("Server Crashed, minimal details [main_loop]\n");
          if(mysqldb) {
-            printf("LastSQL: '%s'\n",@info{sql_last});
-            printf("         '%s'\n",@info{sql_last_args});
+            con("LastSQL: '%s'\n",@info{sql_last});
+            con("         '%s'\n",@info{sql_last_args});
          }
-         printf("%s\n---[end]-------\n",$@);
+         con("%s\n---[end]-------\n",$@);
       }
    }
 }
@@ -14814,7 +14861,7 @@ sub ws_process
    $ssl = $ssl ? ',SSL' : '';
 
    if($msg =~ /^#M# /) {
-      printf("   %s\@ws [%s]\n", @{$ws->{conns}{$conn->{socket}}}{ip},$');
+      web("   %s\@ws [%s]\n", @{$ws->{conns}{$conn->{socket}}}{ip},$');
       @{$ws->{conns}{$conn->{socket}}}{type} = "NON_INTERACTIVE";
       my $self = fetch(@info{"conf.webuser"});
 
@@ -14830,7 +14877,7 @@ sub ws_process
       $$prog{sock} = $conn;
    } else {
       $msg = substr($msg,1);
-      printf("   %s\@ws [%s]\n", @{$ws->{conns}{$conn->{socket}}}{ip},$msg);
+      web("   %s\@ws [%s]\n", @{$ws->{conns}{$conn->{socket}}}{ip},$msg);
       server_process_line(@connected{$conn->{socket}},$msg);
    }
 }
@@ -14853,7 +14900,7 @@ sub websock_wall
             ws_disconnect($client);
          }
       } else {
-#         printf("Skipped $client\n");
+#         web("Skipped $client\n");
       }
    }
 }

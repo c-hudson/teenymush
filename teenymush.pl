@@ -76,6 +76,7 @@ sub load_modules
       'Net::HTTP::NB'          => 'url_http',      
       'HTML::Entities'         => 'entities',
       'Digest::MD5'            => 'md5',
+      'File::Copy'             => 'move',
    );
 
    for my $key (keys %mod) {
@@ -665,6 +666,8 @@ sub initialize_commands
    @command{"\@dbread"} = { fun  => sub { fun_dbread(@_); }                 };
    @command{"\@dump"}   = { fun  => sub { cmd_dump(@_); }                   };
    @command{"\@freefind"}={ fun  => sub { cmd_freefind(@_); }               };
+   @command{"\@import"}  ={ fun  => sub { cmd_import(@_); }                 };
+   @command{"\@stat"}   ={ fun  => sub { cmd_stat(@_); }                   };
    # --[ aliases ]-----------------------------------------------------------#
    
    @command{"\@poll"}  =  { fun => sub { cmd_doing(@_[0],@_[1],@_[2],
@@ -758,6 +761,43 @@ sub get_mail
          };
    } else {
       return undef;
+   }
+}
+
+sub cmd_stat
+{
+   my ($self,$prog,$txt) = (obj(shift),obj(shift),shift);
+   my ($players,$objects,$exits,$rooms,$garbage) = (0,0,0,0,0);
+
+   for my $i (0 .. $#db) {
+      if(valid_dbref($i)) {
+         if(hasflag($i,"PLAYER")) {
+            $players++;    
+         } elsif(hasflag($i,"OBJECT")) {
+            $objects++;    
+         } elsif(hasflag($i,"EXIT")) {
+            $exits++;    
+         } elsif(hasflag($i,"ROOM")) {
+            $rooms++;    
+         }
+      } else {
+         $garbage++;
+      }
+   }
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ "%s objects = %s rooms, %s exits, %s things, %s players. (%s garbage)", $rooms + $exits + $objects + $players +  $garbage, $rooms, $exits, $objects , $players, $garbage ]
+        );
+   
+}
+sub cmd_import
+{
+   my ($self,$prog,$txt) = (obj(shift),obj(shift),shift);
+
+   if(!hasflag($self,"GOD")) {
+      return err($self,$prog,"Permission denied.");
+   } else {
+      db_read_import($self,$prog,$txt);    
    }
 }
 
@@ -1103,7 +1143,7 @@ sub cmd_find
              $$cmd{find_pos} - $start < 100;
              $$cmd{find_pos}++) {
          if(valid_dbref($$cmd{find_pos}) &&             # does object match?
-            owner_id($$cmd{find_pos}) == $$cmd{find_owner} && 
+            controls($$cmd{find_owner},$$cmd{find_pos}) &&
             name($$cmd{find_pos},1) =~ /$$cmd{find_pat}/i) {
             push(@out,obj_name($self,$$cmd{find_pos}));
          }
@@ -3197,7 +3237,7 @@ sub cmd_drop
       return err($self,$prog,"You may not drop yourself.");
    }
 
-   move($self,$prog,$target,fetch(loc($self))) ||
+   teleport($self,$prog,$target,fetch(loc($self))) ||
       return err($self,$prog,"Internal error, unable to drop that object");
 
    # provide some visual feed back to the player
@@ -3237,7 +3277,7 @@ sub cmd_leave
 
 #   my ($self,$prog,$target,$dest,$type) = (obj($_[0]),obj($_[1]),obj($_[2]),$_[3]);
 
-   move($self,$prog,$self,$dest) ||
+   teleport($self,$prog,$self,$dest) ||
       return err($self,$prog,"Internal error, unable to leave that object");
 
    # provide some visual feed back to the player
@@ -3293,7 +3333,7 @@ sub cmd_take
          room2  => [ $self, "%s has left.",name($target) ]
         );
 
-   move($self,$prog,$target,$self) ||
+   teleport($self,$prog,$target,$self) ||
       return err($self,$prog,"Internal error, unable to pick up that object");
 
    necho(self   => $self,
@@ -3404,7 +3444,7 @@ sub cmd_enter
          room2  => [ $self, "%s has left.", name($self) ]
         );
 
-   move($self,$prog,$self,$target) ||
+   teleport($self,$prog,$self,$target) ||
       return err($self,$prog,"Internal error, unable to pick up that object");
 
    # provide some visual feed back to the player
@@ -3443,13 +3483,14 @@ sub whisper
    my ($self,$prog,$target,$msg) = @_;
 
    my $obj = find($self,$prog,$target);
-   return err($self,$prog,"I don't see that here.") if $obj eq undef;
 
-   if(hasflag($obj,"EXIT") || hasflag($obj,"ROOM")) {
+   if($obj eq undef) {
+      return err($self,$prog,"I don't see that here.");
+   } elsif(hasflag($obj,"EXIT") || hasflag($obj,"ROOM")) {
       return err($self,$prog,"You may only whisper to objects or players");
-   }
-
-   if($msg =~ /^\s*:/) {
+   } elsif(loc($obj) != loc($self)) {
+      return err($self,$prog,"%s is not here.",name($obj));
+   } elsif($msg =~ /^\s*:/) {
       necho(self   => $self,
             prog   => $prog,
             source => [ "%s senses, \"%s %s\"",
@@ -3483,7 +3524,7 @@ sub cmd_whisper
       whisper($self,$prog,$1,$');
    } else {
       my $target = get($self,"OBJ_LAST_WHISPER");          # no target whisper
-      return whisper($self,$prog,$target,$txt) if($target ne undef);
+      return whisper($self,$prog,$target,$txt) if ($target ne undef);
 
       err($self,
           $prog,
@@ -3689,7 +3730,7 @@ sub cmd_go
    }
 
    # move it, move it, move it. I like to move it, move it.
-   move($self,$prog,$self,$dest) ||
+   teleport($self,$prog,$self,$dest) ||
       return err($self,$prog,"Internal error, unable to go that direction");
 
    generic_action($self,$prog,"MOVE",$loc);
@@ -3750,7 +3791,7 @@ sub cmd_teleport
          all_room   => [ $target, "%s has left.",name($target) ]
         );
 
-   move($self,$prog,$target,$location) ||
+   teleport($self,$prog,$target,$location) ||
       return err($self,$prog,"Unable to teleport to that location");
 
    necho(self   => $self,
@@ -3801,6 +3842,9 @@ sub cmd_clear
       con("%s\n%s\n%s\n","#" x 65,"-" x 65,"#" x 65);
       con("\033[2J");    #clear the screen
       con("\033[0;0H");  #jump to 0,0
+      printf("%s\n%s\n%s\n","#" x 65,"-" x 65,"#" x 65);
+      printf("\033[2J");    #clear the screen
+      printf("\033[0;0H");  #jump to 0,0
       necho(self   => $self,
             prog   => $prog,
             source => [ "Done." ]
@@ -4337,7 +4381,7 @@ sub cmd_connect
          }
       }
 
-      necho(self   => $user,                 # show message of the day file
+      necho(self   => $user,
             prog   => prog($user,$user),
             source => [ "\n" ]
            );
@@ -4448,73 +4492,11 @@ sub cmd_describe
    cmd_set2($self,$prog,"description $txt",1);
 }
 
-# @set object = wizard
-# @set me/attribute
-sub cmd_set
-{
-   my ($self,$prog,$txt) = @_;
-   my ($target,$name,$attr,$value,$flag);
-
-    if(hasflag($self,"GUEST")) {
-      return err($self,$prog,"Permission Denied.");
-    } elsif($txt =~ /^\s*([^ =]+?)\s*\/\s*([^ =]+?)\s*=(.*)$/s) { # attribute
-      if(@{$$prog{cmd}}{source} == 1) {                          # user input
-         ($name,$attr) = ($1,$2);
-      } else {                                               # non-user input
-         ($name,$attr) = (evaluate($self,$prog,$1),evaluate($self,$prog,$2));
-      }
-      
-      ($target,$value) = (find($self,$prog,$name),$3);
-
-      return err($self,$prog,"Unknown object '%s'",$name) if !$target;
-      controls($self,$target) || return err($self,$prog,"Permission denied");
-
-      if(hasflag($target,"GOD") && !hasflag($self,"GOD")) {
-         return err($self,$prog,"Permission denied");
-      }
-
-      if(isatrflag($value)) {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "%s", set_atr_flag($target,$attr,$value) ]
-              );
-      } else {
-         if(@{$$prog{cmd}}{source} == 0) {                      # user input
-            $value = evaluate($self,$prog,$value);
-         }
-         set($self,$prog,$target,evaluate($self,$prog,$attr),$value);
-      }
-      my_commit() if(mysqldb);
-
-   } elsif($txt =~ /^\s*([^ =\\]+?)\s*= *(.*?) *$/s) { # flag?
-      if(@{$$prog{cmd}}{source} == 1) {                          # user input
-         ($name,$flag) = ($1,$2);
-      } else {                                               # non-user input
-         ($name,$flag) = (evaluate($self,$prog,$1),evaluate($self,$prog,$2));
-      }
-      $target = find($self,$prog,$name);
-
-      return err($self,$prog,"Unknown object '%s'",$name) if !$target;
-      controls($self,$target) || return err($self,$prog,"Permission denied");
-
-      if($flag =~ /^\s*dark\s*$/i &&          # no dark flag for non-wizards
-         hasflag($target,"PLAYER") && 
-         !hasflag($self,"WIZARD")) {
-         return err($self,$prog,"Permission denied");
-      }
-         
-
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ set_flag($self,$prog,$target,$flag) ]
-           );
-   } else {
-      return err($self,$prog,
-                 "Usage: \@set <object>/<attribute> = <value>\n" .
-                 "    or \@set <attribute> = <value>\n");
-   }
-}
-
+#
+# reconstitute
+#    Take the an attribute value and put it back together so that it resembles
+#    what was originally entered in + formating.
+#
 sub reconstitute
 {
    my ($name,$type,$pattern,$value,$flag,$switch) = @_;
@@ -4764,8 +4746,22 @@ sub cmd_ex
    }
 
    if(hasflag($target,"EXIT")) {
-      $out .= "\nSource: " . nvl(obj_name($self,loc_obj($target)),"N/A");
-      $out .= "\nDestination: " . nvl(obj_name($self,dest($target)),"*UNLINKED*");
+
+      my $src = loc_obj($target);
+
+      if($src eq undef) {
+         $out .= "\nSource: N/A";
+      } else {
+         $out .= "\nSource: " . obj_name($self,$src);
+      }
+
+      my $dest = dest($target);
+
+      if($dest eq undef) {
+         $out .= "\nDestination: *UNLINKED*";
+      } else {
+         $out .= "\nDestination: " . obj_name($self,$dest);
+      }
    }
 
    for my $obj (lexits($target)) {
@@ -5077,14 +5073,18 @@ sub cmd_set2
    } elsif(reserved($attr) && !$flag) {                     # don't set that!
       return err($self,$prog,"Thats not a good name for an attribute.");
    } else {
-      set($self,$prog,$target,$attr,trim($value));
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "Set." ],
-           );
+      if(@{$$prog{cmd}}{source} == 0) {
+         set($self,$prog,$target,$attr,trim(evaluate($self,$prog,$value)));
+      } else {
+         set($self,$prog,$target,$attr,trim($value));
+      }
+
+#      necho(self   => $self,
+#            prog   => $prog,
+#            source => [ "Set." ],
+#           );
    }
 }
-
 
 sub cmd_say
 {
@@ -5158,8 +5158,8 @@ sub reload_code
       if(@{$$prev{$key}}{chk} ne @{$$curr{$key}}{chk}) {
          $count++;
          con("Reloading: %-40s",$key);
-         con("    before: '%s'\n",@{$$prev{$key}}{chk});
-         con("    after:  '%s'\n",@{$$curr{$key}}{chk});
+#         con("    before: '%s'\n",@{$$prev{$key}}{chk});
+#         con("    after:  '%s'\n",@{$$curr{$key}}{chk});
 
          eval(@{$$curr{$key}}{src});
 
@@ -5526,7 +5526,7 @@ sub atr_hasflag
       my $attr = mget($obj,$atr);
       if($attr eq undef || 
          !defined $$attr{flag} || 
-         !defined $$attr{flag}->{uc($flag)}) {
+         !defined $$attr{flag}->{lc($flag)}) {
          return 0;
       } else {
          return 1;
@@ -6375,6 +6375,8 @@ sub initialize_flags
    @flag{ANSI}         ={ letter => "X", perm => "!GUEST", type => 1, ord=>22 };
    @flag{LOG}          ={ letter => "l", perm => "WIZARD", type => 1, ord=>23 };
    @flag{NO_COMMAND}   ={ letter => "n", perm => "!GUEST", type => 1, ord=>24 };
+   @flag{GOING}        ={ letter => "g", perm => "GOD",    type => 1, ord=>25 };
+   @flag{IMPORTED}     ={ letter => "I", perm => "GOD",    type => 1, ord=>26 };
 }
 
 #
@@ -6480,6 +6482,7 @@ sub db_delete
       @deleted{$$obj{obj_id}} = 1;
    } elsif(defined @db[$$obj{obj_id}]) {             # non-backup mode delete
       delete @db[$$obj{obj_id}];
+      printf("DELETING: '%s'\n",$$obj{obj_id});
    }
 }
 
@@ -6654,8 +6657,10 @@ sub serialize
    my ($name,$attr) = @_;
    my ($txt,$flag);
 
-   if(defined $$attr{regexp}) {
-      $txt = "$$attr{type}$$attr{glob}:$$attr{value}";
+   if(defined $$attr{glob}) {
+      my $pat = $$attr{glob};
+      $pat =~ s/:/\\:/g if($$attr{glob} =~ /:/);  # escape out :'s in pattern
+      $txt = "$$attr{type}$pat:$$attr{value}";
    } else {
       $txt = $$attr{value};
    }
@@ -6664,13 +6669,52 @@ sub serialize
       $flag = lc(join(',',keys %{$$attr{flag}}));
    }
 
-   if($txt =~ /\r/) { 
-      $txt = encode_base64($txt);
-      $txt =~ s/\n|\s+//g;
+
+   # so, the user could put a <RETURN> in their attribute... big deal?
+   if($txt =~ /[\r\n]/) { 
+      $txt = db_safe($txt);
       return "$name:$flag:M:$txt";
    } else {
       return "$name:$flag:A:$txt";
    }
+}
+
+#
+# db_safe
+#   Make a string safe for writing to a db flat file. In the past, this
+#   was just a call to encode_base64() but that is less readable.
+#
+sub db_safe
+{
+   my $txt = shift;
+
+   my $ret = chr(23);
+   $txt =~ s/\r\n/$ret/g;
+   $txt =~ s/\n/$ret/g;
+   $txt =~ s/\r/$ret/g;
+
+   my $semi = chr(24);
+   $txt =~ s/;/$semi/g;
+
+   return $txt;
+}
+
+#
+# db_unsafe
+#    Take those special characters and convert them back to what they
+#    really should be. This should only be used when reading from a
+#    db flat file.
+#
+sub db_unsafe
+{
+   my $txt = shift;
+
+   my $ret = chr(23);
+   my $semi = chr(24);
+
+   $txt =~ s/$ret/\n/g;
+   $txt =~ s/$semi/;/g;
+   return $txt;
 }
 
 sub hash_serialize
@@ -6683,7 +6727,7 @@ sub hash_serialize
    for my $key (keys %$attr) {
       $out .= ";" if($out ne undef);
       if($$attr{$key} =~ /;/) {
-         $out .= "$key:M:" . encode_base64($$attr{$key});
+         $out .= "$key:M:" . db_safe($$attr{$key});
       } else {
          $out .= "$key:A:$$attr{$key}";
       }
@@ -6976,7 +7020,7 @@ sub db_process_line
    } elsif($$state{obj} eq undef && $line =~ /^obj\[(\d+)]\s*{\s*$/) {
       $$state{obj} = $1;
    } elsif($$state{obj} ne undef && $line =~ /^\s*([^ \/:]+):([^:]*):M:/) {
-      db_set($$state{obj},$1,decode_base64($'));
+      db_set($$state{obj},$1,db_unsafe($'));
       db_set_flag($$state{obj},$1,$2,1) if($2 ne undef);
    } elsif($$state{obj} ne undef && $line =~ /^\s*([^ \/:]+):([^:]*):A:/) {
       db_set($$state{obj},$1,$');
@@ -6996,7 +7040,7 @@ sub db_process_line
          if($item =~ /^([^:]+):A:([^;]+)/) {
             db_set_hash($$state{obj},$attr,$1,$2);
          } elsif($item =~ /^([^:]+):M:([^;]+)/) {
-            db_set_hash($$state{obj},$attr,$1,decode_base64($2));
+            db_set_hash($$state{obj},$attr,$1,db_unsafe($2));
          }
       }
    } elsif($$state{obj} ne undef && $line =~ /^\s*}\s*$/) {
@@ -7431,6 +7475,9 @@ sub mushrun_done
             nvl($$prog{command},0),
             nvl($$prog{function},0)
            );
+#      for my $key (grep {/^fun_/} keys %$prog) {
+#         printf("   $key = $$prog{$key}\n");
+#      }
    }
 
    if($$prog{hint} eq "WEBSOCKET") {
@@ -8772,6 +8819,10 @@ sub fun_url
          $sock = Net::HTTP::NB->new(Host => $host);
       }
 
+#      printf("HOST: '%s'\n",$host);
+#      printf("PATH: '%s'\n",$path);
+#      printf("SEC: '%s'\n",$secure);
+#
       $$prog{socket_url} = $txt;
 
       if(!$sock) {
@@ -8788,9 +8839,24 @@ sub fun_url
       # make request as curl (helps with wttr.in)
       $path =~ s/ /%20/g;
       set_var($prog,"url",$path);
+#      printf("PATH: '%s'\n",$path);
 
       eval {                        # protect against uncontrollable problems
          $sock->write_request(GET => "/$path", 'User-Agent' => 'curl/7.52.1');
+#         $sock->write_request(GET => "/$path", 'User-Agent' => 'Wget/1.19.4');
+#           printf($sock "GET /$path HTTP/1.1\n");
+#           printf($sock "User-Agent: Wget/1.19.4 (linux-gnu)\n");
+#           printf($sock "Accept: */*\n");
+#           printf($sock "Accept-Encoding: identity\n");
+#           printf($sock "Host: $host\n");
+#           printf($sock "Connection: Keep-Alive\n\n");
+#           printf("GET /$path HTTP/1.1\n");
+#           printf("User-Agent: Wget/1.19.4 (linux-gnu)\n");
+#           printf("Accept: */*\n");
+#           printf("Accept-Encoding: identity\n");
+#           printf("Host: $host\n");
+#           printf("Connection: Keep-Alive\n\n");
+#           printf("-------[done]-----\n");
       };
 
       if($@) {                                   # something went wrong?
@@ -10289,7 +10355,8 @@ sub fun_get
       return "#-1 Unknown object";
    } elsif(!(controls($self,$target) ||
       hasflag($target,"VISUAL") || atr_hasflag($target,$atr,"VISUAL"))) {
-      return "#-1 Permission Denied $$self{obj_id} -> $$target{obj_id}";
+      printf("ATR: '%s'\n",atr_hasflag($target,$atr,"VISUAL"));
+      return "#-1 Permission Denied ($$self{obj_id} -> $$target{obj_id}/$atr)";
    } 
 
    if($atr =~ /^(last|last_page|last_created_date|create_by|last_whisper)$/) {
@@ -10302,11 +10369,15 @@ sub fun_get
 }
 
 
+#
+# fun_v
+#    Return a un-evaluated attribute
+#
 sub fun_v
 {
    my ($self,$prog,$txt) = (shift,shift,shift);
 
-   return evaluate($self,$prog,get($self,evaluate($self,$prog,$txt)));
+   return get($self,evaluate($self,$prog,$txt));
 }
 
 sub fun_setq
@@ -11005,6 +11076,7 @@ sub evaluate
             my $start = Time::HiRes::gettimeofday();
             my $r=&{@fun{$fun}}($self,$prog,@$result);
             $$prog{function_duration} +=Time::HiRes::gettimeofday()-$start;
+            $$prog{"fun_$fun"}++;
             
             script($fun,join(',',@$result),$r);
 
@@ -11447,7 +11519,7 @@ sub prune_dumps
    for my $file (readdir($dir)) {
       if($file =~ /$filter/ && $file !~ /\.BAD$/i) {
          if(!dump_complete("$name/$file")) {
-            move("$name/$file","$name/$file.BAD");     # rename but don't fail
+            move("$name/$file","$name/$file.BAD");  # rename but don't fail
          } elsif($file =~ /(\d{2})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/) {
              my $ts = timelocal($6,$5,$4,$3,$2-1,$1);
              @data{$ts} = { day => $3, fn  => $file };
@@ -12071,11 +12143,11 @@ sub logit
       @info{"conf.$type"} = @default{$type};
    }
 
+#   printf("$fmt", @args);
    # open log as needed if not using console
    if(@info{"conf.$type"} !~ /^\s*console\s*$/i  &&
       (!-e @info{"conf.$type"} || !defined @info{"$type\.fd"})) {
       if(open($fd,">> " . @info{"conf.$type"})) {
-         printf("OPENED: '%s'\n",@info{"conf.$type"});
          $fd->autoflush(1);
          @info{"$type\.fd"} = $fd;
       } else {
@@ -12084,7 +12156,8 @@ sub logit
       }
    }
 
-   if($fd eq undef || !defined @info{initial_load_done}) {       # console
+   if($type eq "conlog") {
+#   if($fd eq undef || !defined @info{initial_load_done}) {       # console
       printf($fmt, @args);
    }
 
@@ -12726,8 +12799,10 @@ sub destroy_object
    my $loc = loc($obj);
 
    if(memorydb) {
-      my $loc = loc($obj);                            # remove from location
-      db_remove_list($loc,"obj_content",$$obj{obj_id});
+      if(!hasflag($obj,"ROOM")) {
+         my $loc = loc($obj);                          # remove from location
+         db_remove_list($loc,"obj_content",$$obj{obj_id});
+      }
       db_delete($obj);
       return 1;
    } else {
@@ -12811,7 +12886,7 @@ sub create_object
       db_set($id,"obj_owner",$$self{obj_id});
       db_set($id,"obj_created_date",scalar localtime());
       if($type eq "PLAYER" || $type eq "OBJECT") {
-         move($self,$prog,$id,$where);
+         teleport($self,$prog,$id,$where);
       }
       return $id;
    } else {
@@ -12869,7 +12944,7 @@ sub create_object
       return undef;
    }
    if($type eq "PLAYER" || $type eq "OBJECT") {
-      move($self,$prog,$id,fetch($where));
+      teleport($self,$prog,$id,fetch($where));
    }
    return $id;
 }
@@ -13254,10 +13329,10 @@ sub date_split
 }
 
 #
-# move
+# teleport
 #    move an object from to a new location.
 #
-sub move
+sub teleport
 {
    my ($self,$prog,$target,$dest,$type) = 
       (obj($_[0]),obj($_[1]),obj($_[2]),obj($_[3]),$_[4]);
@@ -14651,8 +14726,8 @@ obj[1] {
 __EOF__
       } else {
          db_read(undef,undef,$file);
+         @info{db_last_dump} = time();
       }
-      @info{db_last_dump} = time();
    }
 
    read_atr_config();
@@ -14905,8 +14980,281 @@ sub websock_wall
    }
 }
 
+#
+# balanced
+#    Determine if a line of text has a set of balanced parentheses
+#
+sub balanced
+{
+    my $txt = shift;
+    my $open = $txt =~ tr/\(//;
+    my $close = $txt =~ tr/\)//;
+    return ($open == $close) ? 1 : 0;
+}
+
+sub decode_flags
+{
+   my @list;
+   my ($flag,$num,$id) = @_;
+
+
+   if($id == 1) {
+      for my $type (grep {/^TYPE_/} keys %$flag) {
+
+         # there has to be a better way to do this, but what i found
+         # fails when comparing 0 to 0x0, and this is my work around.
+         if(sprintf("'%032b'",$num & 0x7) eq 
+            sprintf("'%032b'",oct($$flag{$type}))){
+            push(@list,substr($type,5));
+         }
+      }
+   }
+
+   for my $type (grep {/_$id$/} keys %$flag) {
+      if($num & oct($$flag{$type})) {
+         push(@list,substr($type,0,-2));
+      }
+   }
+
+   return @list;
+}
+
+#
+# post_db_read_fix
+#    TinyMUSH's db stores contents and exits in a linked list style format,
+#    where the object in the list stores a pointer to the next object.
+#    Teenymush just stores an array of objects. This function will
+#
+#
+sub post_db_read_fix
+{
+   my $start = shift;
+
+   for my $i ($start .. $#db) {
+      if(valid_dbref($i) && defined @db[$i]->{obj_content}) {
+         my $hash = @db[$i]->{obj_content}->{value};
+         my $obj = (keys %$hash)[0];
+
+         if($obj == -1) {
+            db_set($i,"obj_content");
+         } else {
+            while($obj != -1 && valid_dbref($obj)) {          # traverse list
+               db_set_list($i,"obj_content",$obj);            # add next item
+               db_set($obj,"obj_location",$i);
+   
+               if(defined @db[$obj]->{obj_next}->{value} && 
+                  @db[$obj]->{obj_next}->{value} != -1) {
+                  my $prev = $obj;
+                  $obj = @db[$obj]->{obj_next}->{value};     # move to next hop
+                  db_set($prev,"obj_next");                 # delete next attr
+               } else {
+                  $obj = -1;
+               }
+            }
+         }
+      }
+      if(valid_dbref($i) && defined @db[$i]->{obj_exits}) {
+         my $hash = @db[$i]->{obj_exits}->{value};
+         my $obj = (keys %$hash)[0];
+
+         if($obj == -1) {
+            db_set($i,"obj_exits");
+         } else {
+            while($obj != -1 && valid_dbref($obj)) {          # traverse list
+               db_set_list($i,"obj_exits",$obj);              # add next item
+
+               if(hasflag($obj,"EXIT")) {
+                  if(@db[$obj]->{obj_location}->{value} == -1) {
+                     db_set($obj,"obj_destination");
+                  } else {
+                     db_set($obj,
+                            "obj_destination",
+                            @db[$obj]->{obj_location}->{value});
+                  }
+
+                  my $loc = @db[$obj]->{obj_exits}->{value};
+                  db_set($obj,"obj_location",(keys %$loc)[0]);
+                  db_set($obj,"obj_exits");
+               }
+
+               if(defined @db[$obj]->{obj_next}->{value} && 
+                  @db[$obj]->{obj_next}->{value} != -1) {
+                  my $prev = $obj;
+                  $obj = @db[$obj]->{obj_next}->{value};   # move to next hop
+                  db_set($prev,"obj_next");                # delete next attr
+               } else {
+                  $obj = -1;
+               }
+            }
+         }
+      }
+   }
+   for my $i ($start .. $#db) {    # going objects are handled diferently
+      delete @db[$i] if(hasflag($i,"GOING"));
+   }
+}
+
+#
+# db_read_import
+#    Read a mush flat file and put it at the "end" of the database.
+#    Dbrefs in code are not remapped but non-code things like exits and
+#    contents are. This was only tested with a 1994 flat file database.
+#
+sub db_read_import
+{
+   my ($self,$prog,$file) = @_;
+   my ($inattr,$id,$pos,$lock,$attr_id,%attr,$name,%impflag) = (1, undef);
+
+   # The data from the flags.h and attrs.h could be hard coded into the
+   # db but reading it from the source will probably allow for different
+   # versions to be supported?
+
+#   return if $#db > -1;
+   my $start = $#db + 1;
+
+   open(FILE,"attrs.h") ||
+      die("Could not open 'attrs.h' for reading.");
+   while(<FILE>) {
+      s/\r|\n//g;
+
+      if(/^\s*#define\s+A_(\w+)\s+(\d+)/) {           # get attribute ids
+         @attr{$2} = "A_$1";
+      }
+   }
+   close(FILE);
+
+   # read flags.h for use in decoding flags
+   $id = 1;
+   open(FILE,"flags.h") ||
+      die("Could not open 'flags.h' for reading.");
+   while(<FILE>) {
+      s/\r|\n//g;
+
+      if(/^#define TYPE_(\w+)\s+([\dx]+)/) {
+          @impflag{"TYPE_$1"} = $2;
+      } elsif(/^#define\s+(\w+)\s+([\dx]+)/) {
+          @impflag{"$1_$id"} = $2;
+      } elsif(/Second word/) {
+         $id = 2;
+      } elsif(/Third word/) {
+         $id = 3;
+      } elsif(/^#define\s+\w+\(.+\).*Flags[2|3].*&\s+(\w+)\)/) {
+         delete @impflag{$1};
+      }
+   }
+   close(FILE);
+   delete @impflag{"FLAG_WORD1_1"};   # delete unused flags that cause problems
+   delete @impflag{"FLAG_WORD2_1"};
+   delete @impflag{"FLAG_WORD3_1"}; 
+   delete @impflag{"GOODTYPE_1"};
+   delete @impflag{"NOTYPE_1"};
+
+   open(FILE,$file) ||                            # start reading actual db
+      return err($self,$prog,"Could not open file '%s' for reading",$file);
+
+   while(<FILE>) {
+      s/\r|\n//g;
+      if($. == 1 || $. == 2 || $. == 3) {
+#         printf("# $_\n");
+      } elsif($inattr && /^\+A(\d+)$/) {
+         $id = $1;
+      } elsif($inattr && $id ne undef && /^(\d+):([^ ]+)$/) {
+         @attr{$id} = $2;
+         $id = undef;
+      } elsif(/^!(\d+)$/) {
+         $inattr = 0;
+         $id = $1;
+         $pos = $.;
+      } elsif($inattr) {
+         printf("INATTR[$.,%s]: '$_'\n",$. - $pos);
+         exit();
+      } elsif($.  - $pos == 1) {                                   # name
+         $name = $_;
+         db_set($id+$start,"obj_name",$_);
+         db_set($id+$start,"obj_cname",$_);
+      } elsif($.  - $pos == 2) {
+         db_set($id+$start,"obj_location",($_ == -1) ? -1 : ($_+$start));
+      } elsif($.  - $pos == 3) {
+         db_set_list($id+$start,"obj_content",($_ == -1) ? -1 : ($_+$start));
+      } elsif($.  - $pos == 4) {
+         db_set_list($id+$start,"obj_exits",($_ == -1) ? -1 : ($_+$start));
+      } elsif($.  - $pos == 5) {
+         db_set($id+$start,"obj_home",$_+$start);
+      } elsif($.  - $pos == 6) {          # unused, but needed during clean up
+         db_set($id+$start,"obj_next",($_ == -1) ? -1 : ($_+$start));
+      } elsif($lock ne undef || $.  - $pos == 7) {
+         $lock .= $_;
+         if(balanced($lock)) {
+            db_set($id+$start,"obj_lock_default",$lock);
+            $lock = undef;
+         } else {
+            $pos++;
+         }
+      } elsif($.  - $pos == 8) {
+         db_set($id+$start,"obj_owner",($_ == -1) ? -1 : ($_+$start));
+      } elsif($.  - $pos == 9) {
+         # printf("$id-PARENT[%s]? '%s'\n",$. - $pos,$_);     # unsupported
+      } elsif($.  - $pos == 10) {
+         db_set($id+$start,"obj_money",$_);
+      } elsif($.  - $pos == 11) {
+         for my $flag (decode_flags(\%impflag,$_,1)) {
+            if(defined @flag{uc($flag)}) {
+               db_set_list($id+$start,"obj_flag",lc($flag));
+            }
+            if($flag eq "PLAYER") {
+               @player{lc($name)} = $id;
+               db_set($id+$start,"obj_name","imp_$name");
+               db_set($id+$start,"obj_cname","imp_$name");
+            }
+         }
+         db_set_list($id+$start,"obj_flag","imported");
+      } elsif($.  - $pos == 12) {
+         for my $flag (decode_flags(\%impflag,$_,2)) {
+            if(defined @flag{lc($flag)}) {
+               db_set_list($id+$start,"obj_flag",lc($flag));
+            }
+         }
+      } elsif($_ =~ /^>(\d+)$/) {
+         db_set($id+$start,"obj_created_date",scalar localtime());
+         $attr_id = $1;
+      } elsif($attr_id ne undef) {
+         if(@attr{$attr_id} eq "A_PASS") { # set password to name
+            db_set($id+$start,"obj_password",mushhash(lc("imp_$name")));
+         } elsif(@attr{$attr_id} eq "A_DESC") { # set password to name
+            db_set($id+$start,"DESCRIPTION",$_);
+         } elsif(@attr{$attr_id} eq "A_LAST") { # set password to name
+            db_set($id+$start,"obj_last",$_);
+         } else {
+            db_set($id+$start,@attr{$attr_id},$_);
+         }
+         $attr_id = undef;
+      } elsif($_ =~ /^<$/) {                                  # end of object
+#         printf("----[ End of $id ]----\n");
+         $id = undef;
+      } elsif(/^\*\*\*END OF DUMP\*\*\*$/) {
+         # yay!
+      } else {
+         printf("UNKNOWN[$.,%s]: '$_'\n",$. - $pos);
+         exit();
+      }
+
+#      exit() if $id == 8;
+   }
+   close(FILE);
+
+   post_db_read_fix($start);
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ "Import starts at object $start" ]
+        );
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ "    Objects Imported: %s",$#db - $start ]
+        );
+}
+
 while(1) {
-eval {
-main();                                                   #!# run only once
-};
+#   eval {
+      main();                                               #!# run only once
+#   };
 }

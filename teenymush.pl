@@ -76,7 +76,6 @@ sub load_modules
       'Net::HTTP::NB'          => 'url_http',      
       'HTML::Entities'         => 'entities',
       'Digest::MD5'            => 'md5',
-      'File::Copy'             => 'move',
    );
 
    for my $key (keys %mod) {
@@ -1024,6 +1023,25 @@ sub member
    return 0;
 }
 
+sub bad_object
+{
+   my $obj = shift;
+
+   if(ref($obj) ne "HASH") {
+      $obj = { obj_id => $obj };
+   }
+
+   if(!valid_dbref($obj,1)) {
+      return 3;
+   } elsif(name($obj) eq undef) {
+      return 1;
+   } elsif(flag_list($obj,1) eq undef) {
+      return 2;
+   } else {
+      return 0;
+   }
+}
+
 sub cmd_bad
 {
    my ($self,$prog) = @_;
@@ -1033,32 +1051,39 @@ sub cmd_bad
       return err($self,$prog,"This command is disabled.");
    } elsif(defined $$prog{nomushrun}) {
       return err($self,$prog,"This command is not run() safe.");
-   } else {
-      my $cmd = $$prog{cmd_last};
-      $$cmd{bad_pos} = 0 if(!defined $$cmd{bad_pos});     # initialize "loop"
+   }
 
-      for($start=$$cmd{bad_pos};                   # loop for 100 objects
-             $$cmd{bad_pos} < $#db &&
-             $$cmd{bad_pos} - $start < 100;
-             $$cmd{bad_pos}++) {
-         if(valid_dbref($$cmd{bad_pos})) {              # does object match?
+   my $cmd = $$prog{cmd_last};
+   $$cmd{bad_pos} = 0 if(!defined $$cmd{bad_pos});     # initialize "loop"
+
+   for($start=$$cmd{bad_pos};                   # loop for 100 objects
+          $$cmd{bad_pos} < $#db &&
+          $$cmd{bad_pos} - $start < 100;
+          $$cmd{bad_pos}++) {
+      if(valid_dbref($$cmd{bad_pos})) {              # does object match?
+         if(bad_object($$cmd{bad_pos})) {
+            push(@out,"#" . $$cmd{bad_pos} . " is corrupted, deleting.");
+            db_delete($$cmd{bad_pos});
+         } else {
             if(!hasflag($$cmd{bad_pos},"PLAYER") &&
                !hasflag($$cmd{bad_pos},"OBJECT") &&
                !hasflag($$cmd{bad_pos},"EXIT") &&
                !hasflag($$cmd{bad_pos},"ROOM")) {
-               push(@out,"#" . $$cmd{bad_pos} ." No TYPE flag");
+               push(@out,"#" . $$cmd{bad_pos} ." No TYPE flag, set to -> '".
+                  type($self,$prog,$$cmd{bad_pos}) . "'");
             }
 
             if(hasflag($$cmd{bad_pos},"PLAYER") && 
                money($$cmd{bad_pos}) eq undef) {
                push(@out,"#" . $$cmd{bad_pos} ." no money");
-               db_set($$cmd{bad_pos},"obj_money",@info{"conf.starting_money"});
-            }
+               db_set($$cmd{bad_pos},"obj_money",
+                  @info{"conf.starting_money"});
+             }
 
             for my $obj (lcon($$cmd{bad_pos})) {
                if(!valid_dbref($obj)) {
-                  con("Removing \@destroyed obj #%s from contents of #%s\n",
-                     $$obj{obj_id},$$cmd{bad_pos});
+                  push(@out,"#" . $$cmd{bad_pos} . " removed from contents " .
+                       "#" . $$obj{obj_id} . "[destroyed object]");
                   db_remove_list($$cmd{bad_pos},"obj_content",$$obj{obj_id});
                }
             }
@@ -1075,39 +1100,44 @@ sub cmd_bad
                my $loc = loc($$cmd{bad_pos});
 
                if($loc eq undef) {
-                  push(@out,"#" . $$cmd{bad_pos} ." No location");
+                  push(@out,"#" . $$cmd{bad_pos} ." No location, sent home(#".
+                       home($$cmd{bad_pos}) . ").");
+                  teleport($self,$prog,$$cmd{bad_pos},home($$cmd{bad_pos}));
                } elsif(hasflag($$cmd{bad_pos},"EXIT")) {
                   if(!member($loc,$$cmd{bad_pos},lexits($loc))) {
-                     push(@out,"#" . $$cmd{bad_pos} ." not in lexit() of $loc");
+                     push(@out,"#" . $$cmd{bad_pos} ." not in lexit() of " .
+                          "$loc");
                   }
-               } else {
-                  if(!member($loc,$$cmd{bad_pos},lcon($loc))) {
-                     push(@out,"#" . $$cmd{bad_pos} ." not in lcon() of $loc");
+               } elsif(!member($loc,$$cmd{bad_pos},lcon($loc))) {
+                  if(valid_dbref($loc) && !bad_object($loc)) {
+                     push(@out,"#" . $$cmd{bad_pos} ." not in lcon() of $loc," .
+                          "teleporting to $loc.");
+                     teleport($self,$prog,$$cmd{bad_pos},$loc);
+                  } else {
+                     push(@out,"#" . $$cmd{bad_pos} ." No location, sent " .
+                          "home(#" .  home($$cmd{bad_pos}) . ").");
+                     teleport($self,$prog,$$cmd{bad_pos},home($$cmd{bad_pos}));
                   }
                }
             }
          }
       }
-      if($#out > -1) {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ join("\n",@out) ]
-           );
-      }
-      if($$cmd{bad_pos} >= $#db) {                          # search is done
-         delete @$cmd{bad_pos};
-#         necho(self   => $self,
-#               prog   => $prog,
-#               source => [ "%s", print_var(@{@db[1]}{obj_flag}) ]
-#          );
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "**End of List***" ]
-           );
-         delete @$cmd{bad_pos};
-      } else {
-         return "RUNNING";                                     # more to do
-      }
+   }
+   if($#out > -1) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ join("\n",@out) ]
+     );
+   }
+   if($$cmd{bad_pos} >= $#db) {                          # search is done
+      delete @$cmd{bad_pos};
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "**End of List***" ]
+        );
+      delete @$cmd{bad_pos};
+   } else {
+      return "RUNNING";                                     # more to do
    }
 }
 
@@ -1550,7 +1580,7 @@ sub cmd_var
 sub cmd_boot
 {
    my ($self,$prog,$txt,$switch) = @_;
-   my $boot = 0;
+   my ($boot,$target) = (0,undef);
 
    if(hasflag($self,"GUEST")) {
       return err($self,$prog,"Permission denied.");
@@ -1559,14 +1589,19 @@ sub cmd_boot
    my $god = hasflag($self,"GOD");
    
    $txt =~ s/^\s+|\s+$//g;
-   if(defined $$switch{port} && $txt !~ /^\d+$/) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "Port numbers must be numeric." ]
-           );
-      return;
-   }
 
+   if(defined $$switch{port}) {
+      if($txt !~ /^\d+$/) {
+         return err($self,$prog,"Ports numbers must be numeric.");
+      }
+   } else {
+      $target = find_player($self,$prog,$txt) ||
+         return necho(self   => $self,
+                      prog   => $prog,
+                      source => [ "I don't see that here." ]
+                     );
+   }
+   
    for my $key (keys %connected) {
       my $hash = @connected{$key};
 
@@ -1577,7 +1612,7 @@ sub cmd_boot
 
          # skip
       } elsif((defined $$switch{port} && $$hash{port} == $txt) ||
-         (!defined $$switch{port} && lc($$hash{obj_name}) eq lc($txt))) {
+         (!defined $$switch{port} && name($hash) eq name($target))) {
 
          if(defined $$switch{port}) {
             necho(self   => $self,
@@ -1601,21 +1636,19 @@ sub cmd_boot
       }
    }
 
-   if(defined $$switch{port} && $boot == 0) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "Unknown port specified." ],
-           );
-   } elsif($boot == 0) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "Unknown connected person specified." ],
-           );
-   } else {
-      necho(self   => $self,                           # target's room
-            prog   => $prog,
-            source => [ "Unknown connected person/port specified." ],
-           );
+
+   if($boot == 0) {
+      if($$switch{port} && $boot == 0) {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "Unknown port specified." ],
+              );
+      } else {
+          necho(self   => $self,
+                prog   => $prog,
+                source => [ "Unknown connected person specified." ],
+               );
+       }
    }
 }
 
@@ -3107,7 +3140,7 @@ sub cmd_destroy
          room      => [ $target, "%s was destroyed.",$name  ],
          all_room  => [ $target, "%s has left.",$name ]
         );
-   if(!destroy_object($target)) {
+   if(!destroy_object($self,$prog,$target)) {
       necho(self    => $self,
             prog    => $prog,
             source  => [ "Internal error, object not destroyed." ],
@@ -3117,9 +3150,15 @@ sub cmd_destroy
    }
 }
 
+#
+# cmd_toad
+#    Delete a player. This cycles through the whole db, so the code will
+#    search in 100 object increments.
+#
 sub cmd_toad
 {
    my ($self,$prog,$txt) = @_;
+   my $start;
 
    if(!hasflag($self,"WIZARD")) {
       return err($self,$prog,"Permission Denied.");
@@ -3127,37 +3166,74 @@ sub cmd_toad
        return err($self,$prog,"syntax: \@toad <object>");
    }
 
-   my $target = find($self,$prog,$txt) ||
-       return err($self,$prog,"I can't find an object named '%s'",$txt);
+   #-----------------------------------------------------------------------#
+   # initialize loop                                                       #
+   #-----------------------------------------------------------------------#
+   my $cmd = $$prog{cmd_last};
 
-   if(!hasflag($target,"PLAYER")) {
-      return err($self,$prog,"Only Players can be \@toaded");
+   if(!defined $$cmd{toad_pos}) {
+      my $target = find($self,$prog,$txt) ||
+         return err($self,$prog,"I don't see that here.");
+
+      if(!hasflag($target,"PLAYER")) {
+         return err($self,$prog,"Try \@destroy instead");
+      }
+
+      $$cmd{toad_pos} = 0;
+      $$cmd{toad_dbref} = $$target{obj_id};
+      $$cmd{toad_name} = name($target);
+      $$cmd{toad_objname} = obj_name($self,$target);
+      $$cmd{toad_loc} = loc($target);
+
+      if(hasflag($target,"CONNECTED")) {
+         cmd_boot($self,$prog,"#" . $$target{obj_id});
+      }
    }
 
-   my $obj_name = obj_name($self,$target);
-   my $name = name($target);
+   #-----------------------------------------------------------------------#
+   # do 100 objects at a time                                              #
+   #-----------------------------------------------------------------------#
+   for($start=$$cmd{toad_pos};
+       $$cmd{toad_pos} < $#db &&
+       $$cmd{toad_pos} - $start < 100;
+       $$cmd{toad_pos}++) {
+      if(valid_dbref($$cmd{toad_pos}) &&
+         $$cmd{toad_pos} != $$cmd{toad_dbref} &&
+         owner_id($$cmd{toad_pos}) == $$cmd{toad_dbref}) {
+         destroy_object($self,$prog,$$cmd{toad_pos});
+      }
+   }
 
-   cmd_boot($self,$prog,name($$target{obj_id}));
-
-   if(!destroy_object($target)) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "Internal error, %s was not \@toaded.",$obj_name
-                      ]
-           );
-   } elsif(loc($target) ne loc($self)) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "%s was \@toaded.",$obj_name ],
-            room   => [ $target, "%s was \@toaded.",$name ],
-            room2  => [ $target, "%s has left.",$name ]
-           );
+   #-----------------------------------------------------------------------#
+   # done?                                                                 #
+   #-----------------------------------------------------------------------#
+   if($$cmd{toad_pos} >= $#db) {
+      if($$cmd{toad_loc} ne loc($self)) {
+         necho(self       => $self,
+               prog       => $prog,
+               source     => [ "%s was \@toaded.",$$cmd{toad_objname} ],
+               all_room   => [ $$cmd{toad_loc},
+                               "%s was \@toaded.",
+                               $$cmd{toad_name}
+                             ],
+               all_room2  => [ $$cmd{toad_dbref}, "%s has left.",
+                               $$cmd{toad_name} ]
+              );
+      } else {
+         necho(self       => $self,
+               prog       => $prog,
+               source     => [ "%s was \@toaded.",$$cmd{toad_objname} ],
+               all_room   => [ $$cmd{toad_loc}, 
+                               "%s was \@toaded.",
+                               $$cmd{toad_name}
+                             ],
+               all_room2  => [ $$cmd{toad_dbref}, "%s has left.",
+                               $$cmd{toad_name} ]
+              );
+      }
+      db_delete($$cmd{toad_dbref});
    } else {
-      necho(self   => $self,
-            prog   => $prog,
-            room   => [ $target, "%s was \@toaded.",$name ],
-            room2  => [ $target, "%s has left.",$name ]
-           );
+      return "RUNNING";                                      # still running
    }
 }
 
@@ -4977,6 +5053,7 @@ sub cmd_look
       return mushrun(self   => $self,           # handle adesc
                      prog   => $prog,
                      runas  => $target,
+                     invoker=> $self,
                      source => 0,
                      cmd    => $desc
                      );
@@ -5677,7 +5754,9 @@ sub money
 
    my $owner = owner($target);
 
-   if(memorydb) {
+   if($owner eq undef) {
+      return 0;
+   } elsif(memorydb) {
       return get($owner,"obj_money");
    } elsif(!incache($owner,"obj_money")) {
       my $money = one_val("select obj_money value ".
@@ -5810,7 +5889,8 @@ sub owner
       } elsif(hasflag($obj,"PLAYER")) {
          return $obj;
       } else {
-         return obj(get($obj,"obj_owner"));
+         my $owner = get($obj,"obj_owner");
+         return obj($owner);
       }
    } else {
       if(!incache($$obj{obj_id},"OWNER")) {
@@ -5918,7 +5998,20 @@ sub home
    my $obj = obj(shift);
 
    if(memorydb) {
-      return get($obj,"obj_home");
+      my $home = get($obj,"obj_home");
+ 
+      if(valid_dbref($home)) {                           # use object's home
+         return $home;
+      } elsif(valid_dbref(@info{"conf.starting_room"}) &&
+              hasflag(@info{"conf.starting_room"},"ROOM")) {
+                                                         # use starting_room
+         db_set($obj,"obj_home",@info{"conf.starting_room"});
+         return @info{"conf.starting_room"};
+      } else {                             # default to first availible room
+         my $first = first_room();
+         db_set($obj,"obj_home",$first);
+         return $first;
+      }
    } elsif(!incache($obj,"home")) {
       my $val = one_val("select obj_home value".
                         "  from object " .
@@ -6482,7 +6575,6 @@ sub db_delete
       @deleted{$$obj{obj_id}} = 1;
    } elsif(defined @db[$$obj{obj_id}]) {             # non-backup mode delete
       delete @db[$$obj{obj_id}];
-      printf("DELETING: '%s'\n",$$obj{obj_id});
    }
 }
 
@@ -7231,13 +7323,14 @@ sub inattr
 
 sub prog
 {
-   my ($self,$runas) = @_;
+   my ($self,$runas,$invoker) = @_;
 
    return {
       stack => [ ],
       created_by => $self,
       user => $runas,
       var => {},
+      invoker => $invoker,
       priority => priority($self),
       calls => 0
    };
@@ -7368,7 +7461,7 @@ sub mushrun
          @arg{invoker} = $$prog{invoker};
 #         printf("     INVOKER2: '%s'\n",@arg{invoker});
       } else {
-         con("     INVOKER: NONE '%s'\n",@arg{invoker},code());
+         con("     INVOKER: NONE '%s' -> '%s'\n",@arg{invoker},code());
       }
     } else {
 #         printf("     INVOKER: ALREADY SET\n",@arg{invoker});
@@ -7853,6 +7946,10 @@ sub find_content
    return $obj;
 }
 
+#
+# find_player
+#    Search for a player
+#
 sub find_player
 {
    my ($self,$prog,$thing) = (obj(shift),shift,trim(lc(shift)));
@@ -7903,6 +8000,7 @@ sub find_player
       return !$dup ? undef : obj($partial);
    }
 }
+
 # #!/usr/bin/perl
 #
 # tm_format.pl
@@ -8398,6 +8496,7 @@ use Compress::Zlib;
 
 sub initialize_functions
 {
+   @fun{bad}       = sub { return &fun_bad(@_);                    };
    @fun{ansi}      = sub { return &fun_ansi(@_);                   };
    @fun{ansi_debug}= sub { return &ansi_debug($_[2]);              };
    @fun{substr}    = sub { return &fun_substr(@_);                 };
@@ -8522,6 +8621,36 @@ sub add_union_element
       }
    } else {
       $$list{$item} = $item;
+   }
+}
+
+sub fun_bad
+{
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
+
+   return bad_object($txt);
+}
+
+sub type
+{
+   my ($self,$prog,$obj) = @_;
+ 
+   if(hasflag($obj,"PLAYER")) {
+      return "PLAYER";
+   } elsif(hasflag($obj,"ROOM")) {
+      return "ROOM";
+   } elsif(hasflag($obj,"OBJECT")) {
+      return "OBJECT";
+   } elsif(hasflag($obj,"EXIT")) {
+      return "EXIT";
+   } else {
+      if(dest($obj) ne undef) {                       # has destination, exit
+         set_flag($self,$prog,$obj,"EXIT");
+         return "EXIT";
+      } else {
+         set_flag($self,$prog,$obj,"OBJECT");
+         return "OBJECT";
+      }
    }
 }
 
@@ -9668,17 +9797,15 @@ sub fun_eq
 
 sub fun_loc
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog) = (obj(shift),shift);
 
-   good_args($#_,2) ||
-      return "#-1 FUNCTION (LOC) EXPECTS 1 ARGUMENT";
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (LOC) EXPECTS 1 ARGUMENT $#_";
 
    my $target = find($self,$prog,evaluate($self,$prog,shift));
 
    if($target eq undef) {
       return "#-1 NOT FOUND";
-   } elsif($txt =~ /^\s*here\s*/) {
-      return "#" . $$target{obj_id};
    } else {
       return "#" . loc($target);
    }
@@ -10279,21 +10406,10 @@ sub fun_type
    good_args($#_,1) ||
       return "#-1 FUNCTION (TYPE) EXPECTS 1 ARGUMENT";
 
-   if((my $target= find($self,$prog,evaluate($self,$prog,$_[0]))) ne undef) {
-      if(hasflag($target,"PLAYER")) {
-         return "PLAYER";
-      } elsif(hasflag($target,"OBJECT")) {
-         return "OBJECT";
-      } elsif(hasflag($target,"EXIT")) {
-         return "EXIT";
-      } elsif(hasflag($target,"ROOM")) {
-         return "ROOM";
-      } else {
-         return "TYPELESS";
-      }
-   } else {
-      return "#-1 Unknown Object";
-   }
+   my $target= find($self,$prog,evaluate($self,$prog,$_[0])) ||
+      return "#-1 NOT FOUND";
+
+   return type($self,$prog,$target);
 }
 
 sub fun_u
@@ -11519,7 +11635,7 @@ sub prune_dumps
    for my $file (readdir($dir)) {
       if($file =~ /$filter/ && $file !~ /\.BAD$/i) {
          if(!dump_complete("$name/$file")) {
-            move("$name/$file","$name/$file.BAD");  # rename but don't fail
+            move("$name/$file","$name/$file.BAD");     # rename but don't fail
          } elsif($file =~ /(\d{2})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/) {
              my $ts = timelocal($6,$5,$4,$3,$2-1,$1);
              @data{$ts} = { day => $3, fn  => $file };
@@ -12303,14 +12419,16 @@ sub necho
          my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
          $target = loc($target) if(!hasflag($target,"ROOM"));
 
-         for my $obj ( lcon($target) ) {
-            if($$self{obj_id} != $$obj{obj_id} || $type =~ /^all_/) {
-               echo_socket($obj,
-                           @arg{prog},
-                           "%s%s",
-                           nospoof($self,$prog,$obj),
-                           $msg
-                          );
+         if($target ne undef) {
+            for my $obj ( lcon($target) ) {
+               if($$self{obj_id} != $$obj{obj_id} || $type =~ /^all_/) {
+                  echo_socket($obj,
+                              @arg{prog},
+                              "%s%s",
+                              nospoof($self,$prog,$obj),
+                              $msg
+                             );
+               }
             }
          }
          handle_listener($self,$prog,$target,$fmt,@$array);
@@ -12470,15 +12588,25 @@ sub loggedin
 
 sub valid_dbref 
 {
-   my $id = obj(shift);
+   my ($id,$no_check_bad) = (obj(shift),shift);
    $$id{obj_id} =~ s/#//g;
 
    if(memorydb) {
       if($$id{obj_id} =~ /^\s*(\d+)\s*$/) {
-         if(defined @info{backup_mode} && @info{backup_mode}) {
-            return (defined @db[$1] || defined @delta[$1]) ? 1 : 0
+         if(!$no_check_bad && bad_object($1)) {
+            return 0;
+         } elsif(defined @info{backup_mode} && @info{backup_mode}) {
+            if(defined @deleted{$1}) {
+               return 0;
+            } elsif(defined @db[$1] || @delta[$1]) {
+               return 1;
+            } else {
+               return 0;
+            }
+         } elsif(defined @db[$1]) {
+            return 1;
          } else {
-            return (defined @db[$$id{obj_id}]) ? 1 : 0;
+            return 0;
          }
       }
    }  elsif(owner($id) eq undef) {                # owner will return undef on 
@@ -12788,35 +12916,78 @@ sub perm
     }
 }
 
+sub first_room
+{
+   my $skip = shift;
+
+   for my $i (0 .. $#db) {                      # ick, pick first room
+      return $i if($skip != $i && valid_dbref($i) && hasflag($i,"ROOM"));
+   }
+   return undef;
+}
+
 #
 # destroy_object
-#    Delete an object from the database and cache.
+#    Delete an object from the database and cache. This is not for deleting
+#    players.
 #
 sub destroy_object 
 {
-   my $obj = obj(shift);
+   my ($self,$prog,$target) = (obj(shift),shift,obj(shift));
 
-   my $loc = loc($obj);
+   my $loc = loc($target);
 
    if(memorydb) {
-      if(!hasflag($obj,"ROOM")) {
-         my $loc = loc($obj);                          # remove from location
-         db_remove_list($loc,"obj_content",$$obj{obj_id});
+      for my $exit (lexits($target)) {                   # destroy all exits
+         if(valid_dbref($exit)) {
+            db_delete($exit);
+         }
       }
-      db_delete($obj);
+
+      for my $obj (lcon($target)) {             # move objects out of the way
+         my $home = home($obj);
+
+         necho(self => $self,
+               prog => $prog,
+               target => [ $obj, "The room shakes and begins to crumble." ],
+               room   => [ $obj, "%s has left.", name($obj) ]
+              );
+
+         # default to first room if home can't be determined.
+         if($home eq undef || $home == $$target{obj_id}) {
+            $home = first_room($$obj{obj_id}); 
+         }
+         set_home($self,$prog,$obj,$home);
+         teleport($self,$prog,$obj,$home);
+
+         cmd_look($obj,prog($obj,$obj,$obj));
+      }
+      
+      if(!hasflag($target,"ROOM")) {
+         my $loc = loc($target);                        # remove from location
+         db_remove_list($loc,"obj_content",$$target{obj_id});
+         db_remove_list($loc,"obj_exits",$$target{obj_id});
+         necho(self    => $self,
+               prog    => $prog,
+               all_room    =>  [ $target, "%s was destroyed.", name($target) ],
+               all_room2   => [ $target, "%s has left.", name($target) ]
+              );
+      }
+
+      db_delete($target);
       return 1;
    } else {
       sql("delete " .
           "  from object ".
           " where obj_id = ?",
-          $$obj{obj_id}
+          $$target{obj_id}
          );
    
       if(@info{rows} != 1) {
          my_rollback;
          return 0;
       }  else {
-         delete $cache{$$obj{obj_id}};
+         delete $cache{$$target{obj_id}};
          set_cache($loc,"lcon");                   # invalid cache entries
          set_cache($loc,"con_source_id");
          set_cache($loc,"lexits");

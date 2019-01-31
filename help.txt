@@ -456,3 +456,134 @@ function:
 Example:
     say entities(encode,<'>)       :  You say, "abc&lt;&#39;&gt;def"
     say entities(encode,&lt;&gt;)  :  You say, "<>"
+& match()
+function:
+    match(<string>,<pattern>)
+    match(<string>,<pattern>,<delimiter>)
+
+    Compares each word or segment of the string against the provided pattern
+    to see if it matches. If a match occures, the function returns the word
+    or segment position that was matched. If no match occures, the function
+    will return 0. 
+
+    Patterns may use * to match multiple characters or ? to match a single
+    character.
+
+Example:
+     say match(abc def,def)               :  You say, "2"
+     say match(abc def,*e?)               :  You say, "2"
+     say match(funky|abc def|foo,*e*,|)   :  You say, "2"
+& @trigger
+command:
+
+   @trig <obj>/<attr> 
+   @trig <obj>/<attr> = <parm1>,<parm2>, .. <parm9>?
+
+   Runs the commands in the attribute on object. The Parameters are passed
+   in via %0 .. %9. You must control the object or the attribute must be
+   a $command.
+& setunion()
+function:
+    setunion(<string1>,<string2>,[<delim>,<seperator>,<sort type>])
+
+    Returns <string1> and <string2> after removing duplicate words. The
+    results are sorted alphanumerically or by <sort type>. Optionally, a
+    delimter and output seperator may be used.
+
+    <Sort type> may be:
+        N :  Numberic
+        F :  Floating point
+        D :  Debref
+        A :  Alphanumeric
+
+Example:
+     say setunion(a b c d e, d c f)        :  You say, "a b c d e f"
+     say setunion(a|b|c|d|e,d|c|f,|,\,)    :  You say, "a,b,c,d,e,f"
+     say setunion(#453 #3,#5 #3 #463,,,d)  :  You say, "#3 #5 #453 #463"
+& setdiff()
+function:
+    setdiff(<string1>,<string2>,[<delim>,<seperator>,<sort type>])
+
+    Returns those words in <string1> that are not in <string2>. The
+    results are sorted alphanumerically or by <sort type>. Optionally, a
+    delimter and output seperator may be used.
+
+    <Sort type> may be:
+        N :  Numberic
+        F :  Floating point
+        D :  Debref
+        A :  Alphanumeric
+
+Example:
+     say setunion(a b c d e, d c f)        :  You say, "a b c d e f"
+     say setunion(a|b|c|d|e,d|c|f,|,\,)    :  You say, "a,b,c,d,e,f"
+     say setunion(#453 #3,#5 #3 #463,,,d)  :  You say, "#3 #5 #453 #463"
+& lit()
+function:
+    lit(<string1>,<string2>..., <stringN>)
+
+    Returns the strings as is without any modification. Good for 
+    showing code to others?
+
+Example:
+     > say lit(say [run(say [run(say [run(say test %b %s %p)])])])
+
+     You say, "say [run(say [run(say [run(say test %b %s %p)])])]"
+
+& @set
+command:
+
+   @set object = [!] flag
+   @set object/attribute = [!] attribute_flag
+
+
+   Sets a flag on either an object or attribute.
+
+See: @list flags
+& v()
+function:
+    v(attribute)
+
+    Returns the attribute on the calling object.
+
+Example:
+     &foo me = bar
+     > say v(foo)
+
+     You say, "bar"
+& @sleep
+command:
+
+   @sleep <seconds>
+
+   Causes the current running MUSH code to pause <seconds> before continuing
+   on. 
+
+Example:
+   &foo me = say [time()];@sleep 5;say [time()]
+   @trig me/foo
+
+   You say, "Thu Jan 31 12:39:04 2019"
+   You say, "Thu Jan 31 12:39:10 2019"
+
+See: @wait
+& @wait
+command:
+
+   @wait <seconds> = <command>
+
+   Runs <command> after waiting <seconds>. Any commands after the @wait
+   command will not wait to be run. 
+
+Example:
+   &&foo me = $foo:
+      say BEFORE: [time()];
+      @wait 5=say MIDDLE: [time()];
+      say AFTER: [time()]
+
+   @trig me/foo
+   You say, "BEFORE: Thu Jan 31 12:39:04 2019"
+   You say, "AFTER: Thu Jan 31 12:39:04 2019"
+   You say, "MIDDLE: Thu Jan 31 12:39:10 2019"
+
+See: @sleep

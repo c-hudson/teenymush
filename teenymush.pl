@@ -596,7 +596,7 @@ sub initialize_commands
    @command{"\@sleep"}  = { help => "Pause the a program for X seconds",
                             fun  => sub { cmd_sleep(@_); }};
    @command{"\@wait"}   = { help => "Pause the a program for X seconds",
-                            fun  => sub { cmd_sleep(@_); }};
+                            fun  => sub { cmd_wait(@_); }};
    @command{"\@sweep"}  = { help => "Lists who/what is listening",
                             fun  => sub { cmd_sweep(@_); }};
    @command{"\@list"}   = { help => "List internal server data",
@@ -2216,6 +2216,41 @@ sub cmd_password
             source => [ "usage: \@password <old_password> = <new_password>" ],
            );
    }
+}
+
+sub cmd_wait
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   hasflag($self,"GUEST") &&
+      return err($self,$prog,"Permission denied.");
+
+   in_run_function($prog) &&
+      return out($prog,"#-1 \@WAIT can not be called from RUN function");
+
+   my $cmd = $$prog{cmd_last};
+
+   if(!defined $$cmd{wait_time}) {
+      ($$cmd{wait_time},$$cmd{wait_cmd}) = balanced_split(shift,"=",4);
+
+      if(!looks_like_number(ansi_remove($$cmd{wait_time}))) {
+         return err($self,$prog,"Invalid wait time provided.");
+      } elsif($$cmd{wait_cmd} =~ /^\s*$/) {
+         return;            # TinyMUSH actually waits, but we'll just quietly
+                            # do nothing unless a reason to wait is found.
+      } else {
+         $$cmd{wait_time} += time();
+      }
+   }  elsif($$cmd{wait_time} <= time()) {
+      return mushrun(self   => $self,
+                     prog   => $prog,
+                     source => 0,
+                     child  => 1,
+                     cmd    => $$cmd{wait_cmd},
+                    );
+   }
+   $$cmd{idle} = 1;
+   return "BACKGROUNDED";
 }
 
 sub cmd_sleep
@@ -7646,38 +7681,44 @@ sub spin
          @info{current_pid} = $pid;
          my $prog = @engine{$pid};
          my $stack = $$prog{stack};
+         my $pos = 0;
          $count = 0;
   
-         while($#$stack >= 0 && ++$count <= 100) {             # run 100 cmds
-            my $cmd = $$stack[0];
+         # run 100 commands, backgrounded command are excluded because 
+         # someone could put 100 waits in for far in the furture, the code
+         # would never run the next command.
+         while($#$stack - $pos >= 0 && ++$count <= 100 + $pos) {
+            my $cmd = $$stack[$pos];                          # run 100 cmds
             my $before = $#$stack;
 
             if(defined $$cmd{done}) {                  # cmd already finished
-               shift(@$stack);                           # safe to delete now
+               splice(@$stack,$pos,1);                   # safe to delete now
                next;
-            } else {
-               my $result = spin_run($prog,$cmd);
-   
-               if($result ne "RUNNING") {                      # command done
-                  if(defined $$prog{mutated}) {       # cmd moved from pos 0,
-                     delete @$cmd{keys %$cmd};      # but where? delete later
-                     $$cmd{done} = 1;
-                  } else {
-                     my $c  = shift(@$stack);           # safe to delete cmd
-                  }
-               } elsif(defined $$prog{idle}) {                 # program idle
-                  delete @$prog{idle};
-                  last;
-               }
-               delete @$prog{mutated};
+            }
 
-               if(Time::HiRes::gettimeofday() - $start >= 1) { # stop
-                  con("   Time slice ran long, exiting correctly [%d cmds]\n",
-                         $count);
-                  mushrun_done($prog) if($#$stack == -1);     # program is done
-                  ualarm(0);
-                  return;
+            my $result = spin_run($prog,$cmd);
+  
+            if($result eq "BACKGROUNDED") {
+               $pos++; 
+            } elsif($result ne "RUNNING") {                   # command done
+               if(defined $$prog{mutated}) {       # cmd moved from pos 0,
+                  delete @$cmd{keys %$cmd};      # but where? delete later
+                  $$cmd{done} = 1;
+               } else {
+                  splice(@$stack,$pos,1);             # safe to delete cmd
                }
+            } elsif(defined $$prog{idle}) {                 # program idle
+               delete @$prog{idle};
+               last;
+            }
+            delete @$prog{mutated} if defined @$prog{mutated};
+
+            if(Time::HiRes::gettimeofday() - $start >= 1) { # stop
+               con("   Time slice ran long, exiting correctly [%d cmds]\n",
+                      $count);
+               mushrun_done($prog) if($#$stack == -1);     # program is done
+               ualarm(0);
+               return;
             }
          }
    
@@ -12267,7 +12308,6 @@ sub logit
          $fd->autoflush(1);
          @info{"$type\.fd"} = $fd;
       } else {
-         printf("!!OPENED: '%s' -> '%s'\n",$type,@info{"conf.conlog"});
          $fd = undef;
       }
    }
@@ -15274,7 +15314,7 @@ sub post_db_read_fix
 sub db_read_import
 {
    my ($self,$prog,$file) = @_;
-   my ($inattr,$id,$pos,$lock,$attr_id,%attr,$name,%impflag) = (1, undef);
+   my ($inattr,$id,$pos,$lock,$attr_id,%attr,$name,%impflag,$prev) = (1, undef);
 
    # The data from the flags.h and attrs.h could be hard coded into the
    # db but reading it from the source will probably allow for different
@@ -15324,6 +15364,14 @@ sub db_read_import
       return err($self,$prog,"Could not open file '%s' for reading",$file);
 
    while(<FILE>) {
+      if($_ =~ /$/) {
+         $prev = $_;
+         next;
+      } elsif($prev ne undef) {
+         $_ = $prev . $_;
+         $prev = undef;
+      }
+
       s/\r|\n//g;
       if($. == 1 || $. == 2 || $. == 3) {
 #         printf("# $_\n");
@@ -15406,7 +15454,7 @@ sub db_read_import
          # yay!
       } else {
          printf("UNKNOWN[$.,%s]: '$_'\n",$. - $pos);
-         exit();
+#         exit();
       }
 
 #      exit() if $id == 8;

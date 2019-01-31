@@ -633,6 +633,10 @@ sub initialize_commands
                             fun  => sub { cmd_var(@_); }};
    @command{"\@dolist"}  ={ help => "Loop through a list of variables",
                             fun  => sub { cmd_dolist(@_); }};
+   @command{"\@notify"}  ={ help => "Loop through a list of variables",
+                            fun  => sub { cmd_notify(@_); }};
+   @command{"\@drain"}   ={ help => "Loop through a list of variables",
+                            fun  => sub { cmd_drain(@_); }};
    @command{"\@while"}   ={ help => "Loop while an expression is true",
                             fun  => sub { cmd_while(@_); }};
    @command{"\@crash"}   ={ help => "Crashes the server.",
@@ -2044,24 +2048,70 @@ sub out
    return undef;
 }
 
-sub verify_switches
+sub cmd_notify
 {
-   my ($self,$prog,$switch,@switches) = @_;
-   my %hash;
+   my ($self,$prog,$txt,$switch)=(shift,shift,shift,shift);
 
-   for my $item (@switches) {
-      @hash{lc($item)} = 1;
+   verify_switches($self,$prog,$switch,"first","all","quiet") || return;
+
+   if(defined $$switch{all} && defined $$switch{first}) {
+      return err($self,$prog,"Illegal combination of switches.");
    }
 
-   for my $key (keys %$switch) {
-      if(!defined @hash{lc($key)}) {
-         err($self,$prog,"Unrecognized switch '$key' found");
-         return 0;
+   #
+   # semaphores will be triggered by setting their wait_time to 0, which
+   # will cause them to be run on the next run through of the spin() loop.
+   # We could execute the commands right now but this seems elegantly simple.
+   #
+   my $stack = $$prog{stack};
+   my $current = $$prog{cmd};
+   for my $i (0 .. $#$stack) {
+      if($current eq $$stack[$i]) {           
+         return;                          # don't run commands in the future
+      } elsif(defined @{$$stack[$i]}{wait_semaphore}) {
+         @{$$stack[$i]}{wait_time} = 0;
+         last if(defined $$switch{first});      # notify 1, jump out of loop
       }
    }
-   return 1;
+
+   if(!defined $$switch{quiet}) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Notified." ],
+           );
+   }
 }
 
+sub cmd_drain
+{
+   my ($self,$prog,$txt,$switch)=(shift,shift,shift,shift);
+
+   verify_switches($self,$prog,$switch,"quiet") || return;
+
+   #
+   # The command that contains the semaphore will be just erased and
+   # marked as done. The spin() function will delete the command as soon
+   # as it sees it next.
+   #
+   my $stack = $$prog{stack};
+   my $current = $$prog{cmd};
+   for my $i (0 .. $#$stack) {
+      if($current eq $$stack[$i]) {           
+         return;                          # don't run commands in the future
+      } elsif(defined @{$$stack[$i]}{wait_semaphore}) {
+         my $hash = $$stack[$i];
+         delete @$hash{keys %$hash};
+         $$hash{done} = 1;
+      }
+   }
+
+   if(!defined $$switch{quiet}) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Notified." ],
+           );
+   }
+}
 
 #
 # cmd_dolist
@@ -2079,7 +2129,7 @@ sub cmd_dolist
    in_run_function($prog) &&
       return out($prog,"#-1 \@DOLIST can not be called from RUN function");
 
-   verify_switches($self,$prog,$switch,"delimit") || return;
+   verify_switches($self,$prog,$switch,"delimit","notify") || return;
 
    if(defined $$switch{delimit}) {                       # handle delimiter
       if($txt =~ /^\s*([^ ]+)\s*/) {
@@ -2107,7 +2157,7 @@ sub cmd_dolist
       return;                                                 # already done
    }
 
-   my $item = shift(@{$$cmd{dolist_list}});
+   my $item = pop(@{$$cmd{dolist_list}});
 
    if($item !~ /^\s*$/) {
       my $cmds = $$cmd{dolist_cmd};
@@ -2121,7 +2171,20 @@ sub cmd_dolist
              );
    }
 
-   return ($#{$$cmd{dolist_list}} == -1) ? "DONE" : "RUNNING";
+   if($#{$$cmd{dolist_list}} == -1) {
+      if(defined $$switch{notify}) {
+         mushrun(self   => $self,
+                 prog   => $prog,
+                 runas  => $self,
+                 source => 0,
+                 cmd    => "\@notify/first/quiet",
+                 child  => 2,
+                );
+      }
+      return "DONE";
+   } else {
+      return "RUNNING";
+   }
 }
 
 #
@@ -2232,6 +2295,21 @@ sub cmd_wait
 
    if(!defined $$cmd{wait_time}) {
       ($$cmd{wait_time},$$cmd{wait_cmd}) = balanced_split(shift,"=",4);
+
+      my ($obj,$time) = balanced_split($$cmd{wait_time},"/",4);
+
+      if($time ne undef) {
+         $$cmd{wait_time} = $time;
+         $$cmd{wait_semaphore} = 1;
+
+         my $target = find($self,$prog,evaluate($self,$prog,$obj)) ||
+            return err($self,$prog,"I don't see that here.");
+
+         if($$target{obj_id} != $$self{obj_id}) {
+            return err($self,$prog,"Semaphores on other objects are not " .
+                       "supported yet.");
+         }
+      }
 
       if(!looks_like_number(ansi_remove($$cmd{wait_time}))) {
          return err($self,$prog,"Invalid wait time provided.");
@@ -4773,7 +4851,7 @@ sub cmd_ex
 #   my ($self,$prog,$txt) = @_;
    my ($target,$desc,@exit,@content,$atr,$out);
 
-   validate_switches($self,$prog,$switch,"raw","command") || return;
+   verify_switches($self,$prog,$switch,"raw","command") || return;
 
    $txt = evaluate($self,$prog,$txt);
 
@@ -7392,7 +7470,10 @@ sub mushrun_add_cmd
          $$prog{mutated} = 1;                # current cmd changed location
       } elsif($$arg{child} == 2) {                  # add after current cmd
          $$data{cmd} = @cmd[$#cmd - $i];
-         splice(@$stack,1,0,$data);
+         my $current = $$prog{cmd};
+         for my $i (0 .. $#$stack) {             #find current cmd in stack
+            splice(@$stack,$i+1,0,$data) if($current eq $$stack[$i]);
+         }
       } else {                                              # add to bottom
          $$data{cmd} = @cmd[$i];
          push(@$stack,$data);
@@ -7751,7 +7832,7 @@ sub run_internal
    $$prog{cmd} = $command;
 #   con("CMD:\n%s\n",print_var($command));
    if(length($cmd) ne 1) {
-      while($arg =~ /^\/([^ =]+)( |$)/) {                  # find switches
+      while($arg =~ /^\/([^ =\/]+) */) {                  # find switches
          @switch{lc($1)} = 1;
          $arg = $';
       }
@@ -11856,7 +11937,7 @@ sub close_telnet
    }
 }
 
-sub validate_switches
+sub verify_switches 
 {
    my ($self,$prog,$switch,@switches) = @_;
    my (%hash,$name);

@@ -572,7 +572,7 @@ sub initialize_commands
    @command{"\@name"}   = { help => "Change the name of an object",
                             fun  => sub { cmd_name(@_); }};
    @command{"\@describe"}={ help => "Change the description of an object",
-                            fun  => sub { cmd_describe(@_); }};
+                            fun  => sub { cmd_generic_set(@_); }};
    @command{"\@pemit"}  = { help => "Send a mesage to an object or person",
                             fun  => sub { cmd_pemit(@_); }};
    @command{"\@emit"}   = { help => "Send a mesage to an object or person",
@@ -650,7 +650,13 @@ sub initialize_commands
    @command{"\@halt"}   = { help => "Stops all your running programs.",
                             fun  => sub { cmd_halt(@_);}                    };
    @command{"\@sex"}    = { help => "Sets the gender for an object.",
-                            fun  => sub { cmd_sex(@_);}                     };
+                            fun  => sub { cmd_generic_set(@_);}             };
+   @command{"\@apay"}   = { help => "Sets the gender for an object.",
+                            fun  => sub { cmd_generic_set(@_);}             };
+   @command{"\@opay"}   = { help => "Sets the gender for an object.",
+                            fun  => sub { cmd_generic_set(@_);}             };
+   @command{"\@pay"}    = { help => "Sets the gender for an object.",
+                            fun  => sub { cmd_generic_set(@_);}             };
    @command{"\@read"}   = { help => "Reads various data for the MUSH",
                             fun  => sub { cmd_read(@_);}                    };
    @command{"\@compile"}= { help => "Reads various data for the MUSH",
@@ -670,7 +676,8 @@ sub initialize_commands
    @command{"\@dump"}   = { fun  => sub { cmd_dump(@_); }                   };
    @command{"\@freefind"}={ fun  => sub { cmd_freefind(@_); }               };
    @command{"\@import"}  ={ fun  => sub { cmd_import(@_); }                 };
-   @command{"\@stat"}   ={ fun  => sub { cmd_stat(@_); }                   };
+   @command{"\@stat"}    ={ fun  => sub { cmd_stat(@_); }                   };
+   @command{"\@cost"}    ={ fun  => sub { cmd_generic_set(@_); }            };
    # --[ aliases ]-----------------------------------------------------------#
    
    @command{"\@poll"}  =  { fun => sub { cmd_doing(@_[0],@_[1],@_[2],
@@ -765,6 +772,23 @@ sub get_mail
    } else {
       return undef;
    }
+}
+
+#
+# cmd_generic_set
+#    Lots of mush commands just set attributes. In TinyMUSH these each might
+#    be handled differently, but they're all just attributes in TeenyMUSH.
+#
+sub cmd_generic_set
+{
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
+
+   my $cmd = $$prog{cmd};         # the command isn't passed in, so get it.
+
+   if(lc($$cmd{mushcmd}) eq "\@desc") {
+      $$cmd{mushcmd} = "\@description";
+   }
+   cmd_set2($self,$prog,substr($$cmd{mushcmd},1) . " " . $txt);
 }
 
 sub cmd_stat
@@ -1262,13 +1286,6 @@ sub cmd_websocket
    }
 }
 
-sub cmd_sex
-{
-    my ($self,$prog,$txt) = @_;
-
-    cmd_set2($self,$prog,"sex $txt",1);
-}
-
 #
 #  cmd_score
 #     Tell the player how much money it has.
@@ -1290,69 +1307,89 @@ sub cmd_score
    }
 }
 
+#
+# give
+#    Give someone else penies and optionally handle @cost/@pay.
+#
 sub cmd_give
 {
    my ($self,$prog) = (obj(shift),obj(shift));
+   my ($apay, $cost);
  
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission denied.");
- 
 
-   my $txt = evaluate($self,$prog,shift);
+   my ($obj,$amount) = meval($self,$prog,balanced_split(shift,"=",4));
 
-   if($txt =~ /=/) {
-      my ($target,$what) = (find($self,$prog,$`),$');
-      return err($self,$prog,"Give to whom?") if $target eq undef;
+   my $target = find($self,$prog,$obj) ||
+      return err($self,$prog,"Give to whom?");
 
-      hasflag(owner($target),"GUEST") &&
-         return err($self,$prog,"Guests don't need that.");
+   hasflag(owner($target),"GUEST") &&
+      return err($self,$prog,"Guests don't need that.");
 
-      if($what =~ /^\s*\-{0,1}(\d+)\s*$/) {
-         $what = $1 . $2;
-         if($what == 0) {
-            return err($self,$prog,"You must specificy a positive amount of ".
-                       "money.");
-         } elsif(hasflag($self,"WIZARD")) {
-            # can give money
-         } elsif($what < 0) {
-            return err($self,$prog,"You may not take away money.");
-         } elsif($what > money($self)) {
-            return err($self,$prog,"You don't have %s to give!",
-               pennies($what));
-         }
+   hasflag(owner($target),"EXIT") &&
+      return err($self,$prog,"Exits don't need that.");
 
-         if(!hasflag($self,"WIZARD") && !give_money($self,-$what)) {
-            my_rollback;
-            return err($self,$prog,"Internal error, unable to give money to ".
-               "%s.",
-               name($target));
-         }
+   hasflag(owner($target),"ROOM") &&
+      return err($self,$prog,"Rooms don't need that.");
 
-         if(!give_money($target,$what)) {
-            my_rollback if(mysqldb);
-            return err($self,"Internal error, unable to give money to %s.",
-               name($target));
-         }
 
-         my_commit if(mysqldb);
-
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "You give %s %s to %s.",
-                           $what,
-                           ($what == 1) ? @info{"conf.money_name_singular"} :
-                                          @info{"conf.money_name_plural"},
-                           name($target) ],
-               target => [ $target, "%s gives you %s %s.",
-                           name($self),
-                           $what,
-                           ($what == 1) ? @info{"conf.money_name_singular"} :
-                                          @info{"conf.money_name_plural"} ]
-              );
-      } else {
-        err($self,$prog,"You can only give money, right now.");
-      }
+   if($$self{obj_id} == $$target{obj_id} && !hasflag($self,"WIZARD")) {
+      return err($self,$prog,"You may not give yourself money.");
+   } elsif($amount !~ /^\s*\-{0,1}(\d+)\s*$/) {
+      return err($self,$prog,"That is not a valid amount.");
+   } elsif($amount <= 0 && !hasflag($self,"WIZARD")) {
+      return err($self,$prog,"You look through your pockets. Nope, no " .
+                 pennies("negative") . ".");
+   } elsif($amount > money($self) && !hasflag($self,"WIZARD")) {
+      return err($self,$prog,"You don't have %s to give!",pennies($amount));
    }
+
+   if(($apay = get($target,"APAY")) ne undef && # handle @pay/@apay
+      ($cost = get($target,"COST")) ne undef) {
+
+      if($cost !~ /^\s*(\d+)\s*$/) {
+         return err($self,$prog,"Invalid \@cost set on object.");
+      }
+
+      if($amount > $cost) {                             # paid too much
+          necho(self   => $self,
+                prog   => $prog,
+                source => [ "You get %s %s in change.",
+                            trim($amount) - $cost, ($amount - $cost == 1) ? 
+                               @info{"conf.money_name_singular"} :
+                               @info{"conf.money_name_plural"} ]
+               );
+      } elsif($amount < $cost) {                           # not enough
+         return err($self,$prog,"Feeling poor today?");
+      }
+      mushrun(self   => $self,                        # run code
+              prog   => $prog,
+              runas  => $target,
+              invoker=> $self,
+              source => 0,
+              cmd    => $apay,
+              );
+      $amount = $cost;
+   }
+
+   give_money($self,"-$amount");
+   give_money($target,"$amount");
+
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ "You give %s %s to %s.",
+                     trim($amount),
+                     ($amount== 1) ? @info{"conf.money_name_singular"} :
+                                     @info{"conf.money_name_plural"},
+                     name($target) ],
+         target => [ $target, "%s gives you %s %s.",
+                     name($self),
+                     trim($amount),
+                     ($amount == 1) ? @info{"conf.money_name_singular"} :
+                                      @info{"conf.money_name_plural"} ]
+        );
+
 }
 
 
@@ -4674,13 +4711,6 @@ sub cmd_doing
 }
 
 
-sub cmd_describe
-{
-   my ($self,$prog,$txt) = @_;
-
-   cmd_set2($self,$prog,"description $txt",1);
-}
-
 #
 # reconstitute
 #    Take the an attribute value and put it back together so that it resembles
@@ -7889,6 +7919,7 @@ sub spin_run
    my $self = $$command{runas};
    my ($cmd,$hash,$arg,%switch);
    $$prog{cmd_last} = $command;
+   $$prog{cmd} = $command;
 
 
    if($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") {
@@ -7903,6 +7934,7 @@ sub spin_run
 
    if($$command{cmd} =~ /^\s*([^ \/]+)/s) {         # split cmd from args
       ($cmd,$arg) = (lc($1),$'); 
+       $$command{mushcmd} = $cmd;
    } else {
       return;                                                 # only spaces
    }
@@ -7915,7 +7947,8 @@ sub spin_run
       substr($cmd,1,1) eq " " ||
       length($cmd) == 1
      )) {
-      return run_internal($hash,substr($cmd,0,1),
+      $$command{mushcmd} = substr($cmd,0,1);
+      return run_internal($hash,$$command{mushcmd},
                           $command,
                           $prog,
                           substr($$command{cmd},1),
@@ -8722,7 +8755,8 @@ sub initialize_functions
    @fun{entities}   = sub { return &fun_entities(@_);              };
    @fun{setunion}   = sub { return &fun_setunion(@_);              };
    @fun{setdiff}    = sub { return &fun_setdiff(@_);               };
-   @fun{lit}        = sub { return &fun_lit(@_);               };
+   @fun{lit}        = sub { return &fun_lit(@_);                   };
+   @fun{lit}        = sub { return &fun_stats(@_);                 };
 }
 
 
@@ -8743,6 +8777,41 @@ sub add_union_element
       }
    } else {
       $$list{$item} = $item;
+   }
+}
+
+sub fun_stats
+{
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
+   my ($target,$owner,%count);
+
+   my %count = (
+      PLAYER => 0,
+      ROOM => 0,
+      EXIT => 0,
+      OBJECT => 0,
+   );
+
+   if(memorydb) {
+
+      if($txt =~ /^\s*all\s*$/i) {
+         $txt = "all";
+      } else {
+         $target = find($self,$prog,$txt) ||
+            return "#-1 NOT FOUND";
+         $owner = owner($target);
+         return "#-1 OWNER NOT FOUND" if $owner eq undef;
+      }
+
+      for my $i (0 .. $#db) {
+         if(valid_dbref($i) && $txt eq "all" || owner_id($i) == $owner) {
+            @count{type($i)}++;
+         }
+      }
+      return sprintf("%s %s %s %s",@count{ROOM:q
+
+   } else {
+      return "#-1 NOT WRITTEN";
    }
 }
 
@@ -11289,6 +11358,18 @@ sub script
 #      con("think [switch(%s(%s),%s,,{WRONG %s(%s) -> %s})]\n",
 #          $fun,$args,$result,$fun,$args,$result);
 #   }
+}
+
+sub meval
+{
+   my ($self,$prog,@args) = @_;
+   my @result;
+
+   for my $i (0 .. $#args) {
+      push(@result,evaluate($self,$prog,@args[$i]));
+   }
+
+   return @result;
 }
 
 #

@@ -591,6 +591,8 @@ sub initialize_commands
                             fun  => sub { cmd_uptime(@_); }};
    @command{"\@destroy"}= { help => "Destroy an object",
                             fun  => sub { cmd_destroy(@_); }};
+   @command{"\@wipe"}   = { help => "Destroy an object",
+                            fun  => sub { cmd_wipe(@_); }};
    @command{"\@toad"}   = { help => "Destroy an player",
                             fun  => sub { cmd_toad(@_); }};
    @command{"\@sleep"}  = { help => "Pause the a program for X seconds",
@@ -775,6 +777,42 @@ sub get_mail
 }
 
 #
+# cmd_wipe
+#    Erase all the attribute on an object.
+#
+sub cmd_wipe
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+   my $count = 0;
+
+   my ($obj,$pattern) = meval($self,$prog,balanced_split(shift,"/",4));
+
+   my $target = find($self,$prog,$obj) ||            # can't find target
+      return err($self,$prog,"No match.");
+
+   if(!controls($self,$target)) {                    # check permissions
+      return err($self,$prog,"Permission denied.");
+   } elsif(hasflag($target,"GOD") && !hasflag($self,"GOD")) {
+      return err($self,$prog,"Permission denied.");
+   }
+
+   my $pat = glob2re($pattern) if($pattern ne undef); # convert pattern to
+                                                      # regular expression
+
+   for my $attr (grep {!/^obj_/} lattr($target)) {         # search object
+      if($pat eq undef || $attr =~ /$pat/i) {       # wipe specified attrs
+         set($self,$prog,$target,$attr,undef,1);
+         $count++;
+      }
+   }
+
+   necho(self   => $self,                                    # notify user
+         prog   => $prog,
+         source => [ "Wiped - %d attribute%s.",$count,($count != 1) ? "s" : ""]
+        );
+}
+
+#
 # cmd_generic_set
 #    Lots of mush commands just set attributes. In TinyMUSH these each might
 #    be handled differently, but they're all just attributes in TeenyMUSH.
@@ -785,7 +823,8 @@ sub cmd_generic_set
 
    my $cmd = $$prog{cmd};         # the command isn't passed in, so get it.
 
-   if(lc($$cmd{mushcmd}) eq "\@desc") {
+   if(lc($$cmd{mushcmd}) eq "\@desc" ||
+      lc($$cmd{mushcmd}) eq "\@describe") {
       $$cmd{mushcmd} = "\@description";
    }
    cmd_set2($self,$prog,substr($$cmd{mushcmd},1) . " " . $txt);
@@ -1020,12 +1059,13 @@ sub cmd_while
            ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
            $$cmd{while_cmd} = $2;
         } else {
+           printf("TXT: '%s'\n",$txt);
            return err($self,$prog,"usage: while (<expression>) { commands }");
         }
     }
     $$cmd{while_count}++;
 
-    if($$cmd{while_count} >= 1000) {
+    if($$cmd{while_count} >= 5000) {
        con("#*****# while exceeded maxium loop of 1000, stopped\n");
        return err($self,$prog,"while exceeded maxium loop of 1000, stopped");
     } elsif(test($self,$prog,$$cmd{while_test})) {
@@ -1108,11 +1148,25 @@ sub cmd_bad
                   @info{"conf.starting_money"});
              }
 
+            if(hasflag($$cmd{bad_pos},"ROOM")) {
+               my $loc = get($$cmd{bad_pos},"obj_location");
+               if($loc ne undef) {
+                  push(@out, "Room #$$cmd{bad_pos} has a location[$loc], removed.");
+                  db_set($$cmd{bad_pos},"obj_location");
+                  if(valid_dbref($loc)) {
+                     db_remove_list($loc,"obj_content",$$cmd{bad_pos});
+                  }
+               }
+            }
+
             for my $obj (lcon($$cmd{bad_pos})) {
                if(!valid_dbref($obj)) {
                   push(@out,"#" . $$cmd{bad_pos} . " removed from contents " .
                        "#" . $$obj{obj_id} . "[destroyed object]");
                   db_remove_list($$cmd{bad_pos},"obj_content",$$obj{obj_id});
+               } elsif(!hasflag($obj,"PLAYER") && !hasflag($obj,"OBJECT")) {
+                  push(@out,
+                       "#$$obj{obj_id} is not an object in #$$cmd{bad_pos}");
                }
             }
 
@@ -1121,6 +1175,8 @@ sub cmd_bad
                   con("Removing \@destroyed obj #%s from exit list of #%s\n",
                      $$obj{obj_id},$$cmd{bad_pos});
                   db_remove_list($$cmd{bad_pos},"obj_exits",$$obj{obj_id});
+               } elsif(!hasflag($obj,"EXIT")) {
+                  push(@out,"#$$obj{obj_id} is not an exit [$$cmd{bad_pos}]. ");
                }
             }
 
@@ -1410,7 +1466,7 @@ sub cmd_trigger
 
    # okay to evaluate object / attribute
    my $target = find($self,$prog,evaluate($self,$prog,$target));
-   my $name = evaluate($self,$prog,$name);
+   my $name = trim(evaluate($self,$prog,$name));
 
    return err($self,$prog,"No match.") if($target eq undef);
 
@@ -1440,9 +1496,25 @@ sub cmd_trigger
           );
 }
 
+#
+# cmd_huh
+#    Unknown command has been issued. Handle the echoing of VERBOSE
+#    here for the unknown command.
+#
 sub cmd_huh
 {
-   my ($self,$prog) = @_;
+   my ($self,$prog,$txt) = @_;
+
+   if(hasflag($self,"VERBOSE")) {
+      necho(self   => owner($self),
+            prog   => $prog,
+            target => [ owner($self),
+                        "%s] %s", 
+                        name($self),
+                        trim((($txt eq undef) ? "" : " " . $txt))
+                      ]
+           );
+   }
 
 #   printf("HUH: '%s' -> '%s'\n",print_var($prog));
    necho(self   => $self,
@@ -2194,7 +2266,7 @@ sub cmd_dolist
       return;                                                 # already done
    }
 
-   my $item = pop(@{$$cmd{dolist_list}});
+   my $item = shift(@{$$cmd{dolist_list}});
 
    if($item !~ /^\s*$/) {
       my $cmds = $$cmd{dolist_cmd};
@@ -3911,13 +3983,15 @@ sub cmd_last
 #
 sub cmd_go
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift);
    my ($exit ,$dest);
 
+   my $txt = evaluate($self,$prog,shift);
    $txt =~ s/^\s+|\s+$//g;
+
    my $loc = loc($self);
 
-   if($txt =~ /^\s*home\s*$/i) {
+   if($txt =~ /^home$/i) {
       necho(self   => $self,
             prog   => $prog,
             source => [ "There's no place like home...\n" .
@@ -3989,7 +4063,7 @@ sub cmd_teleport
    $target = find($self,$prog,$target) ||
       return err($self,$prog,"I don't see that object here.");
 
-   $location = find($self,$prog,$location) ||
+   $location = find($self,$prog,evaluate($self,$prog,$location)) ||
       return err($self,$prog,"I can't find that location");
 
    controls($self,$target) ||
@@ -4357,10 +4431,10 @@ sub cmd_dig
    }
 
 
-   if($out ne undef) {
-      $loc = loc($self) ||
-         return err($self,$prog,"Unable to determine your location");
+   $loc = loc($self) ||
+      return err($self,$prog,"Unable to determine your location");
 
+   if($out ne undef) {
       if(!(controls($self,$loc) || hasflag($loc,"LINK_OK"))) {
          return err($self,
                     $prog,
@@ -4378,6 +4452,7 @@ sub cmd_dig
         );
 
    if($in ne undef) {
+      printf("LOC: '%s'\n",$loc);
       my $in_dbref = create_exit($self,$prog,$in,$loc,$room);
  
       if($in_dbref eq undef) {
@@ -4403,7 +4478,7 @@ sub cmd_dig
             source => [ "   Out exit created as:  %s(#%sE)",$out,$out_dbref ],
            );
    }
-   my_commit;
+   my_commit if(mysqldb);
 }
 
 sub cmd_open
@@ -4454,7 +4529,7 @@ sub cmd_open
          source => [ "Exit created as %s(#%sE)",$exit,$dbref ],
         );
 
-   my_commit;
+   my_commit if(mysqldb);
 }
 
 sub mushhash
@@ -5278,15 +5353,20 @@ sub cmd_set2
    my ($txt,$value) = balanced_split(shift,"=",4);
    my $flag = shift;
 
-   if($txt =~ /^\s*([^ ]+)\s*/) {                 # pick off attribute name
-      $obj = $';                    # never evaluate value if from user input
-      $attr = (@{$$prog{cmd}}{source}==0) ? evaluate($self,$prog,$1) : $1;
+   if(evaluate($self,$prog,$txt) =~ /^\s*([^ ]+)\s*/) {   # get attribute name
+      ($attr,$obj) = ($1,$');        # never evaluate value if from user input
    } else {
       return err($self,$prog,"Unable to parse &attribute command");
    }
 
-   my $target = find($self,$prog,evaluate($self,$prog,$obj)) || # find target
+   my $target = find($self,$prog,$obj) || # find target
       return err($self,$prog,"I don't see that here.");
+
+#   necho(self   => $self,
+#         prog   => $prog,
+#         source => [ "OBJ: '%s'", $obj ],
+#        );
+   
 
    if(!controls($self,$target)) {                                    # nope
       return err($self,$prog,"Permission denied");
@@ -5884,7 +5964,7 @@ sub lexits
                           $$object{obj_id},
                     )}) { 
           push(@list,obj($$obj{obj_id}));
-       }
+      }
        set_cache($object,"lexits",\@list);
    }
    return @{ cache($object,"lexits") };
@@ -7368,7 +7448,6 @@ use Time::HiRes "ualarm";
 sub single_line
 {
    my $txt = shift;
-
    $txt =~ s/\r\s*|\n\s*//g;
    return $txt;
 }
@@ -7862,7 +7941,7 @@ sub run_internal
    $$prog{cmd} = $command;
 #   con("CMD:\n%s\n",print_var($command));
    if(length($cmd) ne 1) {
-      while($arg =~ /^\/([^ =\/]+) */) {                  # find switches
+      while($arg =~ /^\s*\/([^ =\/]+) */) {                  # find switches
          @switch{lc($1)} = 1;
          $arg = $';
       }
@@ -7933,15 +8012,15 @@ sub spin_run
    }
 
    if($$command{cmd} =~ /^\s*([^ \/]+)/s) {         # split cmd from args
-      ($cmd,$arg) = (lc($1),$'); 
+      ($cmd,$arg) = ($1,$'); 
        $$command{mushcmd} = $cmd;
    } else {
       return;                                                 # only spaces
    }
 
 # find command set to use
-   if(defined $$hash{$cmd}) {                                  # internal cmd
-      return run_internal($hash,$cmd,$command,$prog,$arg);
+   if(defined $$hash{lc($cmd)}) {                                # internal cmd
+      return run_internal($hash,lc($cmd),$command,$prog,$arg);
   } elsif(defined $$hash{substr($cmd,0,1)} &&
      (defined $$hash{substr($cmd,0,1)}{nsp} ||
       substr($cmd,1,1) eq " " ||
@@ -7951,7 +8030,7 @@ sub spin_run
       return run_internal($hash,$$command{mushcmd},
                           $command,
                           $prog,
-                          substr($$command{cmd},1),
+                          substr($cmd,1) . $arg,
                           \%switch,
                           1
                          );
@@ -7969,7 +8048,9 @@ sub spin_run
       if($match ne undef && lc($cmd) ne "q") {                  # found match
          return run_internal($hash,$match,$command,$prog,$arg);
       } else {                                                     # no match
-         return &{@{@command{"huh"}}{fun}}($$command{runas},$prog,$$command{cmd});
+         return &{@{@command{"huh"}}{fun}}($$command{runas},
+                                           $prog,
+                                           $$command{cmd});
       }
    }
    return 1;
@@ -8005,6 +8086,8 @@ sub find_in_list
    my ($thing,@list) = @_;
    my ($partial,$dup);
 
+   return undef if $thing eq undef;
+
    for my $obj (@list) {
       if(lc(name($obj,1)) eq $thing) {
          return obj($obj);
@@ -8031,33 +8114,43 @@ sub find_in_list
 #    Find something in
 sub find
 {
-   my ($self,$prog,$thing) = (shift,shift,trim(lc(shift)));
+   my ($self,$prog,$thing,$debug) = (shift,shift,trim(lc(shift)),shift);
    my ($partial, $dup);
 
    if($thing =~ /^\s*#(\d+)\s*$/) {
+      printf("got here: 1\n") if $debug;
       return valid_dbref($1) ? obj($1) : undef;
    } elsif($thing =~ /^\s*here\s*$/) {
+      printf("got here: 2\n") if $debug;
       return loc_obj($self);
    } elsif($thing =~ /^\s*%#\s*$/) {
+      printf("got here: 3\n") if $debug;
       return $$prog{created_by};
    } elsif($thing =~ /^\s*me\s*$/) {
+      printf("got here: 4\n") if $debug;
       return $self;
    } elsif($thing =~ /^\s*\*/) {
        my $player = lc(trim($'));
        if(defined @player{$player}) {
+      printf("got here: 5\n") if $debug;
           return obj(@player{$player});
        } else {
+      printf("got here: 6\n") if $debug;
           return undef
        }
    }
 
    # search in contents of object
    my $obj = find_in_list($thing,lcon($self));
+      printf("got here: 7 -> '$obj'\n") if $debug;
    return $obj if($obj ne undef);
+      printf("got here: 8\n") if $debug;
 
    # search around object
    my $obj = find_in_list($thing,lcon(loc($self)));
+      printf("got here: 9\n") if $debug;
    return $obj if($obj ne undef);
+      printf("got here: 10\n") if $debug;
 
    # search exits around object
    return find_exit($self,$prog,$thing);
@@ -8651,7 +8744,8 @@ use Compress::Zlib;
 
 sub initialize_functions
 {
-   @fun{bad}       = sub { return &fun_bad(@_);                    };
+   @fun{escape}    = sub { return &fun_escape(@_);                 };
+   @fun{trim}      = sub { return &fun_trim(@_);                   };
    @fun{ansi}      = sub { return &fun_ansi(@_);                   };
    @fun{ansi_debug}= sub { return &ansi_debug($_[2]);              };
    @fun{substr}    = sub { return &fun_substr(@_);                 };
@@ -8693,7 +8787,8 @@ sub initialize_functions
    @fun{replace}   = sub { return &fun_replace(@_);                };
    @fun{num}       = sub { return &fun_num(@_);                    };
    @fun{lnum}      = sub { return &fun_lnum(@_);                   };
-   @fun{name}      = sub { return &fun_name(@_);                   };
+   @fun{name}      = sub { return &fun_name(0,@_);                 };
+   @fun{fullname}  = sub { return &fun_name(1,@_);                 };
    @fun{type}      = sub { return &fun_type(@_);                   };
    @fun{u}         = sub { return &fun_u(@_);                      };
    @fun{v}         = sub { return &fun_v(@_);                      };
@@ -8709,6 +8804,7 @@ sub initialize_functions
    @fun{eq}        = sub { return &fun_eq(@_);                     };
    @fun{not}       = sub { return &fun_not(@_);                    };
    @fun{match}     = sub { return &fun_match(@_);                  };
+   @fun{strmatch}  = sub { return &fun_strmatch(@_);               };
    @fun{isnum}     = sub { return &fun_isnum(@_);                  };
    @fun{gt}        = sub { return &fun_gt(@_);                     };
    @fun{gte}       = sub { return &fun_gte(@_);                    };
@@ -8756,7 +8852,9 @@ sub initialize_functions
    @fun{setunion}   = sub { return &fun_setunion(@_);              };
    @fun{setdiff}    = sub { return &fun_setdiff(@_);               };
    @fun{lit}        = sub { return &fun_lit(@_);                   };
-   @fun{lit}        = sub { return &fun_stats(@_);                 };
+   @fun{stats}      = sub { return &fun_stats(@_);                 };
+   @fun{mod}        = sub { return &fun_mod(@_);                   };
+   @fun{filter}     = sub { return &fun_filter(@_);                };
 }
 
 
@@ -8780,6 +8878,45 @@ sub add_union_element
    }
 }
 
+sub fun_trim
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+
+   return trim(evaluate($self,$prog,shift));
+}
+
+sub fun_escape
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+
+   my $txt = shift;
+
+   $txt =~ s/([%\\\[\]{};,()])/\\\1/g;
+   return $txt;
+}
+#
+# fun_mod
+#    Return the modulus of two numbers
+#
+sub fun_mod
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+
+   good_args($#_,2) ||
+      return "#-1 FUNCTION (MOD) EXPECTS 2 ARGUMENTS";
+
+   my $one = ansi_remove(evaluate($self,$prog,shift));
+   my $two = ansi_remove(evaluate($self,$prog,shift));
+
+   # divide by zero should result in an error in my opinion but TinyMUSH
+   # just returns 0, so we emulate this behavior.
+   if(!looks_like_number($one) || !looks_like_number($two) || $two == 0) {
+      return 0;
+   } else {
+      return $one % $two;
+   }
+}
+
 sub fun_stats
 {
    my ($self,$prog,$txt) = (obj(shift),shift,shift);
@@ -8790,36 +8927,36 @@ sub fun_stats
       ROOM => 0,
       EXIT => 0,
       OBJECT => 0,
+      TOTAL => 0,
+      GARBAGE => 0,
    );
 
    if(memorydb) {
 
-      if($txt =~ /^\s*all\s*$/i) {
+      if($txt =~ /^\s*all\s*$/i || $txt eq undef) {
          $txt = "all";
       } else {
          $target = find($self,$prog,$txt) ||
             return "#-1 NOT FOUND";
-         $owner = owner($target);
+         $owner = owner_id($target);
          return "#-1 OWNER NOT FOUND" if $owner eq undef;
       }
 
       for my $i (0 .. $#db) {
-         if(valid_dbref($i) && $txt eq "all" || owner_id($i) == $owner) {
-            @count{type($i)}++;
+         if(valid_dbref($i) && ($txt eq "all" || owner_id($i) == $owner)) {
+            @count{type($self,$prog,$i)}++;
+            @count{"TOTAL"}++;
+         } elsif($txt eq "all") {
+            @count{"GARBAGE"}++;
+            @count{"TOTAL"}++;
          }
       }
-      return sprintf("%s %s %s %s",@count{ROOM:q
-
+      return sprintf("%s %s %s %s %s %s",
+                     @count{"TOTAL", "ROOM", "EXIT", "OBJECT", "PLAYER", 
+                     "GARBAGE"});
    } else {
       return "#-1 NOT WRITTEN";
    }
-}
-
-sub fun_bad
-{
-   my ($self,$prog,$txt) = (obj(shift),shift,shift);
-
-   return bad_object($txt);
 }
 
 sub type
@@ -9933,6 +10070,8 @@ sub fun_home
 
    if($target eq undef) {
       return "#-1 NOT FOUND";
+   } elsif(hasflag($target,"EXIT")) {
+      return "#" . loc($target);
    } else {
       return "#" . home($target);
    }
@@ -9993,10 +10132,24 @@ sub fun_loc
    good_args($#_,1) ||
       return "#-1 FUNCTION (LOC) EXPECTS 1 ARGUMENT $#_";
 
+   my $foo = $_[0];
    my $target = find($self,$prog,evaluate($self,$prog,shift));
 
    if($target eq undef) {
+      if ($foo eq "%0") {
+         con("NOT FOUND: '%s'\n%s\n",$foo,code("long"));
+         con("CMD: %s\n",@{$$prog{cmd}}{cmd});
+      }
       return "#-1 NOT FOUND";
+   } elsif(hasflag($target,"ROOM")) {           # rooms can't be anywhere
+      return "#-1";
+   } elsif(hasflag($target,"EXIT")) {
+      my $dest = dest($target);
+      if($dest eq undef) {
+         return "#-1";
+      } else {
+         return "#" . dest($target);
+      }
    } else {
       return "#" . loc($target);
    }
@@ -10167,6 +10320,25 @@ sub fun_match
       $count++;
    }
    return 0;
+}
+
+#
+# fun_strmatch
+#    Match a string against a pattern with an optional delimiter.
+#
+sub fun_strmatch
+{
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,2) ||
+      return "#-1 FUNCTION (STRMATCH) EXPECTS 2 ARGUMENTS";
+
+   my $txt   = evaluate($self,$prog,shift);
+   my $pat   = evaluate($self,$prog,shift);
+
+   $pat = glob2re($pat);
+
+   return ($txt =~ /^$pat$/i) ? 1 : 0;
 }
 
 sub fun_center
@@ -10463,10 +10635,13 @@ sub fun_div
 
    return "#-1 Add requires at least two arguments" if $#_ < 1;
 
-   if($_[1] eq 0) {
+   my $one = evaluate($self,$prog,shift);
+   my $two = evaluate($self,$prog,shift);
+
+   if($two eq undef || $two == 0) {
       return "#-1 DIVIDE BY ZERO";
    } else {
-      return int(@_[0] / @_[1]);
+      return int($one / $two);
    }
 }
 
@@ -10568,7 +10743,16 @@ sub fun_owner
 
    good_args($#_,1) ||
       return "#-1 FUNCTION (OWNER) EXPECTS 1 ARGUMENT";
+ 
 
+   if($_[0] =~ /^\s*#(\d+)\s*$/) { 
+      my $owner = owner(obj($1)) ||
+         return "#-1 NOT FOUND";
+      return "#" . $$owner{obj_id};
+   } else {
+      return "#-1 NOT FOUND";
+   }
+   
    my $owner = owner(obj(shift));
 
    return ($owner eq undef) ? "#-1" : ("#" . $$owner{obj_id});
@@ -10576,15 +10760,17 @@ sub fun_owner
 
 sub fun_name
 {
-   my ($self,$prog) = (shift,shift);
+   my ($flag,$self,$prog) = (shift,shift,shift);
 
    good_args($#_,1) ||
-      return "#-1 FUNCTION (NAME) EXPECTS 1 ARGUMENT";
+      return "#-1 FUNCTION (NAME) EXPECTS 1 ARGUMENT - $#_";
 
-   my $target = find($self,$prog,evaluate($self,$prog,$_[0]));
- 
+   my $target = find($self,$prog,evaluate($self,$prog,shift));
+
    if($target eq undef) {
       return "#-1";
+   } elsif(hasflag($target,"EXIT") && !$flag) {
+      return first(name($target));
    } else {
      return name($target);
    }
@@ -10601,6 +10787,46 @@ sub fun_type
       return "#-1 NOT FOUND";
 
    return type($self,$prog,$target);
+}
+
+sub fun_filter
+{
+   my ($self,$prog) = (obj(shift),shift);
+   my @result;
+
+   good_args($#_,2,3,4) ||
+      return "#-1 FUNCTION (FILTER) EXPECTS BETWEEN 2 and 4 ARGUMENTS";
+
+   my ($obj,$atr) = meval($self,$prog,balanced_split(shift,"\/",4));
+   my $list   = evaluate($self,$prog,shift);
+   my $delim  = evaluate($self,$prog,shift);
+   my $odelim = evaluate($self,$prog,shift);
+
+   # TinyMUSH doesn't provide any details if there is an error.
+   if($atr eq undef) {
+      ($obj,$atr) = ($self,$obj);
+   } elsif(($obj = find($self,$prog,$obj)) eq undef) {
+      return undef;
+   }
+
+   $delim = " " if($delim eq undef);
+   $odelim = " " if($odelim eq undef);
+
+   my $value = get($obj,$atr) ||
+      return undef;
+
+   my $prev = get_digit_variables($prog);                   # save %0 .. %9
+
+   for my $word (safe_split($list,$delim)) {
+      set_digit_variables($self,$prog,"",$word);       # update to new values
+      if(evaluate($self,$prog,$value)) {
+         push(@result,$word);
+      }
+   }
+
+   set_digit_variables($self,$prog,"",$prev);            # restore %0 .. %9
+
+   return join($odelim,@result);
 }
 
 sub fun_u
@@ -12790,7 +13016,9 @@ sub loggedin
 
 sub valid_dbref 
 {
-   my ($id,$no_check_bad) = (obj(shift),shift);
+   my ($id,$no_check_bad) = (shift,shift);
+
+   $id = { obj_id => $id } if(ref($id) ne "HASH");
    $$id{obj_id} =~ s/#//g;
 
    if(memorydb) {
@@ -13451,6 +13679,7 @@ sub set
    }
 
    if($attribute !~ /^\s*([#a-z0-9\_\-\.]+)\s*$/i) {
+      printf("ATTRIBUTE: '%s'\n",$attribute);
       err($self,$prog,"Attribute name is bad, use the following characters: " .
            "A-Z, 0-9, and _ : $attribute");
    } elsif($value =~ /^\s*$/) {
@@ -13821,9 +14050,14 @@ sub link_exit
    my ($self,$exit,$src,$dst) = obj_import(@_);
 
    if(memorydb) {
-      db_set_list($$src{obj_id},"obj_exits",$$exit{obj_id});
-      db_set($$exit{obj_id},"obj_location",$$src{obj_id});
-      db_set($$exit{obj_id},"obj_destination",$$dst{obj_id});
+      if($src ne undef && defined $$src{obj_id}) {
+         db_set_list($$src{obj_id},"obj_exits",$$exit{obj_id});
+         db_set($$exit{obj_id},"obj_location",$$src{obj_id});
+      }
+
+      if($dst ne undef && defined $$exit{obj_id}) {
+         db_set($$exit{obj_id},"obj_destination",$$dst{obj_id});
+      }
       return 1;
    } else {
       my $count=one_val("select count(*) value " .

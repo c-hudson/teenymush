@@ -487,223 +487,116 @@ sub initialize_commands
    @offline{screenwidth} = sub { return;                                    };
    @offline{screenheight}= sub { return;                                    };
    # ------------------------------------------------------------------------#
-   @command{screenwidth} ={ help => "Set screen width",
-                            fun  => sub { return;}                          };
-   @command{screenheight}={ help => "Set screen width",
-                             fun  => sub {return 1;}                        };
-   @command{"\@perl"}   = { help => "Run a perl command",
-                            fun  => sub { return &cmd_perl(@_); }           };
-   @command{say}        = { help => "Sends a message to everyone in the room",
-                            fun  => sub { return &cmd_say(@_); }            };
-   @command{"\""}       = { help => @{@command{say}}{help},
-                            fun  => sub { return &cmd_say(@_); },
-                            nsp  => 1                                       };
-   @command{"`"}        = { help => "Direct a message to a person",
-                            fun  => sub { return &cmd_to(@_); },
-                            nsp  => 1                                       };
-   @command{"&"}        = { help => "Set an attribute on an object",
-                            fun  => sub { return &cmd_set2(@_); },
-                            nsp  => 1                                       };
-   @command{"\@reload"} = { help => "Reload any changed perl code",
-                            fun  => sub { return &cmd_reload_code(@_); }    };
-   @command{pose}       = { help => "Perform an action of your choosing",
-                            fun  => sub { return &cmd_pose(@_); }           };
-   @command{":"}        = { help => @{@command{pose}}{help},
-                            fun  => sub { return &cmd_pose(@_); },
-                            nsp  => 1                                       };
-   @command{";"}        = { help => "Posing without a space after your name",
-                            fun  => sub { return &cmd_pose(@_[0..3],1); },
-                            nsp  => 1                                       };
-   @command{"emote"}    = { help => "Posing without a space after your name",
-                            fun  => sub { return &cmd_pose(@_[0..3],1);      },
-                            nsp  => 1                                       };
-   @command{who}        = { help => "Display online users",
-                            fun  => sub { return &cmd_who(@_); }            };
-   @command{whisper}    = { help => "Send a message to something nearby",
-                            fun  => sub { return &cmd_whisper(@_); }        };
-   @command{doing}      = { help => "Display online users",
-                            fun  => sub { return &cmd_DOING(@_); }          };
-   @command{"\@doing"}  = { help => "Set what your up to [visible in WHO]",
-                            fun  => sub { return &cmd_doing(@_); }          };
-   @command{help}       = { help => "Help on internal commands",
-                            fun  => sub { return &cmd_help(@_); }           };
-   @command{"\@dig"}    = { help => "Dig a room",
-                            fun  => sub { return &cmd_dig(@_); }            };
-   @command{"look"}     = { help => "Look at an object or your current location",
-                            fun  => sub { return &cmd_look(@_); }           };
-   @command{quit}       = { help => "Disconnect from the server",
-                            fun  => sub { return cmd_quit(@_); }            };
-   @command{"\@trigger"} = { help => "Run commands in an attribute",
-                            fun  => sub { return cmd_trigger(@_); }         };
-   @command{"\@commit"} = { help => "Force a commit to mysql",
-                            fun  => sub { return cmd_commit(@_); }          };
-   @command{"\@set"}    = { help => "Set attributes on an object",
-                            fun  => sub { return cmd_set(@_); }             };
-   @command{"\@cls"}    = { help => "Clear the console screen",
-                            fun  => sub { return cmd_clear(@_); }           };
-   @command{"\@create"} = { help => "Create an object",
-                            fun  => sub { return cmd_create(@_); }        };
-   @command{"print"}    = { help => "Print an internal variable",
-                            fun  => sub { return cmd_print(@_); }           };
-   @command{"go"}       = { help => "Go through an exit",
-                            fun  => sub { return cmd_go(@_); }              };
-   @command{"home"}       = { help => "Go home",
-                            fun  => sub { return cmd_go($_[0],$_[1],"home");}};
-   @command{"examine"}  = { help => "Examine an object in more detail",
-                            fun  => sub { return cmd_ex(@_); }              };
-   @command{"ex"}  =      { help => "Examine an object in more detail",
-                            fun  => sub { return cmd_ex(@_); }              };
-   @command{"\@last"}   = { help => "Information about your last connects",
-                            fun  => sub { return cmd_last(@_); }            };
-   @command{page}       = { help => "Send a message to people in other rooms",
-                            fun  => sub { cmd_page(@_); }};
-   @command{take}       = { help => "Pick up an object",
-                            fun  => sub { cmd_take(@_); }};
-   @command{drop}       = { help => "Drop an object you are carrying",
-                            fun  => sub { cmd_drop(@_); }};
-   @command{"\@force"}  = { help => "Force an object/person to do something",
-                            fun  => sub { cmd_force(@_); }};
-   @command{inventory}  = { help => "List what you are carrying",
-                            fun  => sub { cmd_inventory(@_); }};
-   @command{enter}      = { help => "Enter an object",
-                            fun  => sub { cmd_enter(@_); }};
-   @command{leave}      = { help => "Leave an object",
-                            fun  => sub { cmd_leave(@_); }};
-   @command{"\@name"}   = { help => "Change the name of an object",
-                            fun  => sub { cmd_name(@_); }};
-   @command{"\@describe"}={ help => "Change the description of an object",
-                            fun  => sub { cmd_generic_set(@_); }};
-   @command{"\@pemit"}  = { help => "Send a mesage to an object or person",
-                            fun  => sub { cmd_pemit(@_); }};
-   @command{"\@emit"}   = { help => "Send a mesage to an object or person",
-                            fun  => sub { cmd_emit(@_); }};
-   @command{"think"}    = { help => "Send a mesage to just yourself",
-                            fun  => sub { cmd_think(@_); }};
-   @command{"version"}  = { help => "Show the current version of the MUSH",
-                            fun  => sub { cmd_version(@_); }};
-   @command{"\@link"}   = { help => "Set the destination location of an exit",
-                            fun  => sub { cmd_link(@_); }};
-   @command{"\@teleport"}={ help => "Teleport an object somewhere else",
-                            fun  => sub { cmd_teleport(@_); }};
-   @command{"\@open"}   = { help => "Open an exit to another room",
-                            fun  => sub { cmd_open(@_); }};
-   @command{"\@uptime"} = { help => "Display the uptime of this server",
-                            fun  => sub { cmd_uptime(@_); }};
-   @command{"\@destroy"}= { help => "Destroy an object",
-                            fun  => sub { cmd_destroy(@_); }};
-   @command{"\@wipe"}   = { help => "Destroy an object",
-                            fun  => sub { cmd_wipe(@_); }};
-   @command{"\@toad"}   = { help => "Destroy an player",
-                            fun  => sub { cmd_toad(@_); }};
-   @command{"\@sleep"}  = { help => "Pause the a program for X seconds",
-                            fun  => sub { cmd_sleep(@_); }};
-   @command{"\@wait"}   = { help => "Pause the a program for X seconds",
-                            fun  => sub { cmd_wait(@_); }};
-   @command{"\@sweep"}  = { help => "Lists who/what is listening",
-                            fun  => sub { cmd_sweep(@_); }};
-   @command{"\@list"}   = { help => "List internal server data",
-                            fun  => sub { cmd_list(@_); }};
-   @command{"\@mail"}   = { help => "Send mail between users",
-                            fun  => sub { cmd_mail(@_); }};
-   @command{"score"}    = { help => "Lists how many pennies you have",
-                            fun  => sub { cmd_score(@_); }};
-   @command{"\@recall"} = { help => "Recall output sent to you",
-                            fun  => sub { cmd_recall(@_); }};
-   @command{"\@telnet"} = { help => "open a connection to the internet",
-                            fun  => sub { cmd_telnet(@_); }};
-   @command{"\@close"} = { help => "close a connection to the internet",
-                            fun  => sub { cmd_close(@_); }};
-   @command{"\@reset"}  = { help => "Clear the telnet buffers",
-                            fun  => sub { cmd_reset(@_); }};
-   @command{"\@send"}   = { help => "Send data to a connected socket",
-                            fun  => sub { cmd_send(@_); }};
-   @command{"\@password"}={ help => "Change your password",
-                            fun  => sub { cmd_password(@_); }};
-   @command{"\@newpassword"}={ help => "Change someone else's password",
-                            fun  => sub { cmd_newpassword(@_); }};
-   @command{"\@switch"}  ={ help => "Compares strings then runs coresponding " .
-                                    "commands",
-                            fun  => sub { cmd_switch(@_); }};
-   @command{"\@select"}  ={ help => "Compares strings then runs coresponding " .
-                                    "commands",
-                            fun  => sub { cmd_switch(@_); }};
-   @command{"\@ps"}      ={ help => "Provide details about the engine queue",
-                            fun  => sub { cmd_ps(@_); }};
-   @command{"\@kill"}    ={ help => "Kill a process",
-                            fun  => sub { cmd_killpid(@_); }};
-   @command{"\@var"}     ={ help => "Set a local variable",
-                            fun  => sub { cmd_var(@_); }};
-   @command{"\@dolist"}  ={ help => "Loop through a list of variables",
-                            fun  => sub { cmd_dolist(@_); }};
-   @command{"\@notify"}  ={ help => "Loop through a list of variables",
-                            fun  => sub { cmd_notify(@_); }};
-   @command{"\@drain"}   ={ help => "Loop through a list of variables",
-                            fun  => sub { cmd_drain(@_); }};
-   @command{"\@while"}   ={ help => "Loop while an expression is true",
-                            fun  => sub { cmd_while(@_); }};
-   @command{"\@crash"}   ={ help => "Crashes the server.",
-                            fun  => sub { cmd_crash(@_); }};
-   @command{"\@\@"}     = { help => "A comment, will be ignored ",
-                            fun  => sub { return;}                          };
-   @command{"\@lock"}   = { help => "Test Command",
-                            fun  => sub { cmd_lock(@_);}                    };
-   @command{"\@boot"}   = { help => "Kicks the player off the game.",
-                            fun  => sub { cmd_boot(@_);}                    };
-   @command{"\@halt"}   = { help => "Stops all your running programs.",
-                            fun  => sub { cmd_halt(@_);}                    };
-   @command{"\@sex"}    = { help => "Sets the gender for an object.",
-                            fun  => sub { cmd_generic_set(@_);}             };
-   @command{"\@apay"}   = { help => "Sets the gender for an object.",
-                            fun  => sub { cmd_generic_set(@_);}             };
-   @command{"\@opay"}   = { help => "Sets the gender for an object.",
-                            fun  => sub { cmd_generic_set(@_);}             };
-   @command{"\@pay"}    = { help => "Sets the gender for an object.",
-                            fun  => sub { cmd_generic_set(@_);}             };
-   @command{"\@read"}   = { help => "Reads various data for the MUSH",
-                            fun  => sub { cmd_read(@_);}                    };
-   @command{"\@compile"}= { help => "Reads various data for the MUSH",
-                            fun  => sub { cmd_compile(@_);}                 };
-   @command{"\@clean"}=   { help => "Cleans the Cache",
-                            fun  => sub { cmd_clean(@_);}                   };
-   @command{"give"}=      { help => "Give money or objects",
-                            fun  => sub { cmd_give(@_);}                    };
-   @command{"\@squish"} = { help => "Squish",
-                            fun  => sub { cmd_squish(@_);}                  };
-   @command{"\@split"}  = { fun  => sub { cmd_split(@_); }                  };
-   @command{"\@websocket"}= { fun  => sub { cmd_websocket(@_); }            };
-   @command{"\@find"}   = { fun  => sub { cmd_find(@_); }                   };
-   @command{"\@bad"}    = { fun  => sub { cmd_bad(@_); }                    };
-   @command{"\@sqldump"}= { fun  => sub { db_sql_dump(@_); }                };
-   @command{"\@dbread"} = { fun  => sub { fun_dbread(@_); }                 };
-   @command{"\@dump"}   = { fun  => sub { cmd_dump(@_); }                   };
-   @command{"\@freefind"}={ fun  => sub { cmd_freefind(@_); }               };
-   @command{"\@import"}  ={ fun  => sub { cmd_import(@_); }                 };
-   @command{"\@stat"}    ={ fun  => sub { cmd_stat(@_); }                   };
-   @command{"\@cost"}    ={ fun  => sub { cmd_generic_set(@_); }            };
-   # --[ aliases ]-----------------------------------------------------------#
-   
-   @command{"\@poll"}  =  { fun => sub { cmd_doing(@_[0],@_[1],@_[2],
-                                                   { header=>1}); },
-                            alias=> 1                                       };
-   @command{"\@version"}= { fun  => sub { cmd_version(@_); },
-                            alias=> 1                                       };
-   @command{e}          = { fun  => sub { cmd_ex(@_); },                       
-                            alias=> 1                                       };
-   @command{p}          = { fun  => sub { cmd_page(@_); },
-                            alias=> 1                                       };
-   @command{"huh"}      = { fun  => sub { return cmd_huh(@_); },
-                            alias=> 1                                       };
-   @command{w}          = { fun  => sub { return &cmd_whisper(@_); },
-                            alias=> 1                                       };
-   @command{i}          = { fun  => sub { return &cmd_inventory(@_); },
-                            alias=> 1                                       };
-   @command{"\@tel"}    = { fun  => sub { return &cmd_teleport(@_); },
-                            alias=> 1                                       };
-   @command{"l"}        = { fun  => sub { return &cmd_look(@_); },          
-                            alias => 1                                      };
-   @command{"\@\@"}     = { fun  => sub { return;}                          };
-   @command{get}        = { fun  => sub { cmd_take(@_); },               
-                            alias=> 1                                       };
+   @command{screenwidth} ={ fun => sub { return 1;}                         };
+   @command{screenheight}={ fun => sub { return 1;}                         };
+   @command{"\@perl"}   = { fun => sub { return &cmd_perl(@_); }            };
+   @command{say}        = { fun => sub { return &cmd_say(@_); }             };
+   @command{"\""}       = { fun => sub { return &cmd_say(@_); },     nsp=>1 };
+   @command{"`"}        = { fun => sub { return &cmd_to(@_); },      nsp=>1 };
+   @command{"&"}        = { fun => sub { return &cmd_set2(@_); },    nsp=>1 };
+   @command{"\@reload"} = { fun => sub { return &cmd_reload_code(@_); }     };
+   @command{pose}       = { fun => sub { return &cmd_pose(@_); }            };
+   @command{":"}        = { fun => sub { return &cmd_pose(@_); },    nsp=>1 };
+   @command{";"}        = { fun => sub { return &cmd_pose(@_,1); },  nsp=>1 };
+   @command{"emote"}    = { fun => sub { return &cmd_pose(@_,1); },  nsp=>1 };
+   @command{who}        = { fun => sub { return &cmd_who(@_); }             };
+   @command{whisper}    = { fun => sub { return &cmd_whisper(@_); }         };
+   @command{w}          = { fun => sub { return &cmd_whisper(@_); }         };
+   @command{doing}      = { fun => sub { return &cmd_DOING(@_); }           };
+   @command{"\@doing"}  = { fun => sub { return &cmd_doing(@_); }           };
+   @command{"\@poll"}   = { fun => sub { return &cmd_doing(@_[0],@_[1],@_[2],
+                                                   { header=>1}); }};
+   @command{help}       = { fun => sub { return &cmd_help(@_); }            };
+   @command{"\@dig"}    = { fun => sub { return &cmd_dig(@_); }             };
+   @command{"look"}     = { fun => sub { return &cmd_look(@_); }            };
+   @command{"l"}        = { fun => sub { return &cmd_look(@_); }            };
+   @command{quit}       = { fun => sub { return cmd_quit(@_); }             };
+   @command{"\@trigger"}= { fun => sub { return cmd_trigger(@_); }          };
+   @command{"\@commit"} = { fun => sub { return cmd_commit(@_); }           };
+   @command{"\@set"}    = { fun => sub { return cmd_set(@_); }              };
+   @command{"\@cls"}    = { fun => sub { return cmd_clear(@_); }            };
+   @command{"\@create"} = { fun => sub { return cmd_create(@_); }           };
+   @command{"print"}    = { fun => sub { return cmd_print(@_); }            };
+   @command{"go"}       = { fun => sub { return cmd_go(@_); }               };
+   @command{"home"}     = { fun => sub { return cmd_go($_[0],$_[1],"home");} };
+   @command{"examine"}  = { fun => sub { return cmd_ex(@_); }               };
+   @command{"ex"}       = { fun => sub { return cmd_ex(@_); }               };
+   @command{"e"}        = { fun => sub { return cmd_ex(@_); }               };
+   @command{"\@last"}   = { fun => sub { return cmd_last(@_); }             };
+   @command{page}       = { fun => sub { cmd_page(@_); }                    };
+   @command{p}          = { fun => sub { cmd_page(@_); }                    };
+   @command{take}       = { fun => sub { cmd_take(@_); }                    };
+   @command{get}        = { fun => sub { cmd_take(@_); }                    };
+   @command{drop}       = { fun => sub { cmd_drop(@_); }                    };
+   @command{"\@force"}  = { fun => sub { cmd_force(@_); }                   };
+   @command{inventory}  = { fun => sub { cmd_inventory(@_); }               };
+   @command{i}          = { fun => sub { cmd_inventory(@_); }               };
+   @command{enter}      = { fun => sub { cmd_enter(@_); }                   };
+   @command{leave}      = { fun => sub { cmd_leave(@_); }                   };
+   @command{"\@name"}   = { fun => sub { cmd_name(@_); }                    };
+   @command{"\@describe"}={ fun => sub { cmd_generic_set(@_); }             };
+   @command{"\@pemit"}  = { fun => sub { cmd_pemit(@_); }                   };
+   @command{"\@emit"}   = { fun => sub { cmd_emit(@_); }                    };
+   @command{"think"}    = { fun => sub { cmd_think(@_); }                   };
+   @command{"version"}  = { fun => sub { cmd_version(@_); }                 };
+   @command{"\@version"}= { fun => sub { cmd_version(@_); }                 };
+   @command{"\@link"}   = { fun => sub { cmd_link(@_); }                    };
+   @command{"\@teleport"}={ fun => sub { cmd_teleport(@_); }                };
+   @command{"\@tel"}    = { fun => sub { cmd_teleport(@_); }                };
+   @command{"\@open"}   = { fun => sub { cmd_open(@_); }                    };
+   @command{"\@uptime"} = { fun => sub { cmd_uptime(@_); }                  };
+   @command{"\@destroy"}= { fun => sub { cmd_destroy(@_); }                 };
+   @command{"\@wipe"}   = { fun => sub { cmd_wipe(@_); }                    };
+   @command{"\@toad"}   = { fun => sub { cmd_toad(@_); }                    };
+   @command{"\@sleep"}  = { fun => sub { cmd_sleep(@_); }                   };
+   @command{"\@wait"}   = { fun => sub { cmd_wait(@_); }                    };
+   @command{"\@sweep"}  = { fun => sub { cmd_sweep(@_); }                   };
+   @command{"\@list"}   = { fun => sub { cmd_list(@_); }                    };
+   @command{"\@mail"}   = { fun => sub { cmd_mail(@_); }                    };
+   @command{"score"}    = { fun => sub { cmd_score(@_); }                   };
+   @command{"\@recall"} = { fun => sub { cmd_recall(@_); }                  };
+   @command{"\@telnet"} = { fun => sub { cmd_telnet(@_); }                  };
+   @command{"\@close"}  = { fun => sub { cmd_close(@_); }                   };
+   @command{"\@reset"}  = { fun => sub { cmd_reset(@_); }                   };
+   @command{"\@send"}   = { fun => sub { cmd_send(@_); }                    };
+   @command{"\@password"}={ fun => sub { cmd_password(@_); }                };
+   @command{"\@newpassword"}={ fun => sub { cmd_newpassword(@_); }          };
+   @command{"\@switch"}  ={ fun => sub { cmd_switch(@_); }                  };
+   @command{"\@select"}  ={ fun => sub { cmd_switch(@_); }                  };
+   @command{"\@ps"}      ={ fun => sub { cmd_ps(@_); }                      };
+   @command{"\@kill"}    ={ fun => sub { cmd_killpid(@_); }                 };
+   @command{"\@var"}     ={ fun => sub { cmd_var(@_); }                     };
+   @command{"\@dolist"}  ={ fun => sub { cmd_dolist(@_); }                  };
+   @command{"\@notify"}  ={ fun => sub { cmd_notify(@_); }                  };
+   @command{"\@drain"}   ={ fun => sub { cmd_drain(@_); }                   };
+   @command{"\@while"}   ={ fun => sub { cmd_while(@_); }                   };
+   @command{"\@crash"}   ={ fun => sub { cmd_crash(@_); }                   };
+   @command{"\@\@"}     = { fun => sub { return;}                           };
+   @command{"\@lock"}   = { fun => sub { cmd_lock(@_);}                     };
+   @command{"\@boot"}   = { fun => sub { cmd_boot(@_);}                     };
+   @command{"\@halt"}   = { fun => sub { cmd_halt(@_);}                     };
+   @command{"\@sex"}    = { fun => sub { cmd_generic_set(@_);}              };
+   @command{"\@apay"}   = { fun => sub { cmd_generic_set(@_);}              };
+   @command{"\@opay"}   = { fun => sub { cmd_generic_set(@_);}              };
+   @command{"\@pay"}    = { fun => sub { cmd_generic_set(@_);}              };
+   @command{"\@read"}   = { fun => sub { cmd_read(@_);}                     };
+   @command{"\@compile"}= { fun => sub { cmd_compile(@_);}                  };
+   @command{"\@clean"}=   { fun => sub { cmd_clean(@_);}                    };
+   @command{"give"}=      { fun => sub { cmd_give(@_);}                     };
+   @command{"\@squish"} = { fun => sub { cmd_squish(@_);}                   };
+   @command{"\@split"}  = { fun => sub { cmd_split(@_); }                   };
+   @command{"\@websocket"}={fun => sub { cmd_websocket(@_); }               };
+   @command{"\@find"}   = { fun => sub { cmd_find(@_); }                    };
+   @command{"\@bad"}    = { fun => sub { cmd_bad(@_); }                     };
+   @command{"\@sqldump"}= { fun => sub { db_sql_dump(@_); }                 };
+   @command{"\@dbread"} = { fun => sub { fun_dbread(@_); }                  };
+   @command{"\@dump"}   = { fun => sub { cmd_dump(@_); }                    };
+   @command{"\@freefind"}={ fun => sub { cmd_freefind(@_); }                };
+   @command{"\@import"} = { fun => sub { cmd_import(@_); }                  };
+   @command{"\@stat"}   = { fun => sub { cmd_stat(@_); }                    };
+   @command{"\@cost"}   = { fun => sub { cmd_generic_set(@_); }             };
+   @command{"huh"}      = { fun => sub { cmd_huh(@_); }                     };
+   @command{"\@\@"}     = { fun => sub { return 1; }                        };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -1139,6 +1032,13 @@ sub cmd_bad
                !hasflag($$cmd{bad_pos},"ROOM")) {
                push(@out,"#" . $$cmd{bad_pos} ." No TYPE flag, set to -> '".
                   type($self,$prog,$$cmd{bad_pos}) . "'");
+            }
+
+            if(hasflag($$cmd{bad_pos},"EXIT") && 
+               !hasflag(loc($$cmd{bad_pos}),"ROOM")) {
+               my $loc = loc($$cmd{bad_pos});
+               push(@out,"#" . obj_name($self,$$cmd{bad_pos}) ." not in a room, is in " .
+                  (($loc eq undef) ? "N/A" : obj_name($self,$loc)));
             }
 
             if(hasflag($$cmd{bad_pos},"PLAYER") && 
@@ -4238,43 +4138,6 @@ sub cmd_help
    }
 }
 
-sub cmd_help_old
-{
-   my ($self,$prog,$txt) = @_;
-   my %permalias = (
-      '&' => 'set',
-      '@cls' => 'clear'
-   );
-
-
-   if($txt eq undef) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "HELP\n\n" .
-                        "   This is the Ascii Server online help system\n\n" ],
-           );
-
-      for my $key (sort keys %command) {
-         if(defined @{@command{$key}}{alias}) {
-            # ignore
-         } elsif((defined @permalias{$key} &&
-            perm($self,@permalias{$key})) ||
-            (!defined @permalias{$key})) {
-            necho(self   => $self,
-                  prog   => $prog,
-                  source => [ "   %-10s : %s",$key,@{@command{$key}}{help} ]
-                 );
-         }
-      }
-   } elsif(defined @command{trim(lc($txt))}) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "%s", @{@command{trim(lc($txt))}}{help} ],
-           );
-   } else {
-      err($self,$prog,"Unknown help item '%s' specified",trim(lc($txt)));
-   }
-}
 
 sub cmd_pcreate
 {
@@ -10745,7 +10608,7 @@ sub fun_owner
       return "#-1 FUNCTION (OWNER) EXPECTS 1 ARGUMENT";
  
 
-   if($_[0] =~ /^\s*#(\d+)\s*$/) { 
+   if(evaluate($self,$prog,$_[0]) =~ /^\s*#(\d+)\s*$/) { 
       my $owner = owner(obj($1)) ||
          return "#-1 NOT FOUND";
       return "#" . $$owner{obj_id};
@@ -10871,15 +10734,13 @@ sub fun_u
 
 sub fun_get
 {
-   my ($self,$prog) = (shift,shift);
-
-   my $txt = $_[0];
+   my ($self,$prog,$txt) = (shift,shift,shift);
    my ($obj,$atr);
 
    if($txt =~ /\//) {
       ($obj,$atr) = (evaluate($self,$prog,$`),evaluate($self,$prog,$'));
    } else {
-      ($obj,$atr) = (evaluate($self,$prog,$txt),evaluate($self,$prog,@_[0]));
+      ($obj,$atr) = (evaluate($self,$prog,$txt),evaluate($self,$prog,shift));
    }
 
    my $target = find($self,$prog,$obj);

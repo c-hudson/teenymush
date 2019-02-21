@@ -723,32 +723,107 @@ sub cmd_generic_set
    cmd_set2($self,$prog,substr($$cmd{mushcmd},1) . " " . $txt);
 }
 
-sub cmd_stat
+sub gather_stats
 {
-   my ($self,$prog,$txt) = (obj(shift),obj(shift),shift);
-   my ($players,$objects,$exits,$rooms,$garbage) = (0,0,0,0,0);
+   my ($type,$txt,$target) = (shift,uc(trim(shift)),shift);
+   my $owner;
 
-   for my $i (0 .. $#db) {
-      if(valid_dbref($i)) {
-         if(hasflag($i,"PLAYER")) {
-            $players++;    
-         } elsif(hasflag($i,"OBJECT")) {
-            $objects++;    
-         } elsif(hasflag($i,"EXIT")) {
-            $exits++;    
-         } elsif(hasflag($i,"ROOM")) {
-            $rooms++;    
-         }
+   my $hash = {
+      PLAYER  => 0,
+      OBJECT  => 0,
+      EXIT    => 0,
+      ROOM    => 0,
+      GARBAGE => 0
+   };
+
+   if($target ne undef) {
+      $owner = owner_id($target);
+   }
+
+   if(memorydb) {
+      if($type == 2) {
+         $$hash{object} = $#db + 1;
       } else {
-         $garbage++;
+         for my $i (0 .. $#db) {
+            if(valid_dbref($i) && ($txt eq "all" || owner($i) == $owner)) {
+               if(hasflag($i,"PLAYER")) {
+                  $$hash{PLAYER}++;
+               } elsif(hasflag($i,"OBJECT")) {
+                  $$hash{OBJECT}++;
+               } elsif(hasflag($i,"EXIT")) {
+                  $$hash{EXIT}++;
+               } elsif(hasflag($i,"ROOM")) {
+                  $$hash{ROOM}++;
+               }
+            } elsif(!valid_dbref($i)) {
+               $$hash{GARBAGE}++;
+            }
+         }
+      }
+   } elsif($type == 2) {
+      $$hash{OBJECT} = one_val("select count(*) value from object");
+   } else {
+      for my $data (@{sql("select fde_name, count(*) count " .
+                          "  from object obj, flag flg, flag_definition fde " .
+                          " where obj.obj_id = flg.obj_id " .
+                          "   and flg.fde_flag_id = fde.fde_flag_id " .
+                          "   and (obj.obj_owner = ? or 'all' = ?) ".
+                          "   and flg.fde_flag_id = fde.fde_flag_id " .
+                          "   and fde_name in ('PLAYER', " .
+                          "                    'OBJECT', " .
+                          "                    'ROOM', " .
+                          "                    'EXIT')" .
+                          " group by fde_name",
+                          $owner,
+                          $txt
+         )}) {
+         $$hash{$$data{fde_name}} = $$data{count};
       }
    }
+
+   return $hash;
+}
+
+sub cmd_stat
+{
+   my ($self,$prog,$txt,$switch) = (obj(shift),obj(shift),shift,shift);
+   my ($hash, $target);
+
+   verify_switches($self,$prog,$switch,"all","quiet") || return;
+
+   $txt = evaluate($self,$prog,$txt);
+
+   if(defined $$switch{all}) {
+      $hash = gather_stats(1,"all");
+   } elsif($txt =~ /^\s*$/) {
+      $hash = gather_stats(2);
+      return necho(self   => $self,
+                   prog   => $prog,
+                   source => [ "The universe contains %d objects.",
+                                $$hash{OBJECT} ]
+                  );
+   } else {
+      $target = find_player($self,$prog,$txt) ||
+         return err($self,$prog,"Unknown player.");
+
+      $hash = gather_stats(1,"",$target);
+   }
+
    necho(self   => $self,
          prog   => $prog,
-         source => [ "%s objects = %s rooms, %s exits, %s things, %s players. (%s garbage)", $rooms + $exits + $objects + $players +  $garbage, $rooms, $exits, $objects , $players, $garbage ]
+         source => [ "%s objects = %s rooms, %s exits, %s things, %s " .
+                        "players. (%s garbage)",
+                     $$hash{ROOM} + $$hash{EXIT} + $$hash{OBJECT} +
+                         $$hash{PLAYER} +  $$hash{GARBAGE},
+                     $$hash{ROOM},
+                     $$hash{EXIT},
+                     $$hash{OBJECT},
+                     $$hash{PLAYER},
+                     $$hash{GARBAGE} ]
         );
-   
 }
+
+
 sub cmd_import
 {
    my ($self,$prog,$txt) = (obj(shift),obj(shift),shift);
@@ -2394,9 +2469,11 @@ sub read_atr_config
          my $value = get(0,$atr);
          $value = $` if($value =~ /\s*;\s*$/);
          $value = $1 if($value =~ /^\s*#(\d+)\s*$/);
-         
-         if(@info{lc($atr)} == -1) {
-            # skipped, turned off by missing modules? 
+
+         if((defined @info{lc($atr)} && @info{lc($atr)} != 0) ||
+            @info{lc($atr)} == -1) {
+            # skip, teenymush.conf file over-rides in db config items
+            # and disabled items can't be re-enabled.
          } elsif(get(0,$atr) =~ /^\s*#(\d+)\s*$/) {
             @info{lc($atr)} = $1;
          } else {
@@ -2405,7 +2482,7 @@ sub read_atr_config
          @updated{lc($atr)} = 1;
       }
    }
-   
+
    for my $key (keys %default) {
       if(!defined @info{"conf.$key"}) {
          @info{"conf.$key"} = @default{$key};
@@ -2431,6 +2508,7 @@ sub read_atr_config
         );
    }
 }
+
 
 sub cmd_read
 {
@@ -2956,6 +3034,7 @@ sub cmd_force
 {
     my ($self,$prog,$txt) = @_;
 
+    printf("TEXT: '%s'\n",$txt);
     hasflag($self,"GUEST") &&
        return err($self,$prog,"Permission denied.");
 
@@ -2975,6 +3054,7 @@ sub cmd_force
 ##               cmd    => $',
 #               hint   => "INTERNAL"
 #              );
+    printf("TEXT: '%s'\n",evaluate($self,$prog,$'));
        mushrun(self     => $target,
                prog     => $prog,
                runas    => $target,
@@ -4669,7 +4749,9 @@ sub reconstitute
       }
    }
 
-   if($type == 1) {                       # memorydb / mysql don't agree on
+   if($type == 0) {
+      $type = undef;
+   } elsif($type == 1) {                       # memorydb / mysql don't agree on
       $type = "\$";                               # how the type is defined
    } elsif($type == 2) {
       $type = "^";
@@ -4694,12 +4776,11 @@ sub reconstitute
       $value =~ s/\n+$//;
    }
 
-   if($flag ne undef) {
-      return color("h",uc($name)) . "[$flag]: ".$type.$pattern . ":" . $value;
-   } else {
-      return color("h",uc($name)) . ": $type$pattern:" . $value;
-   }
+   return color("h",uc($name)) .
+          (($flag ne undef) ? "[$flag]: " : ": ") .
+          (($type ne undef) ? "$type$pattern:$value" : $value);
 }
+
 
 sub list_attr_flags
 {
@@ -4797,6 +4878,7 @@ sub list_attr
                                    $$hash{atr_pattern_type},
                                    $$hash{atr_pattern},
                                    $$hash{atr_value},
+                                   $$hash{atr_flag},
                                    $switch
                                   )
                 );
@@ -6382,16 +6464,9 @@ sub color
    # by TinyMUSH, or maybe TinyMUX.
    #
    my %ansi = (
-      x => 30, X => 40,
-      r => 31, R => 41,
-      g => 32, G => 42,
-      y => 33, Y => 43,
-      b => 34, B => 44,
-      m => 35, M => 45,
-      c => 36, C => 46,
-      w => 37, W => 47,
-      u => 4,  i => 7,
-      h => 1
+      x => 30, X => 40, r => 31, R => 41, g => 32, G => 42, y => 33, Y => 43,
+      b => 34, B => 44, m => 35, M => 45, c => 36, C => 46, w => 37, W => 47,
+      u => 4,  i => 7, h => 1,  f => 5, n => 0
    );
 
 
@@ -8089,7 +8164,7 @@ sub find_player
       }
       return obj($partial);
    } else {
-      for my $rec (@{sql("select obj_id, obj_name " .
+      for my $rec (@{sql("select obj.obj_id, obj_name " .
                          "  from object obj, flag flg, flag_definition fde " .
                          " where obj.obj_id = flg.obj_id " .
                          "   and flg.fde_flag_id = fde.fde_flag_id " .
@@ -8783,44 +8858,36 @@ sub fun_mod
 sub fun_stats
 {
    my ($self,$prog,$txt) = (obj(shift),shift,shift);
-   my ($target,$owner,%count);
+   my ($hash, $target);
 
-   my %count = (
-      PLAYER => 0,
-      ROOM => 0,
-      EXIT => 0,
-      OBJECT => 0,
-      TOTAL => 0,
-      GARBAGE => 0,
-   );
+   $txt = evaluate($self,$prog,$txt);
 
-   if(memorydb) {
-
-      if($txt =~ /^\s*all\s*$/i || $txt eq undef) {
-         $txt = "all";
-      } else {
-         $target = find($self,$prog,$txt) ||
-            return "#-1 NOT FOUND";
-         $owner = owner_id($target);
-         return "#-1 OWNER NOT FOUND" if $owner eq undef;
-      }
-
-      for my $i (0 .. $#db) {
-         if(valid_dbref($i) && ($txt eq "all" || owner_id($i) == $owner)) {
-            @count{type($self,$prog,$i)}++;
-            @count{"TOTAL"}++;
-         } elsif($txt eq "all") {
-            @count{"GARBAGE"}++;
-            @count{"TOTAL"}++;
-         }
-      }
-      return sprintf("%s %s %s %s %s %s",
-                     @count{"TOTAL", "ROOM", "EXIT", "OBJECT", "PLAYER", 
-                     "GARBAGE"});
+   if($txt =~ /^\s*all\s*$/i) {
+      $hash = gather_stats(1,"all");
+   } elsif($txt =~ /^\s*$/) {
+      $hash = gather_stats(2);
+      return necho(self   => $self,
+                   prog   => $prog,
+                   source => [ "The universe contains %d objects.",
+                                $$hash{OBJECT} ]
+                  );
    } else {
-      return "#-1 NOT WRITTEN";
+      $target = find_player($self,$prog,$txt) ||
+         return "#-1 PLAYER NOT FOUND";
+
+      $hash = gather_stats(1,"",$target);
    }
+
+   return sprintf("%s %s %s %s %s %s",
+                  $$hash{ROOM} + $$hash{EXIT} + $$hash{OBJECT} +
+                      $$hash{PLAYER} +  $$hash{GARBAGE},
+                  $$hash{ROOM},
+                  $$hash{EXIT},
+                  $$hash{OBJECT},
+                  $$hash{PLAYER},
+                  $$hash{GARBAGE});
 }
+
 
 sub type
 {
@@ -11830,6 +11897,9 @@ sub http_process_line
             -e "txt/" . trim($$data{get})) {
             web("   %s\@web [%s]\n",$addr,$$data{get});
             http_reply_simple($s,$1,"%s",getfile(trim($$data{get})));
+         } elsif($$data{get} =~ /\.txt$/i && -e "txt/" . trim($$data{get})) {
+            web("   %s\@web [%s]\n",$addr,$$data{get});
+            http_reply_simple($s,$1,"%s",getfile(trim($$data{get})));
          } elsif($$data{get} =~ /\.html$/i && -e "txt/" . trim($$data{get})) {
             my $prog = prog($self,$self);                    # uses template
             $$prog{sock} = $s;
@@ -14527,7 +14597,6 @@ sub sql
    my (@result,$sth);
    @info{sqldone} = 0;
 
-   printf("CODE: '%s'\n",code());
    delete @info{rows};
 
 #   if($sql !~ /^insert into io/) {
@@ -15202,13 +15271,13 @@ __EOF__
 
    my $count = 0;
 
-   @info{port} = 4201 if(@info{port} !~ /^\s*\d+\s*$/);
-   con("TeenyMUSH listening on port @info{port}\n");
-   $listener = IO::Socket::INET->new(LocalPort => @info{port},
+   @info{"conf.port"} = 4096 if(@info{"conf.port"} !~ /^\s*\d+\s*$/);
+   con("TeenyMUSH listening on port %s\n",@info{"conf.port"});
+   $listener = IO::Socket::INET->new(LocalPort => @info{"conf.port"},
                                      Listen    => 1,
                                      Reuse     => 1
                                     );
- 
+
    if(@info{"conf.httpd"} ne undef && @info{"conf.httpd"} > 0) {
       if(@info{"conf.httpd"} =~ /^\s*(\d+)\s*$/) {
          con("HTTP listening on port %s\n",@info{"conf.httpd"});
@@ -15259,6 +15328,7 @@ __EOF__
       }
    }
 }
+
 
 # #!/usr/bin/perl
 #

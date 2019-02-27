@@ -725,7 +725,7 @@ sub cmd_generic_set
 
 sub gather_stats
 {
-   my ($type,$txt,$target) = (shift,uc(trim(shift)),shift);
+   my ($type,$txt,$target) = (shift,lc(trim(shift)),shift);
    my $owner;
 
    my $hash = {
@@ -736,6 +736,8 @@ sub gather_stats
       GARBAGE => 0
    };
 
+   $txt eq "all" if($txt eq undef);                       # default to all
+
    if($target ne undef) {
       $owner = owner_id($target);
    }
@@ -745,18 +747,19 @@ sub gather_stats
          $$hash{object} = $#db + 1;
       } else {
          for my $i (0 .. $#db) {
-            if(valid_dbref($i) && ($txt eq "all" || owner($i) == $owner)) {
+            if(!valid_dbref($i)) {
+               $$hash{GARBAGE}++;
+            } elsif($txt eq "all" || owner($i) == $owner) {
                if(hasflag($i,"PLAYER")) {
                   $$hash{PLAYER}++;
                } elsif(hasflag($i,"OBJECT")) {
                   $$hash{OBJECT}++;
                } elsif(hasflag($i,"EXIT")) {
+                  printf("HERE 3\n") if($i == 1);
                   $$hash{EXIT}++;
                } elsif(hasflag($i,"ROOM")) {
                   $$hash{ROOM}++;
                }
-            } elsif(!valid_dbref($i)) {
-               $$hash{GARBAGE}++;
             }
          }
       }
@@ -1652,7 +1655,12 @@ sub cmd_var
     my ($self,$prog,$txt) = @_;
 
     $$prog{var} = {} if !defined $$prog{var};
-    if($txt =~ /^\s*([^ ]+)\+\+\s*$/) {
+    if($txt =~ /^\s*\d+/) {
+       necho(self   => $self,
+             prog   => $prog,
+             source => [ "Variables may not start with numbers\n" ],
+            );
+    } elsif($txt =~ /^\s*([^ ]+)\+\+\s*$/) {
        @{$$prog{var}}{evaluate($self,$prog,$1)}++;
     } elsif($txt =~ /^\s*([^ ]+)\-\-\s*$/) {
        @{$$prog{var}}{evaluate($self,$prog,$1)}--;
@@ -2135,6 +2143,7 @@ sub out
 sub cmd_notify
 {
    my ($self,$prog,$txt,$switch)=(shift,shift,shift,shift);
+   printf("NOTIFY: START\n");
 
    verify_switches($self,$prog,$switch,"first","all","quiet") || return;
 
@@ -2151,12 +2160,14 @@ sub cmd_notify
    my $current = $$prog{cmd};
    for my $i (0 .. $#$stack) {
       if($current eq $$stack[$i]) {           
-         return;                          # don't run commands in the future
+         last;                             # don't run commands in the future
       } elsif(defined @{$$stack[$i]}{wait_semaphore}) {
+         printf("   NOTIFY: ALTERED WAIT_TIME\n");
          @{$$stack[$i]}{wait_time} = 0;
          last if(defined $$switch{first});      # notify 1, jump out of loop
       }
    }
+  printf("   NOTIFY: DONE\n");
 
    if(!defined $$switch{quiet}) {
       necho(self   => $self,
@@ -3034,7 +3045,6 @@ sub cmd_force
 {
     my ($self,$prog,$txt) = @_;
 
-    printf("TEXT: '%s'\n",$txt);
     hasflag($self,"GUEST") &&
        return err($self,$prog,"Permission denied.");
 
@@ -3054,7 +3064,7 @@ sub cmd_force
 ##               cmd    => $',
 #               hint   => "INTERNAL"
 #              );
-    printf("TEXT: '%s'\n",evaluate($self,$prog,$'));
+
        mushrun(self     => $target,
                prog     => $prog,
                runas    => $target,
@@ -4738,24 +4748,28 @@ sub reconstitute
 {
    my ($name,$type,$pattern,$value,$flag,$switch) = @_;
 
-#   $value =~ s/\r|\n//g;
-   if($type eq undef && defined $$switch{command}) {
-      return;
-   } elsif($type eq undef && $value !~ /^\s*\@/) {
-      if($flag eq undef) {
-         return color("h",uc($name)) . ": $value" if($type eq undef);
-      } else {
-         return color("h",uc($name)) . "[$flag]: $value" if($type eq undef);
-      }
-   }
+   $value =~ s/\r|\n//g;
+#   printf("###GOT HERE###\n");
+#   if($type eq undef && defined $$switch{command}) {
+#      printf("###GOT HERE 2###\n");
+#      return;
+#   } elsif($type eq undef && $value !~ /^\s*\@/) {
+#      if($flag eq undef) {
+#         printf("###GOT HERE 3###\n");
+#         return color("h",uc($name)) . ": $value" if($type eq undef);
+#      } else {
+#         printf("###GOT HERE 4###\n");
+#         return color("h",uc($name)) . "[$flag]: $value" if($type eq undef);
+#      }
+#   }
 
-   if($type == 0) {
+   if($type eq 0) {
       $type = undef;
-   } elsif($type == 1) {                       # memorydb / mysql don't agree on
+   } elsif($type eq 1) {                       # memorydb / mysql don't agree on
       $type = "\$";                               # how the type is defined
-   } elsif($type == 2) {
+   } elsif($type eq 2) {
       $type = "^";
-   } elsif($type == 3) {
+   } elsif($type eq 3) {
       $type = "!";
    }
 
@@ -5233,7 +5247,7 @@ sub cmd_pose
    my ($self,$prog,$txt,$switch,$flag) = @_;
 
    my $space = ($flag) ? "" : " ";
-   my $pose = evaluate($self,$prog,$txt);
+   my $pose = cf_convert(evaluate($self,$prog,$txt));
 
    necho(self   => $self,
          prog   => $prog,
@@ -5331,13 +5345,33 @@ sub cmd_set2
    }
 }
 
+sub cf_convert
+{
+   my $txt = shift;
+
+   if($txt =~ /(\-{0,1})([\d\.]+)( {0,1})(F|C)/) {
+      if($4 eq "F") {
+         my $value = sprintf("%.1f",("$1$2" - 32)*.5556);
+         my ($before,$after) = ("$`$1$2$3$4 (","C)$'");
+         $value =~ s/\.0//g;
+         return "$before$value$after";
+      } elsif($4 eq "C") {
+         my $value = sprintf("%.1f","$1$2" * 1.8 + 32);
+         my ($before,$after) = ("$`$1$2$3$4 (","F)$'");
+         $value =~ s/\.0//g;
+         return "$before$value$after";
+      }
+   } else {
+      return $txt;
+   }
+}
+
 sub cmd_say
 {
    my ($self,$prog,$txt) = @_;
 
-   my $say = evaluate($self,$prog,$txt);
+   my $say = cf_convert(evaluate($self,$prog,$txt));
 
-   my $start = time();
    necho(self   => $self,
          prog   => $prog,
          source => [ "You say, \"%s\"",$say ],
@@ -6402,6 +6436,7 @@ sub ansi_substr
 {
    my ($txt,$start,$count) = @_;
    my ($result,$data,$last);
+   # foo
 
    $start = 0 if($start !~ /^\s*\d+\s*$/);                  # sanity checks
    if($count !~ /^\s*\d+\s*$/) {
@@ -6543,13 +6578,6 @@ sub ansi_wrap
    return $out;
 }
 
-sub lord
-{
-   my $txt = shift;
-
-   $txt =~ s/\e/<ESC>/g;
-   return $txt;
-}
 
 # open(FILE,"iweb") ||
 #    die("Could not open file iweb for reading");
@@ -7668,16 +7696,20 @@ sub set_digit_variables
    my ($self,$prog,$sub) = (shift,shift,shift);
    my $hash;
 
+   # clear previous variables > 9
+   for my $i ( grep {/^\d+$/} keys %{$$prog{var}}) {
+      delete @{$$prog{var}}{$i};
+   }
 
    if(ref($_[0]) eq "HASH") {
       my $new = shift;
-      for my $i (0 .. 9) {
+      for my $i (keys %$new) {
          @{$$prog{var}}{$sub . $i} = $$new{$i};
       }
    } else {
       my @var = @_;
 
-      for my $i (0 .. 9 ) {
+      for my $i ( 0 .. (($#_ > 9) ? $#_ : 9)) {
          @{$$prog{var}}{$sub . $i} = $var[$i];
       }
    }
@@ -7688,7 +7720,7 @@ sub get_digit_variables
     my ($prog,$sub) = (shift,shift);
     my $result = {};
   
-    for my $i (0 .. 9) {
+    for my $i ( grep {/^\d+$/} keys %{$$prog{var}}) {
        $$result{$sub . $i} =  @{$$prog{var}}{$sub . $i};
     }
     return $result;
@@ -7951,6 +7983,7 @@ sub spin_run
 
    if($$command{cmd} =~ /^\s*([^ \/]+)/s) {         # split cmd from args
       ($cmd,$arg) = ($1,$'); 
+       $cmd =~ s/^\\//g;
        $$command{mushcmd} = $cmd;
    } else {
       return;                                                 # only spaces
@@ -8682,11 +8715,21 @@ use Compress::Zlib;
 
 sub initialize_functions
 {
+   @fun{null}      = sub { return &fun_null(@_);                   };
+   @fun{args}      = sub { return &fun_args(@_);                   };
+   @fun{shift}     = sub { return &fun_shift(@_);                  };
+   @fun{unshift}   = sub { return &fun_unshift(@_);                };
+   @fun{pop}       = sub { return &fun_pop(@_);                    };
+   @fun{push}      = sub { return &fun_push(@_);                   };
+   @fun{asc}       = sub { return &fun_ord(@_);                    };
+   @fun{ord}       = sub { return &fun_ord(@_);                    };
+   @fun{chr}       = sub { return &fun_chr(@_);                    };
    @fun{escape}    = sub { return &fun_escape(@_);                 };
    @fun{trim}      = sub { return &fun_trim(@_);                   };
    @fun{ansi}      = sub { return &fun_ansi(@_);                   };
    @fun{ansi_debug}= sub { return &ansi_debug($_[2]);              };
    @fun{substr}    = sub { return &fun_substr(@_);                 };
+   @fun{mul}       = sub { return &fun_mul(@_);                    };
    @fun{file}      = sub { return &fun_file(@_);                   };
    @fun{cat}       = sub { return &fun_cat(@_);                    };
    @fun{space}     = sub { return &fun_space(@_);                  };
@@ -8816,6 +8859,14 @@ sub add_union_element
    }
 }
 
+sub fun_null
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+
+   evaluate($self,$prog,shift);
+   return undef;
+}
+
 sub fun_trim
 {
    my ($self,$prog,$txt) = (obj(shift),shift);
@@ -8827,10 +8878,10 @@ sub fun_escape
 {
    my ($self,$prog,$txt) = (obj(shift),shift);
 
-   my $txt = shift;
+   my $txt = evaluate($self,$prog,shift);
 
    $txt =~ s/([%\\\[\]{};,()])/\\\1/g;
-   return $txt;
+   return "\\" . $txt;
 }
 #
 # fun_mod
@@ -9160,33 +9211,15 @@ sub fun_url
       if($#$buff >= 0) {
          my $data = shift(@$buff);
 
-         # -- Start of wttr.in modifications -- #
-         # modify data coming in to be wttr.in friendly. This shouldn't
-         # be handled this way. Suggestions?
-
-         $data =~ s/’/'/g;
-         $data =~ s/―/-/g;
-         $data =~ s/`/`/g;
-         $data =~ s/‘/`/g;
-         $data =~ s/‚/,/g;
-         $data =~ s/⚡/`/g;
-         $data =~ s/↑ /N /g;
-         $data =~ s/↓ /S /g;
-         $data =~ s/↘ /SE /g;
-         $data =~ s/→ /E /g;
-         my $ch = chr(226) . chr(134) . chr(152);
-         $data =~ s/$ch/SE/g;
-         my $ch = chr(226) . chr(134) . chr(147);
-         $data =~ s/$ch/S/g;
-         my $ch = chr(226) . chr(134) . chr(145);
-         $data =~ s/$ch/N/g;
-         my $ch = chr(226) . chr(134) . chr(146);
-         $data =~ s/$ch/E/g;
-         my $ch = chr(226) . chr(134) . chr(151);
-         $data =~ s/$ch/NE/g;
-         my $ch = chr(226) . chr(134) . chr(150);
-         $data =~ s/$ch/NW/g;
-         # -- End of wttr.in modifications -- #
+# wttr.in debug
+#         if(ansi_remove($data) =~ /([^ ]+)\s*\d+\s+mph/i)  {
+#            printf("DATA: '%s' -> '%s' -> '%s,%s,%s'\n",
+#                ansi_remove(trim($data)),$1,
+#                ord(substr($1,0,1)),
+#                ord(substr($1,1,1)),
+#                ord(substr($1,2,1)));
+#             printf("      '%s'\n",$data);
+#         }
 
          set_var($prog,"data",$data);
          return 1;
@@ -9272,6 +9305,129 @@ sub fun_url
    }
 }
 
+
+#
+# fun_args
+#    Return all the arguements passed into the calling function.
+#
+sub fun_args
+{
+   my ($self,$prog) = (shift,shift);
+   my @result;
+
+   my $delim = evaluate($self,$prog,shift);
+   $delim = " " if($delim eq undef);
+
+   for my $i ( sort {$a <=> $b} grep {/^\d+$/} keys %{$$prog{var}}) {
+      if(@{$$prog{var}} ne undef) {
+         push(@result,@{$$prog{var}}{$i});
+      }
+   }
+
+   return join($delim,@result);
+}
+
+#
+# fun_shift
+#    Remove an item from the begining of the list (%0 .. %999).
+#
+sub fun_shift
+{
+   my ($self,$prog) = (shift,shift);
+   my $result;
+
+   for my $i ( sort {$a <=> $b} grep {/^\d+$/} keys %{$$prog{var}}) {
+      $result = @{$$prog{var}}{$i} if($i == 0);
+      @{$$prog{var}}{$i} = @{$$prog{var}}{$i+1};
+   }
+   return $result;
+}
+
+#
+# fun_unshift
+#    Add an item to the begining of the list (%0 .. %999).
+#
+sub fun_unshift
+{
+   my ($self,$prog) = (shift,shift);
+   my $result;
+
+   for my $i ( reverse sort {$a <=> $b} grep {/^\d+$/} keys %{$$prog{var}}) {
+      @{$$prog{var}}{$i+1} = @{$$prog{var}}{$i};
+   }
+
+   @{$$prog{var}}{0} = shift;
+   return undef;
+}
+
+#
+# fun_pop
+#    Remove an item from the end of the list (%0 .. %999).
+#
+sub fun_pop
+{
+   my ($self,$prog) = (shift,shift);
+
+   # search for last position
+   for my $i (sort {$b <=> $a} grep {/^\d+$/} keys %{$$prog{var}}) {
+      if(@{$$prog{var}}{$i} ne undef) {
+         my $result = @{$$prog{var}}{$i};
+         delete @{$$prog{var}}{$i};
+         return $result;
+      }
+   }
+   return undef;
+}
+
+#
+# fun_push
+#    Add an item to the end of the list (%0 .. %999).
+#
+sub fun_push
+{
+   my ($self,$prog) = (shift,shift);
+
+   my $value = evaluate($self,$prog,shift);
+
+   for my $i (sort {$b <=> $a} grep {/^\d+$/} keys %{$$prog{var}}) {
+      if(@{$$prog{var}}{$i} ne undef) {
+         @{$$prog{var}}{$i+1} = $value;
+         return undef;
+      }
+   }
+   @{$$prog{var}}{0} = $value;
+   return undef;
+}
+
+#
+# ord
+#    Returns the ASCII numberical value of the first character.
+#
+sub fun_ord
+{
+   my ($self,$prog) = (shift,shift);
+
+   return ord(substr(shift,0,1));
+}
+
+#
+# chr
+#    Returns the ASCII numberical value of the first character.
+#
+sub fun_chr
+{
+   my ($self,$prog) = (shift,shift);
+
+   my $num = evaluate($self,$prog,shift);
+
+   if(hasflag($self,"WIZARD")) { 
+      return chr($num);
+   } elsif(($num > 31 && $num < 127) || $num == 11 || $num == 13) {
+      return chr($num);
+   } else {
+      return "!";
+   } 
+}
 
 
 sub fun_invocation
@@ -10571,7 +10727,7 @@ sub fun_div
    if($two eq undef || $two == 0) {
       return "#-1 DIVIDE BY ZERO";
    } else {
-      return int($one / $two);
+      return sprintf("%d",$one / $two);
    }
 }
 
@@ -10595,6 +10751,26 @@ sub fun_add
 
 
 #
+# fun_mul
+#    Multiple some numbers
+#
+sub fun_mul
+{
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,1 .. 100) ||
+      return "#-1 FUNCTION (MUL) EXPECTS BETWEEN 1 and 100 ARGUMENTS";
+
+   my $result = evaluate($self,$prog,shift);
+
+   while($#_ > -1) {
+      $result *= evaluate($self,$prog,shift);
+   }
+
+   return $result;
+}
+
+#
 # fun_sub
 #    Subtract some numbers
 #
@@ -10616,8 +10792,14 @@ sub fun_sub
 sub lord
 {
    my $txt = shift;
-   $txt =~ s/\e/<ESC>/g;
-   return $txt;
+   my @result;
+#   $txt =~ s/\e/<ESC>/g;
+#   return $txt;
+
+   for my $i (0 .. (length($txt)-1)) {
+      push(@result,ord(substr($txt,$i,1)));
+   }
+   return join(',',@result);
 }
 
 sub fun_edit
@@ -10634,20 +10816,20 @@ sub fun_edit
    my $size = ansi_length($from);
 
    for(my $i = 0, $start=0;$i <= $#{$$txt{ch}};$i++) {
-      if(ansi_substr($txt,$i,$size) eq $from) {
-         if($start ne undef or $i != $start) {
+      if(ansi_remove(ansi_substr($txt,$i,$size)) eq $from) {
+         if($start ne undef || $i != $start) {
             $out .= ansi_substr($txt,$start,$i - $start);
          }
          $out .= $to;
          $i += $size;
          $start = $i;
-      } else {
       }
    }
 
    if($start ne undef or $start >= $#{$$txt{ch}}) {       # add left over chars
       $out .= ansi_substr($txt,$start,$#{$$txt{ch}} - $start + 1);
    }
+
    return $out;
 }
 
@@ -10816,7 +10998,6 @@ sub fun_get
       return "#-1 Unknown object";
    } elsif(!(controls($self,$target) ||
       hasflag($target,"VISUAL") || atr_hasflag($target,$atr,"VISUAL"))) {
-      printf("ATR: '%s'\n",atr_hasflag($target,$atr,"VISUAL"));
       return "#-1 Permission Denied ($$self{obj_id} -> $$target{obj_id}/$atr)";
    } 
 
@@ -10854,7 +11035,7 @@ sub fun_setq
       return "#-1 INVALID GLOBAL REGISTER"
    }
 
-   my $result = trim(evaluate($self,$prog,shift));
+   my $result = evaluate($self,$prog,shift);
    @{$$prog{var}}{"setq_$register"} = $result;
    return undef;
 }
@@ -10959,6 +11140,7 @@ sub fun_rjust
    my $txt = evaluate($self,$prog,shift);
    my $size = evaluate($self,$prog,shift);
    my $fill = evaluate($self,$prog,shift);
+#   printf("%s",print_var($$prog{var}));
 
    $fill = " " if($fill =~ /^$/);
 

@@ -4405,7 +4405,6 @@ sub cmd_dig
         );
 
    if($in ne undef) {
-      printf("LOC: '%s'\n",$loc);
       my $in_dbref = create_exit($self,$prog,$in,$loc,$room);
  
       if($in_dbref eq undef) {
@@ -5484,11 +5483,11 @@ sub cmd_reload_code
    my ($self,$prog,$txt) = @_;
    my $count = 0;
 
-#   if(!hasflag($self,"GOD")) {
-#      return err($self,$prog,"Permission denied.");
-#   } elsif(@info{"conf.md5"} == -1) {
-#      return err($self,$prog,"#-1 DISABLED");
-#   }
+   if(!hasflag($self,"GOD")) {
+      return err($self,$prog,"Permission denied.");
+   } elsif(@info{"conf.md5"} == -1) {
+      return err($self,$prog,"#-1 DISABLED");
+   }
 
    $count = reload_code($self,$prog);
 
@@ -7697,8 +7696,8 @@ sub set_digit_variables
    my $hash;
 
    # clear previous variables > 9
-   for my $i ( grep {/^\d+$/} keys %{$$prog{var}}) {
-      delete @{$$prog{var}}{$i};
+   for my $i ( grep {/^$sub\d+$/} keys %{$$prog{var}}) {
+      delete @{$$prog{var}}{$sub . $i};
    }
 
    if(ref($_[0]) eq "HASH") {
@@ -8088,7 +8087,9 @@ sub find
    my ($self,$prog,$thing,$debug) = (shift,shift,trim(lc(shift)),shift);
    my ($partial, $dup);
 
-   if($thing =~ /^\s*#(\d+)\s*$/) {
+   if($thing eq undef) {
+      return undef;
+   } elsif($thing =~ /^\s*#(\d+)\s*$/) {
       printf("got here: 1\n") if $debug;
       return valid_dbref($1) ? obj($1) : undef;
    } elsif($thing =~ /^\s*here\s*$/) {
@@ -8118,6 +8119,7 @@ sub find
       printf("got here: 8\n") if $debug;
 
    # search around object
+   printf("LOC[$$self{obj_id}]: '%s'\n",loc($self));
    my $obj = find_in_list($thing,lcon(loc($self)));
       printf("got here: 9\n") if $debug;
    return $obj if($obj ne undef);
@@ -10872,6 +10874,9 @@ sub fun_owner
 
 sub fun_name
 {
+#   for my $i (0 .. $#_) {
+#      printf("$i: '%s'\n",$_[$i]);
+#   }
    my ($flag,$self,$prog) = (shift,shift,shift);
 
    good_args($#_,1) ||

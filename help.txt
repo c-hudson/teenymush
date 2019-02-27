@@ -587,3 +587,213 @@ Example:
    You say, "MIDDLE: Thu Jan 31 12:39:10 2019"
 
 See: @sleep
+& stats()
+function:
+    stats(<player>)
+
+    Returns the number of objects in the database broken down by total
+    objects, rooms, exits, things, players, and garbage owned by 
+    <player>. All stats are returned if <player> is replaced with "all"
+    or no arguments are passed in.
+
+Example:
+     > say stats(me)
+     You say, "30 4 7 18 1 0"
+     > say stats(all)
+     You say, "304 63 153 36 52 1008"
+& mod()
+function:
+     mod(<number1>,<number1>)
+
+     returns the modulus of two numbers. This is the remainder from dividing
+     <number1> by <number2>.
+& escape()
+function:
+
+     escape(<text>)
+
+     Puts a "\" character before any special characters like: %{}[];, 
+
+Example:
+     > say escape({}[]();,)
+     You say, "\{\}\[\]\(\)\;"
+& trim()
+function:
+
+     trim(<text>)
+
+     Removes any leading or trailing spaces.
+
+Example:
+     > say trim(        this is a test       )
+     You say, "this is a test"
+& @wipe
+command :
+     @wipe <object>
+     @wipe <object>/<pattern>
+
+     Erases an object or just those attributes that match <pattern>
+& fullname()
+function:
+
+     fullname(<object>)
+
+     Returns the entire name of exits. Name() only returns the first name.
+
+Example:
+     @open out;leave;exit;o = #42
+     > say fullname(out)
+     You say, "out;leave;exit;o"
+     > say name(out)
+     You say, "out"
+& strmatch()
+function:
+
+     strmatch(<text>,<pattern>)
+
+     Returns 1 or 0 depending upon if <pattern> matches the whole string
+     in <text> or not. Similar to match()
+
+Example:
+     > say strmatch(the quick brown fox,*fox*)
+     You say, "1"
+     > say strmatch(the quick brown fox,fox*)
+     You say, "0"
+& filter()
+function:
+
+     filter(<attribute>,<list>)
+
+     Takes a list of words and passes each word in <list> to the
+     <attribute> as %0. If it evaluates to 1 then the word is returned,
+     if it evaluates to 0, the word is excluded.
+
+Example:
+     > &tolong object = [gt(length(%0),10)]
+     > say filter(tolong,thisisatest of the world)
+     You say, "of the world"
+& null()
+function:
+
+     null(<text>)
+
+     Evaluates <text> but doesn't return the results. Nothing is
+     returned. This can be used for supressing the output of functions.
+
+Example:
+     > say null(repeat(x,75))
+     You say, ""
+& args()
+function:
+
+     args(<delim>)
+
+     This function returns all the arguements %0 .. %999 that were 
+     passed in. This could be used inside of u() to iterate through
+     a variable number of arguments.
+
+Example:
+
+     > &foo me = [args(|)]
+     > say u(foo,1,2,3,4,5,6,7,8,9,10,11,12)
+
+     You say, "1|2|3|4|5|6|7|8|9|10|11|12"
+& shift()
+function:
+
+     shift()
+
+     This function will return and remove %0 and move all arguments 
+     %1 .. %999 down one position so that %1 is now %0, %2 is now %1,
+     etc.
+
+Example:
+     > &foo me = Shifted Value = [shift()], \%0 = %0, \%1 = %1
+     > say u(foo,1,2,3)
+
+     You say, "Shifted Value = 0, %1 = 1, %2 = 2"
+& unshift()
+function:
+
+     unshift(<value>)
+
+     This function will add will <value> to %0 causing every other
+     position to be moved down one. %0 will become %1, %1 will become
+     %2, etc.
+
+Example:
+
+     > &foo me = [unshift(foo)]\%0 = %0, \%1 = %1, \%2 = %2
+     > say u(foo,1,2)
+
+     You say, "%0 = foo, %1 = 0, %2 = 1"
+& pop()
+function:
+
+     pop()
+
+     This function will return the last %0 - %999 value and remove
+     it from the list.
+
+Example:
+
+     > &foo me = Popped Value=[pop()], \%0 = %0, \%1 = %1, \%2 = %2
+     > say u(foo,1,2,3,4)
+
+     You say, "Popped Value=4,%0 = 1, %1 = 2, %2 = 3"
+& push()
+function:
+
+     push(<value>)
+
+     This function will add <value> after the last %0 - %99 value.
+
+Example:
+
+     > &foo me = [push(foo)]\%0 = %0, \%1 = %1, \%2 = %2
+     > say u(foo,1,2)
+
+     You say, "%0 = 1, %1 = 2, %2 = foo"
+& asc()
+function:
+
+     asc(<delim>)
+
+     Returns the ASCII numberical value of the first character of
+     <delim>
+
+Example:
+
+     > say asc(F)
+
+     You say, "70"
+& ord()
+function:
+
+     ord(<number>)
+
+     Returns the character associated with the decimal <number> according
+     to the standard ASCII table. Google ASCII Table.
+
+
+Example:
+
+     > say ord(35)
+
+     You say, "#"
+
+& asc()
+function:
+
+     asc(<number>)
+
+     Returns the character associated with the decimal <number> according
+     to the standard ASCII table. Google ASCII Table. This is an alias for
+     the ord() function.
+
+
+Example:
+
+     > say asc(35)
+
+     You say, "#"

@@ -744,7 +744,7 @@ sub gather_stats
 
    if(memorydb) {
       if($type == 2) {
-         $$hash{object} = $#db + 1;
+         $$hash{OBJECT} = $#db + 1;
       } else {
          for my $i (0 .. $#db) {
             if(!valid_dbref($i)) {
@@ -1497,7 +1497,7 @@ sub cmd_huh
 #   printf("HUH: '%s' -> '%s'\n",print_var($prog));
    necho(self   => $self,
          prog   => $prog,
-         source => [ "Huh? (Type \"help\" for help.)" ]
+         source => [ "Huh? (Type \"HELP\" for help.)" ]
         );
 }
                   
@@ -2951,7 +2951,7 @@ sub cmd_send
        $$prog{idle} = 1;                   # socket pending, try again later
        return "RUNNING";
     } else {
-       my $txt = evaluate($self,$prog,shift);
+       my $txt = ansi_remove(evaluate($self,$prog,shift));
        my $switch = shift;
        $txt =~ s/\r|\n//g;
 
@@ -5344,19 +5344,33 @@ sub cmd_set2
    }
 }
 
+sub myisnum
+{
+   my $num = shift;
+
+   if($num =~ /^\s*-?(\d+)\s*$/ && substr($1,1,1) ne "0") {
+      return 1;
+   } elsif($num =~ /^\s*-?(\d+)\.\d+\s*$/ && substr($1,1,1) ne "0") {
+      return 1;
+   } else {
+      return 0;
+   }
+}
+
 sub cf_convert
 {
    my $txt = shift;
 
-   if($txt =~ /(\-{0,1})([\d\.]+)( {0,1})(F|C)/) {
-      if($4 eq "F") {
-         my $value = sprintf("%.1f",("$1$2" - 32)*.5556);
-         my ($before,$after) = ("$`$1$2$3$4 (","C)$'");
+   if($txt =~ /(\-{0,1})([\d]+)(\.?)(\d*)\s*(F|C)/ && 
+      myisnum("$1$2$3$4")) {
+      if($5 eq "F") {
+         my $value = sprintf("%.1f",("$1$2$3$4" - 32)*.5556);
+         my ($before,$after) = ("$`$1$2$3$4$5 (","C)$'");
          $value =~ s/\.0//g;
          return "$before$value$after";
-      } elsif($4 eq "C") {
-         my $value = sprintf("%.1f","$1$2" * 1.8 + 32);
-         my ($before,$after) = ("$`$1$2$3$4 (","F)$'");
+      } elsif($5 eq "C") {
+         my $value = sprintf("%.1f","$1$2$3$4" * 1.8 + 32);
+         my ($before,$after) = ("$`$1$2$3$4$5 (","F)$'");
          $value =~ s/\.0//g;
          return "$before$value$after";
       }
@@ -5370,6 +5384,7 @@ sub cmd_say
    my ($self,$prog,$txt) = @_;
 
    my $say = cf_convert(evaluate($self,$prog,$txt));
+#   my $say = evaluate($self,$prog,$txt);
 
    necho(self   => $self,
          prog   => $prog,
@@ -7835,14 +7850,13 @@ sub spin
       }
 
 
-
       for $pid (sort {$a cmp $b} keys %engine) {
          @info{current_pid} = $pid;
          my $prog = @engine{$pid};
          my $stack = $$prog{stack};
          my $pos = 0;
          $count = 0;
-  
+
          # run 100 commands, backgrounded command are excluded because 
          # someone could put 100 waits in for far in the furture, the code
          # would never run the next command.
@@ -7854,9 +7868,9 @@ sub spin
                splice(@$stack,$pos,1);                   # safe to delete now
                next;
             }
-
+     
             my $result = spin_run($prog,$cmd);
-  
+
             if($result eq "BACKGROUNDED") {
                $pos++; 
             } elsif($result ne "RUNNING") {                   # command done
@@ -7988,10 +8002,17 @@ sub spin_run
       return;                                                 # only spaces
    }
 
-# find command set to use
-   if(defined $$hash{lc($cmd)}) {                                # internal cmd
+   # skip any @while command with an open socket without pending input
+   if(lc($cmd) eq "\@while" &&
+      defined $$prog{socket_id} && 
+      !defined $$prog{socket_closed} &&
+      (!defined $$prog{socket_buffer} ||
+       $#{$$prog{socket_buffer}} == -1)) {
+      $$prog{idle} = 1;
+      return "RUNNING";
+  } elsif(defined $$hash{lc($cmd)}) {                          # internal cmd
       return run_internal($hash,lc($cmd),$command,$prog,$arg);
-  } elsif(defined $$hash{substr($cmd,0,1)} &&
+  } elsif(defined $$hash{substr($cmd,0,1)} &&            # internal 1 char cmd
      (defined $$hash{substr($cmd,0,1)}{nsp} ||
       substr($cmd,1,1) eq " " ||
       length($cmd) == 1
@@ -8054,26 +8075,34 @@ sub signal_still_running
 sub find_in_list
 {
    my ($thing,@list) = @_;
-   my ($partial,$dup);
+   my ($start_count,$start_obj,$middle_count,$middle_obj);
 
    return undef if $thing eq undef;
 
+   my $start = glob2re("$thing*");
+   my $middle = glob2re("*$thing*");
+
    for my $obj (@list) {
-      if(lc(name($obj,1)) eq $thing) {
+      my $name = lc(name($obj,1));
+      if($name eq $thing) {                                    # exact match
          return obj($obj);
-      } elsif(lc(substr(name($obj,1),0,length($thing))) eq $thing) {
-         if($partial eq undef) {
-            $partial = $obj;
-         } else {
-            $dup = 1;
+      } elsif($start > 1 || $middle > 1) {              # fuzzy match failed
+         # skip
+      } else {
+         if($name =~ /$start/) {
+            $start_count++;
+            $start_obj = $obj;
+         } elsif($name =~ /$middle/) {
+            $middle_count++;
+            $middle_obj = $obj;
          }
       }
    }
 
-   if($dup) {
-      return undef;
-   }  elsif($partial ne undef) {
-      return obj($partial);
+   if($start_count == 1) {
+      return obj($start_obj);
+   } elsif($middle_count == 1) {
+      return obj($middle_obj);
    } else {
       return undef;
    }
@@ -8119,7 +8148,6 @@ sub find
       printf("got here: 8\n") if $debug;
 
    # search around object
-   printf("LOC[$$self{obj_id}]: '%s'\n",loc($self));
    my $obj = find_in_list($thing,lcon(loc($self)));
       printf("got here: 9\n") if $debug;
    return $obj if($obj ne undef);
@@ -8717,6 +8745,9 @@ use Compress::Zlib;
 
 sub initialize_functions
 {
+   @fun{fuzzy}     = sub { return &fuzzy(@_[2]);                   };
+   @fun{pid}       = sub { return &fun_pid(@_);                    };
+   @fun{lpid}      = sub { return &fun_lpid(@_);                   };
    @fun{null}      = sub { return &fun_null(@_);                   };
    @fun{args}      = sub { return &fun_args(@_);                   };
    @fun{shift}     = sub { return &fun_shift(@_);                  };
@@ -8810,6 +8841,7 @@ sub initialize_functions
    @fun{run}       = sub { return &fun_run(@_);                    };
    @fun{graph}     = sub { return &fun_graph(@_);                  };
    @fun{lexits}    = sub { return &fun_lexits(@_);                 };
+   @fun{lcon}      = sub { return &fun_lcon(@_);                   };
    @fun{home}      = sub { return &fun_home(@_);                   };
    @fun{rand}      = sub { return &fun_rand(@_);                   };
    @fun{reverse}   = sub { return &fun_reverse(@_);                };
@@ -8859,6 +8891,38 @@ sub add_union_element
    } else {
       $$list{$item} = $item;
    }
+}
+
+#
+# fun_pid
+#    Return the pid of the current program.
+#
+sub fun_pid
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+
+   return $$prog{pid};
+}
+
+#
+# fun_lpid
+#    Return all pids that you own / can control.
+#
+sub fun_lpid
+{
+   my ($self,$prog) = (obj(shift),shift);
+   my @list;
+
+   for my $pid (keys %engine) {
+      my $p = @engine{$pid};
+
+      if(defined $$p{stack} && ref($$p{stack}) eq "ARRAY" &&
+         controls($self,$$p{created_by}) &&
+         (!hasflag($$p{created_by},"GOD") || hasflag($self,"GOD"))) {
+         push(@list,$pid);
+      }
+   }
+   return join(' ',@list);
 }
 
 sub fun_null
@@ -9214,13 +9278,14 @@ sub fun_url
          my $data = shift(@$buff);
 
 # wttr.in debug
-#         if(ansi_remove($data) =~ /([^ ]+)\s*\d+\s+mph/i)  {
+#         if(ansi_remove($data) =~ / in/)  {
 #            printf("DATA: '%s' -> '%s' -> '%s,%s,%s'\n",
 #                ansi_remove(trim($data)),$1,
 #                ord(substr($1,0,1)),
 #                ord(substr($1,1,1)),
 #                ord(substr($1,2,1)));
 #             printf("      '%s'\n",$data);
+#             printf("      '%s'\n",base($data));
 #         }
 
          set_var($prog,"data",$data);
@@ -9772,8 +9837,36 @@ sub fun_lexits
    my $target = find($self,$prog,evaluate($self,$prog,shift)) ||
       return "#-1 NOT FOUND";
 
+   my $perm = hasflag($self,"WIZARD");
+
    for my $exit (lexits($target)) {
-      push(@result,"#" . $$exit{obj_id});
+      if($perm || !hasflag($exit,"DARK")) {
+         push(@result,"#" . $$exit{obj_id});
+      }
+   }
+   return join(' ',@result);
+}
+
+sub fun_lcon
+{
+   my ($self,$prog) = (obj(shift),shift);
+   my @result;
+
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (LCON) EXPECTS 1 ARGUMENT";
+
+   my $target = find($self,$prog,evaluate($self,$prog,shift)) ||
+      return "#-1 NOT FOUND";
+
+   my $perm = hasflag($self,"WIZARD");
+
+   # object can lcon() its current location or if it owns the object
+   if(!($perm || owner($target) == owner($self) || loc($self) == loc($target))){
+      return "#-1";
+   }
+
+   for my $obj (lcon($target)) {
+      push(@result,"#" . $$obj{obj_id}) if($perm || !hasflag($obj,"DARK"));
    }
    return join(' ',@result);
 }
@@ -11898,6 +11991,11 @@ sub manage_httpd_bans
    }
 }
 
+
+#
+# http_error
+#    Something has gone wrong, inform the broswer.
+#
 sub http_error
 {
    my ($s,$fmt,@args) = @_;
@@ -11928,6 +12026,10 @@ sub http_error
    http_disconnect($s);
 }
 
+#
+# http_reply
+#    A http reply with evaluation but no fries.
+#
 sub http_reply
 {
    my ($prog,$fmt,@args) = @_;
@@ -11958,6 +12060,11 @@ sub http_reply
    http_disconnect($s);
 }
 
+
+#
+# http_reply_simple
+#     A simple http reply with no evaluation.
+#
 sub http_reply_simple
 {
    my ($s,$type,$fmt,@args) = @_;
@@ -11974,6 +12081,10 @@ sub http_reply_simple
    http_disconnect($s);
 }
 
+#
+# http_out
+#     Send something out to an http socket if its still connected.
+#
 sub http_out
 {
    my ($s,$fmt,@args) = @_;
@@ -11981,17 +12092,25 @@ sub http_out
    printf({@{@http{$s}}{sock}} "$fmt\r\n", @args) if(defined @http{$s});
 }
 
+#
+# banable_urls
+#    If you hit one of these urls, you're running a script to look for
+#    security vulnerabilities and/or hacking... either way, you need to
+#    go away. This should probably be a permanent ban.
+#
 sub banable_urls
 {
    my $data = shift;
 
-   if($$data{get} =~ /wget http/i) {
+   if($$data{get} =~ /wget http/i) {        # poor wget is abused by hackers
       return 1;
-   } elsif($$data{get} =~ /phpMyAdmin/i) {
+   } elsif($$data{get} =~ /phpMyAdmin/i) {             # really, no php here
       return 1;
-   } elsif($$data{get} =~ /trinity/i) {
+   } elsif($$data{get} =~ /trinity/i) {                    # matrix trinity?
       return 1;
-   } elsif($$data{get} =~ /w00tw00t/i) {
+   } elsif($$data{get} =~ /w00tw00t/i) {                        # woot woot!
+      return 1;
+   } elsif($$data{get} =~ /\.php/i) {                          # no php here
       return 1;
    } else {
       return 0;
@@ -12676,6 +12795,7 @@ sub handle_object_listener
                  cmd    => single_line($$hash{atr_value}),
                  wild   => [$1,$2,$3,$4,$5,$6,$7,$8,$9],
                  source => 0,
+                 invoker=> $target,
                  from   => "ATTR",
                  attr   => $hash,
                 );
@@ -14366,6 +14486,8 @@ sub fuzzy
          $AMPM = uc($1);
       } elsif(defined @days{lc($word)}) {
          # okay to ignore day of the week
+      } else {
+         printf("Skipped: $word\n");
       }
    }
 

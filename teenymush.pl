@@ -1030,7 +1030,6 @@ sub cmd_while
            ($$cmd{while_test},$$cmd{while_count}) = ($1,0);
            $$cmd{while_cmd} = $2;
         } else {
-           printf("TXT: '%s'\n",$txt);
            return err($self,$prog,"usage: while (<expression>) { commands }");
         }
     }
@@ -2143,7 +2142,6 @@ sub out
 sub cmd_notify
 {
    my ($self,$prog,$txt,$switch)=(shift,shift,shift,shift);
-   printf("NOTIFY: START\n");
 
    verify_switches($self,$prog,$switch,"first","all","quiet") || return;
 
@@ -2162,12 +2160,10 @@ sub cmd_notify
       if($current eq $$stack[$i]) {           
          last;                             # don't run commands in the future
       } elsif(defined @{$$stack[$i]}{wait_semaphore}) {
-         printf("   NOTIFY: ALTERED WAIT_TIME\n");
          @{$$stack[$i]}{wait_time} = 0;
          last if(defined $$switch{first});      # notify 1, jump out of loop
       }
    }
-  printf("   NOTIFY: DONE\n");
 
    if(!defined $$switch{quiet}) {
       necho(self   => $self,
@@ -3119,6 +3115,13 @@ sub cmd_list
             source => [ "%s", motd($self,$prog) ]
      );
    } elsif($txt =~ /^\s*cache\s*$/i) {
+       if(memorydb) {
+          return necho(self   => $self,
+                       prog   => $prog,
+                       source => [ "MySQL is not enabled. No data is cached." ]
+                      );
+       }
+       
        my ($size,$atr,$age);
        for my $x (keys %cache) {
           if(ref($cache{$x}) eq "HASH") {
@@ -3269,7 +3272,7 @@ sub cmd_list
    } else {
        err($self,
            $prog,
-           "syntax: \@list <option>\n\n",
+           "syntax: \@list <option>\n\n" .
            "        Options: site,functions,commands,sockets"
           );
    }
@@ -4815,8 +4818,9 @@ sub viewable
 {
    my ($obj,$name,$pat) = @_;
 
-   
-   if($name eq "description") {
+   if($$obj{obj_id} == 0 && $pat eq undef && $name =~ /^conf./i) {
+      return 0;                   # hide conf. attrs on #0 without a pattern
+   } elsif($name eq "description") {
       return ($pat ne undef) ? 1 : 0;
    } elsif($name eq "obj_lastsite") {
       return 1;
@@ -7429,6 +7433,7 @@ sub single_line
 {
    my $txt = shift;
    $txt =~ s/\r\s*|\n\s*//g;
+   $txt =~ s/\r\s*|\n\s*//g;
    return $txt;
 }
 
@@ -7920,6 +7925,9 @@ sub run_internal
    # These orphaned commands are being run against the not logged in commands
    #  set which will crash this function. These commands should just be ignored.
    return if($$hash{cmd} =~ /^CODE\(.*\)$/);
+
+   # the object was probably destroyed, do not run any more code from it.
+   return if(!valid_dbref($$command{runas}));
 
    $$prog{cmd} = $command;
 #   con("CMD:\n%s\n",print_var($command));
@@ -9299,6 +9307,7 @@ sub fun_url
          return 0;
       }
    } else {                                                # new connection
+      delete @info{socket_buffer};                    # last request buffer
 
       if($secure) {                                      # open connection
          $sock = Net::HTTPS::NB->new(Host => $host);
@@ -10906,7 +10915,7 @@ sub fun_edit
       return "#-1 FUNCTION (EDIT) EXPECTS 3 ARGUMENTS";
 
    my $txt  = ansi_init(evaluate($self,$prog,shift));
-   my $from = ansi_remove(evaluate($self,$prog,shift));
+   my $from = trim(ansi_remove(evaluate($self,$prog,shift)));
    my $to   = evaluate($self,$prog,shift);
    my $size = ansi_length($from);
 
@@ -11046,12 +11055,9 @@ sub fun_u
    my $txt = evaluate($self,$prog,shift);
    my ($obj,$attr,@arg);
 
-   my $prev = get_digit_variables($prog);                   # save %0 .. %9
-
    for my $i (0 .. $#_) {
       @arg[$i] = evaluate($self,$prog,$_[$i]);
    } 
-   set_digit_variables($self,$prog,"",@arg);          # update to new values
 
    if($txt =~ /\//) {                    # input in object/attribute format?
       ($obj,$attr) = (find($self,$prog,$`,"LOCAL"),$');
@@ -11068,11 +11074,10 @@ sub fun_u
       return "#-1 PerMISSion Denied";
    }
 
-   my $data = get($obj,$attr);
-   $data =~ s/^\s+|\s+$//gm;
-   $data =~ s/\n|\r//g;
-  
-   my $result = evaluate($self,$prog,$data);
+   my $prev = get_digit_variables($prog);                   # save %0 .. %9
+   set_digit_variables($self,$prog,"",@arg);          # update to new values
+
+   my $result = evaluate($self,$prog,single_line(get($obj,$attr)));
 
    set_digit_variables($self,$prog,"",$prev);            # restore %0 .. %9
    return $result;
@@ -11818,6 +11823,7 @@ sub evaluate
    #
    # handle string containing a single non []'ed function
    #
+   return if(!valid_dbref($self));
    if($txt =~ /^\s*([a-zA-Z_0-9]+)\((.*)\)\s*$/s) {
       my $fun = fun_lookup($self,$prog,$1,undef,1);
       if($fun ne "huh") {                   # not a function, do not evaluate
@@ -11830,7 +11836,7 @@ sub evaluate
             my $r=&{@fun{$fun}}($self,$prog,@$result);
             $$prog{function_duration} +=Time::HiRes::gettimeofday()-$start;
             $$prog{"fun_$fun"}++;
-            
+         
             script($fun,join(',',@$result),$r);
 
             return $r;
@@ -15140,7 +15146,7 @@ sub add_telnet_data
       delete @info{socket_buffer};
    }
 
-   @info{socket_buffer} .= $txt;
+   @info{socket_buffer} .= (defined @info{socket_buffer} ? "\n" : "") . $txt;
    if($$prog{socket_url}) {
       $$prog{socket_count}++;
 

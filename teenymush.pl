@@ -2690,10 +2690,12 @@ sub cmd_switch
       return err($self,$prog,"Permission denied.");
 
     my ($first,$second) = (get_segment2(shift(@list),"="));
+#    printf("FIRST: '%s'\n",$first);
     $first = trim(ansi_remove(evaluate($self,$prog,$first)));
     $first =~ s/[\r\n]//g;
     $first =~ tr/\x80-\xFF//d;
     unshift(@list,$second);
+#    printf("FIRST: '%s'\n",$first);
 
     while($#list >= 0) {
        # ignore default place holder used for readability
@@ -2711,6 +2713,7 @@ sub cmd_switch
           my $cmd = shift(@list);
           $cmd =~ s/^[\s\n]+//g;
           $txt =~ s/^\s+|\s+$//g;
+#          printf("NEXT: '%s'\n",$txt);
           if($txt =~ /^\s*(<|>)\s*\d+\s*$/) {
              if($1 eq ">" && $first > $' || $1 eq "<" && $first < $') {
                 return mushrun(self   => $self,
@@ -2950,7 +2953,9 @@ sub cmd_send
        my $txt = ansi_remove(evaluate($self,$prog,shift));
        my $switch = shift;
        $txt =~ s/\r|\n//g;
+       $txt =~ tr/\x80-\xFF//d;
 
+#       printf("#SEND: '%s'\n",$txt);
        if(defined $$switch{lf}) {
           printf($sock "%s\n",$txt);
        } elsif(defined $$switch{cr}) {
@@ -4552,7 +4557,9 @@ sub cmd_connect
    my $sock = @$user{sock};
    my ($atr,$player);
  
-   if($txt =~ /^\s*([^ ]+)\s+([^ ]+)\s*$/ ||            #parse player password
+   if($txt =~ /^\s*"\s*([^"]+)\s*"\s+([^ ]+)\s*$/ ||    #parse player password
+      $txt =~ /^\s*([^ ]+)\s+([^ ]+)\s*$/ ||            #parse player password
+      $txt =~ /^\s*"\s*([^"]+)\s*"\s*$/ ||
       $txt =~ /^\s*([^ ]+)\s*$/) {
       my ($username,$pass) = ($1,$2);
 
@@ -4663,8 +4670,8 @@ sub cmd_connect
       if(@info{"conf.master"} ne undef) {
          for my $obj (lcon(@info{"conf.master"}),$player) {
             if(($atr = get($obj,"ACONNECT")) && $atr ne undef){
-               mushrun(self    => $self,                 # handle aconnect
-                       runas   => $self,
+               mushrun(self    => $obj,                 # handle aconnect
+                       runas   => $obj,
                        invoker => $self,
                        source  => 0,
                        cmd     => $atr
@@ -4944,6 +4951,15 @@ sub cmd_ex
                      );
       }
       return err($self,$prog,"Permission denied.");
+   }
+
+   if(!$perm && hasflag($target,"ROOM")) {
+      return necho(self   => $self,
+                   prog   => $prog,
+                   source => [ "%s is owned by %s.",
+                               name($target),
+                               name(owner($target))],
+                  );
    }
 
    $out .= obj_name($self,$target,$perm);
@@ -7818,7 +7834,7 @@ sub spin
    $SIG{ALRM} = \&spin_done;
 
    eval {
-       ualarm(8_000_000);                              # err out at 8 seconds
+       ualarm(45_000_000);                              # err out at 8 seconds
        local $SIG{__DIE__} = sub {
           delete @engine{@info{current_pid}};
           con("----- [ Crash REPORT@ %s ]-----\n",scalar localtime());
@@ -8485,9 +8501,9 @@ sub fmt_amper
       my ($atr,$obj,$val) = ($1,$2,$');
 
       if(length($val) + $depth < @info{max}) {
-         $out .= dprint($depth,"$cmd$txt");
+         $out .= dprint($depth,"%s","$cmd$txt");
       } elsif($val =~ /^\s*\[.*\]\s*(;{0,1})\s*$/) {
-         $out .= dprint($depth,"&$atr $obj=");
+         $out .= dprint($depth,"%s","&$atr $obj=");
          $out .= function_print($depth+3,$val);
       } else {
          $out .= dprint($depth,"%s",$cmd . $txt);
@@ -9286,7 +9302,8 @@ sub fun_url
          my $data = shift(@$buff);
 
 # wttr.in debug
-#         if(ansi_remove($data) =~ / in/)  {
+#         if(ansi_remove($data) =~ / mi/)  {
+#            printf("%s -> %s\n",$data,lord($data));
 #            printf("DATA: '%s' -> '%s' -> '%s,%s,%s'\n",
 #                ansi_remove(trim($data)),$1,
 #                ord(substr($1,0,1)),
@@ -13044,7 +13061,7 @@ sub echo_socket
             }
          }
       }
-   } elsif(defined $$obj{sock}) {
+   } elsif(defined $$obj{sock} && (!defined $$obj{raw} || $$obj{raw} == 0)) {
       if(defined @connected{$$obj{sock}} && 
          @{@connected{$$obj{sock}}}{type} eq "WEBSOCKET") {
          ws_echo($$obj{sock},ansi_remove($msg));

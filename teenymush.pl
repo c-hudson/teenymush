@@ -3670,7 +3670,8 @@ sub cmd_name
       }
 
       if(memorydb) {
-         delete @player{name($target,1)};
+         delete @player{lc(name($target,1))};
+         @player{$name} = 1;
          db_set($target,"obj_name",$name);
          db_set($target,"obj_cname",$cname);
          necho(self   => $self,
@@ -4953,7 +4954,8 @@ sub cmd_ex
       return err($self,$prog,"Permission denied.");
    }
 
-   if(!$perm && hasflag($target,"ROOM")) {
+   printf("LOC: '%s' -> '%s'\n",$$target{obj_id},loc($self));
+   if(!(hasflag($target,"ROOM") && ($perm || $$target{obj_id} == loc($self)))) {
       return necho(self   => $self,
                    prog   => $prog,
                    source => [ "%s is owned by %s.",
@@ -4981,16 +4983,18 @@ sub cmd_ex
                "You see nothing special."
               );
 
-   my $owner = owner($target);
-   $out .= "\n" . color("h","Owner") . ": " . obj_name($self,$owner,$perm) .
-           "  " . color("h","Key") . " : " . nvl(lock_uncompile($self,
-                                          $prog,
-                                          get($target,"OBJ_LOCK_DEFAULT")
-                                         ),
-                           "*UNLOCKED*"
-                          ) .
-           "  " . color("h",ucfirst(@info{"conf.money_name_plural"})) .
-           ": ". money($target);
+   if($perm) {
+      my $owner = owner($target);
+      $out .= "\n" . color("h","Owner") . ": " . obj_name($self,$owner,$perm) .
+              "  " . color("h","Key") . " : " . nvl(lock_uncompile($self,
+                                             $prog,
+                                             get($target,"OBJ_LOCK_DEFAULT")
+                                            ),
+                              "*UNLOCKED*"
+                             ) .
+              "  " . color("h",ucfirst(@info{"conf.money_name_plural"})) .
+              ": ". money($target);
+   }
 
    $out .= "\n" . color("h","Created") . ": " . firsttime($target);
    if(hasflag($target,"PLAYER")) {
@@ -5009,12 +5013,14 @@ sub cmd_ex
    }
 
 
-   for my $obj (lcon($target)) {
-      push(@content,obj_name($self,$obj));
-   }
+   if($perm || $$target{obj_id} == loc($self)) {
+      for my $obj (lcon($target)) {
+        push(@content,obj_name($self,$obj));
+      }
 
-   if($#content > -1) {
-      $out .= "\n" . color("h","Contents") . ":\n" . join("\n",@content);
+      if($#content > -1) {
+         $out .= "\n" . color("h","Contents") . ":\n" . join("\n",@content);
+      }
    }
 
    if(hasflag($target,"EXIT")) {

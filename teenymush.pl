@@ -3534,7 +3534,7 @@ sub cmd_pemit
       my $txt=$';
 
       if($target eq undef) {
-         return err($self,$prog,"I don't see that here");
+         return err($self,$prog,"I don't see that here - '$target'");
       } 
 
       my $txt = evaluate($self,$prog,$txt);
@@ -3719,8 +3719,10 @@ sub cmd_name
       }
 
       if(memorydb) {
-         delete @player{lc(name($target,1))};
-         @player{$name} = 1;
+         if(hasflag($target,"PLAYER")) {
+            delete @player{lc(name($target,1))};
+            @player{$name} = $$target{obj_id};
+         }
          db_set($target,"obj_name",$name);
          db_set($target,"obj_cname",$cname);
       } else {

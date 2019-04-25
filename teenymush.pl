@@ -76,6 +76,7 @@ sub load_modules
       'Net::HTTP::NB'          => 'url_http',      
       'HTML::Entities'         => 'entities',
       'Digest::MD5'            => 'md5',
+      'HTML::Restrict'         => 'html_restrict',   # libhtml-restrict-perl
    );
 
    for my $key (keys %mod) {
@@ -174,7 +175,6 @@ sub load_config_default
    @default{digcost}                  = 10;
    @default{createcost}               = 10;
    @default{backup_interval}          = 3600;                  # once an hour
-   @default{freefind_interval}        = 84600;                   # once a day
    @default{function_invocation_limit}= 2500;
    @default{weblog}                   = "teenymush.web.log";
    @default{conlog}                   = "teenymush.log";
@@ -432,6 +432,7 @@ sub main
 
    load_new_db();                                     #!# optional new db load
    load_db_backup();                                    #!#
+   find_free_dbrefs                                     #!# search for garbage
 
    initialize_functions();                              #!#
    initialize_commands();                               #!#
@@ -591,10 +592,11 @@ sub initialize_commands
    @command{"\@sqldump"}= { fun => sub { db_sql_dump(@_); }                 };
    @command{"\@dbread"} = { fun => sub { fun_dbread(@_); }                  };
    @command{"\@dump"}   = { fun => sub { cmd_dump(@_); }                    };
-   @command{"\@freefind"}={ fun => sub { cmd_freefind(@_); }                };
    @command{"\@import"} = { fun => sub { cmd_import(@_); }                  };
    @command{"\@stat"}   = { fun => sub { cmd_stat(@_); }                    };
    @command{"\@cost"}   = { fun => sub { cmd_generic_set(@_); }             };
+   @command{"\@quota"}  = { fun => sub { cmd_quota(@_); }                   };
+   @command{"\@player"} = { fun => sub { cmd_player(@_); }                  };
    @command{"huh"}      = { fun => sub { cmd_huh(@_); }                     };
    @command{"\@\@"}     = { fun => sub { return 1; }                        };
 
@@ -667,6 +669,43 @@ sub get_mail
    } else {
       return undef;
    }
+}
+
+sub cmd_quota
+{
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
+
+   my ($player,$value) = balanced_split($txt,"=",4);
+   $player = "me" if ($player eq undef);
+
+   my $target = find_player($self,$prog,evaluate($self,$prog,$player)) ||
+      return err($self,$prog,"Unknown player.");
+
+   if(!controls($self,$target)) {
+      return err($self,$prog,"Permission denied.");
+   }
+
+   if($value ne undef) {
+      if(!hasflag($self,"WIZARD")) {
+         return err($self,$prog,"Permission denied.");
+      } elsif($value =~ /^\s*(\d+)\s*$/) {
+         db_set($target,"obj_quota",$1);
+         db_set($target,"obj_total_quota",$1);
+      } else {
+         return err($self,$prog,"Invalid number ($value).");
+      }
+   }
+
+   my $total = nvl(get($target,"obj_total_quota"),0);
+   my $left = nvl(get($target,"obj_quota"),0);
+   necho(self   => $self,                                    # notify user
+         prog   => $prog,
+         source => [ "%s Quota: %9s  Used: %9s",
+                     name($target),
+                     $total,
+                     $total - $left
+                   ]
+        );
 }
 
 #
@@ -1109,6 +1148,21 @@ sub cmd_bad
                !hasflag($$cmd{bad_pos},"ROOM")) {
                push(@out,"#" . $$cmd{bad_pos} ." No TYPE flag, set to -> '".
                   type($self,$prog,$$cmd{bad_pos}) . "'");
+            }
+
+            if(hasflag($$cmd{bad_pos},"PLAYER")) {
+               my $total = get($$cmd{bad_pos},"obj_total_quota");
+               my $left = get($$cmd{bad_pos},"obj_quota");
+
+               if($total eq undef && $left eq undef) {
+                  ($total,$left) = (0,0);
+               } elsif($left ne undef && $total eq undef) {
+                  $total = $left;
+               } elsif($total ne undef && $left eq undef) {
+                  $left = $total;
+               }
+               db_set($$cmd{bad_pos},"obj_total_quota",$total);
+               db_set($$cmd{bad_pos},"obj_quota",$left);
             }
 
             if(hasflag($$cmd{bad_pos},"EXIT") && 
@@ -1954,46 +2008,33 @@ sub cmd_split
 }
 
 #
-# cmd_find_deleted
+# find_free_dbrefs
 #
-sub cmd_freefind
+#    @destroy will keep track of used dbrefs but this function will
+#    populate the list on startup / reload of code.
+#
+sub find_free_dbrefs
 {
-   my ($self,$prog,$type) = @_;
-   my ($file,$start);
+   return if mysqldb;
 
-   if(!in_run_function($prog)) {
-      return out($prog,"#-1 \@freefind can not be run in RUN function");
-   } elsif(!hasflag($self,"WIZARD") && !hasflag($self,"GOD")) {
-      return err($self,$prog,"Permission denied.");
-   } elsif(mysqldb) {
-      return err($self,$prog,"Mysql does not need \@freefind");
-   }
+   delete @free[0 .. $#free];
 
-   $type = "normal" if($type eq undef);
-
-   #-----------------------------------------------------------------------#
-   # initialize loop                                                       #
-   #-----------------------------------------------------------------------#
-   my $cmd = $$prog{cmd_last};
-   if(!defined $$cmd{find_pos}) {                      # initialize "loop"
-      $$cmd{find_pos} = 0;
-      @info{freefind_last} = time();
-      delete @free[0 .. $#free];
-   }
-
-   my $start = $$cmd{find_pos};
-   while($$cmd{find_pos} <= $#db && $$cmd{find_pos} - $start <= 50 ) {
-      if(!defined @db[$$cmd{find_pos}]) {
-         push(@free,$$cmd{find_pos});
-      }
-      $$cmd{find_pos}++;
-   }
-
-   if($$cmd{find_pos} <= $#db) {
-      return "RUNNING";                                       # still running
+   for my $i (0 .. $#db) {
+      push(@free,$i) if(!valid_dbref($i));
    }
 }
 
+sub cmd_player
+{
+   my ($self,$prog,$type) = @_;
+
+   delete @player{keys %player};
+   for(my $i=0;$i <= $#db;$i++) {
+      if(valid_dbref($i) && hasflag($i,"PLAYER")) {
+         @player{lc(name($i,1))} = $i;
+      }
+   }
+}
 
 #
 # cmd_dump
@@ -2062,7 +2103,9 @@ sub cmd_dump
    #-----------------------------------------------------------------------#
    while($$cmd{dump_pos} <= $#db && 
        ($$cmd{dump_pos} - $start <= 50 || $type eq "CRASH")) {
-       printf($file "%s", db_object($$cmd{dump_pos}));
+       if(valid_dbref($$cmd{dump_pos})) {
+          printf($file "%s", db_object($$cmd{dump_pos}));
+       }
        $$cmd{dump_pos}++;
    }
 
@@ -2819,14 +2862,18 @@ sub cmd_telnet
          return err($self,$prog,"Invalid hostname '%s' specified.",$1);
       my $sock = IO::Socket::INET->new(Proto=>'tcp',
                                        blocking=>0,
-                                       Timeout => 30) ||
+                                       Timeout => 2) ||
          return err($self,$prog,"Could not create socket.");
       $sock->blocking(0);
+
       my $sockaddr = sockaddr_in($2, $addr) ||
          return err($self,$prog,"Could not resolve hostname");
-      $sock->connect($sockaddr) or                     # start connect to host
+
+      connect($sock,$sockaddr) or                     # start connect to host
+      # $sock->connect($sockaddr) or                     # start connect to host
          $! == EWOULDBLOCK or $! == EINPROGRESS or         # and check status
-         return err($self,$prog,"Could not open connection.");
+         return err($self,$prog,"Could not open connection. $!");
+
       () = IO::Select->new($sock)->can_write(.2)     # see if socket is pending
           or $pending = 2;
       defined($sock->blocking(1)) ||
@@ -3402,6 +3449,7 @@ sub cmd_toad
       $$cmd{toad_pos} = 0;
       $$cmd{toad_dbref} = $$target{obj_id};
       $$cmd{toad_name} = name($target);
+      $$cmd{toad_name2} = name($target,1);
       $$cmd{toad_objname} = obj_name($self,$target);
       $$cmd{toad_loc} = loc($target);
 
@@ -3451,6 +3499,7 @@ sub cmd_toad
                                $$cmd{toad_name} ]
               );
       }
+      delete @player{lc($$cmd{toad_name2})};
       db_delete($$cmd{toad_dbref});
    } else {
       return "RUNNING";                                      # still running
@@ -3661,7 +3710,7 @@ sub cmd_name
                     "contain A-Z, 0-9, _, ., and -");
       }
 
-      if(hasflag($target,"PLAYER") && inuse_player_name($2)) {
+      if(hasflag($target,"PLAYER") && inuse_player_name($2,$self)) {
          return err($self,$prog,"That name is already in use");
       } elsif($name =~ /^\s*(\#|\*)/) {
          return err($self,$prog,"Names may not start with * or #");
@@ -3674,10 +3723,6 @@ sub cmd_name
          @player{$name} = 1;
          db_set($target,"obj_name",$name);
          db_set($target,"obj_cname",$cname);
-         necho(self   => $self,
-            prog   => $prog,
-            source => [ "Set." ],
-         );
       } else {
 
          sql("update object " .
@@ -4302,6 +4347,9 @@ sub cmd_create
          source => [ "Object created as: %s",obj_name($self,$dbref) ],
         );
 
+   my $cur = get($self,"obj_quota"); 
+   db_set($self,"obj_quota",$cur - 1);
+
    my_commit if mysqldb;
 }
 
@@ -4344,7 +4392,7 @@ sub cmd_link
 sub cmd_dig
 {
    my ($self,$prog,$txt) = @_;
-   my ($loc,$room_name,$room,$in,$out,$cost);
+   my ($loc,$room_name,$room,$in,$out,$cost,$quota);
      
    if(hasflag($self,"GUEST")) {
       return err($self,$prog,"Permission Denied."); 
@@ -4360,13 +4408,13 @@ sub cmd_dig
                  "        \@dig <RoomName>");
    }
 
-   if($in ne undef && $out ne undef && quota_left($self) < 3) {
-      return err($self,$prog,"You need a quota of 3 or better to complete " .
-                 "this \@dig"
-                );
-   } elsif(($in ne undef || $out ne undef) && quota_left($self) < 2) {
-      return err($self,$prog,"You need a quota of 2 or better to complete " .
-                 "this \@dig"
+   $quota++;
+   $quota++ if($in ne undef);
+   $quota++ if($in ne out);
+
+   if(quota_left($self) < $quota) {
+      return err($self,$prog,"You need a quota of $quota or better to " .
+                 "complete this \@dig"
                 );
    } elsif($in eq undef && $out eq undef && quota_left($self) < 1) {
       return err($self,$prog,"You are out of QUOTA to create objects");
@@ -4439,6 +4487,10 @@ sub cmd_dig
             source => [ "   Out exit created as:  %s(#%sE)",$out,$out_dbref ],
            );
    }
+
+   my $cur = get($self,"obj_quota"); 
+   db_set($self,"obj_quota",$cur - $quota);
+
    my_commit if(mysqldb);
 }
 
@@ -4484,6 +4536,9 @@ sub cmd_open
 
    my $dbref = create_exit($self,$prog,$exit,$loc,$dest) ||
       return err($self,$prog,"Internal error, unable to create the exit");
+
+   my $cur = get($self,"obj_quota"); 
+   db_set($self,"obj_quota",$cur - 1);
 
    necho(self   => $self,
          prog   => $prog,
@@ -4954,8 +5009,7 @@ sub cmd_ex
       return err($self,$prog,"Permission denied.");
    }
 
-   printf("LOC: '%s' -> '%s'\n",$$target{obj_id},loc($self));
-   if(!(hasflag($target,"ROOM") && ($perm || $$target{obj_id} == loc($self)))) {
+   if(hasflag($target,"ROOM") && !($perm || $$target{obj_id} == loc($self))) {
       return necho(self   => $self,
                    prog   => $prog,
                    source => [ "%s is owned by %s.",
@@ -5510,6 +5564,7 @@ sub reload_code
    initialize_functions();
    initialize_commands();
    initialize_flags();
+   find_free_dbrefs();
 
    return $count;
 }
@@ -5570,7 +5625,7 @@ sub short_hn
    } elsif($addr =~ /[A-Za-z]/ && $addr  =~ /\.([^\.]+)\.([^\.]+)$/) {
       return "*.$1.$2";
    } else {
-      return $addr;
+      return "*" . substr($addr,length($addr) * .3);
    }
 }
 
@@ -6873,7 +6928,7 @@ sub get_next_dbref
 {
 
    if($#free > -1) {                        # prefetched list of free objects
-      return pop(@free);
+      return shift(@free);
    } elsif(defined @info{backup_mode} && @info{backup_mode}) { # in backupmode
       if($#delta > $#db) {                  # return the largest next number
          return $#delta + 1;                # in @delt or @db
@@ -7308,7 +7363,8 @@ sub db_object
    if(defined @db[$i]) {
       $out = "obj[$i] {\n";
       my $obj = @db[$i];
-      for my $name ( sort keys %$obj ) {
+      for my $name ( (sort grep {/^obj_/} keys %$obj), 
+                     (sort grep {!/^obj_/} keys %$obj) ) {
          my $attr = $$obj{$name};
          
          if(reserved($name) && defined $$attr{value} &&
@@ -7840,7 +7896,7 @@ sub spin
    $SIG{ALRM} = \&spin_done;
 
    eval {
-       ualarm(45_000_000);                              # err out at 8 seconds
+       ualarm(15_000_000);                              # err out at 8 seconds
        local $SIG{__DIE__} = sub {
           delete @engine{@info{current_pid}};
           con("----- [ Crash REPORT@ %s ]-----\n",scalar localtime());
@@ -7859,21 +7915,6 @@ sub spin
                  from   => "ATTR",
                  hint   => "ALWAYS_RUN"
          );
-      } elsif(time() - @info{"conf.freefind_last"} >
-              @info{"conf.freefind_interval"}) {
-         @info{"conf.freefind_last"} = time();
-         if(!defined @info{"conf.freefind_interval"}) {
-            @info{"conf.freefind_interval"} = 86400;
-         }
-         my $self = obj(0);
-         mushrun(self   => $self,
-                 runas  => $self,
-                 invoker=> $self,
-                 source => 0,
-                 cmd    => "\@freefind",
-                 from   => "ATTR",
-                 hint   => "ALWAYS_RUN"
-                );
       }
 
 
@@ -8775,7 +8816,7 @@ use Compress::Zlib;
 
 sub initialize_functions
 {
-   @fun{fuzzy}     = sub { return &fuzzy(@_[2]);                   };
+   @fun{html_strip}= sub { return &fun_html_strip(@_);             };
    @fun{pid}       = sub { return &fun_pid(@_);                    };
    @fun{lpid}      = sub { return &fun_lpid(@_);                   };
    @fun{null}      = sub { return &fun_null(@_);                   };
@@ -8921,6 +8962,23 @@ sub add_union_element
    } else {
       $$list{$item} = $item;
    }
+}
+
+   } elsif(@info{"conf.md5"} == -1) {
+
+sub fun_html_strip
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+
+   if(@info{"conf.html_restrict"} == -1) {
+      return "#-1 Not enabled";
+   }
+
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (HTML_STRIP) EXPECTS 1 ARGUMENTS";
+    
+   my $hr = HTML::Restrict->new();
+   return $hr->process(evaluate($self,$prog,shift));
 }
 
 #
@@ -10666,13 +10724,18 @@ sub fun_index
 sub fun_replace
 {
    my ($self,$prog) = (shift,shift);
-
-   my ($txt,$positions,$word,$idelim,$odelim) = @_;
    my $i = 1;
 
    if(!good_args($#_,3,4,5)) {
       return "#-1 FUNCTION (REPLACE) EXPECTS 3, 4 or 5 ARGUMENTS";
    }
+
+   my $txt = evaluate($self,$prog,shift);
+   my $positions = evaluate($self,$prog,shift);
+   my $word = evaluate($self,$prog,shift);
+   my $idelim = evaluate($self,$prog,shift);
+   my $odelim = evaluate($self,$prog,shift);
+
    $txt =~ s/^\s+|\s+$//g;
    $positions=~ s/^\s+|\s+$//g;
    $word =~ s/^\s+|\s+$//g;
@@ -12655,13 +12718,15 @@ sub evaluate_substitutions
    my ($out,$seq,$debug);
 
    my $orig = $t;
-   while($t =~ /(\[|\]|\\|%m[0-9]|%[brtn#0-9]|%v[0-9]|%w[0-9]|\[|\]|%=<[^>]+>|%\{[^}]+\})/i) {
+   while($t =~ /(\[|\]|\\|%m[0-9]|%[pbrtnk#0-9%]|%(v|w)[a-zA-Z]|\[|\]|%=<[^>]+>|%\{[^}]+\})/i) {
       ($seq,$t)=($1,$');                                   # store variables
       $out .= $`;
 
       if($seq eq "\\") {                               # skip over next char
          $out .= substr($t,0,1);
          $t = substr($t,1);
+      } elsif($seq eq "%%") {
+         $out .= "%";
       } elsif($seq eq "[") {
          $out .= "[" if(ord(substr($`,-1)) == 27);       # escape sequence?
       } elsif($seq eq "]" || $seq eq "]") {
@@ -12672,13 +12737,27 @@ sub evaluate_substitutions
          $out .= "\n";
       } elsif($seq eq "%t") {                                          # tab
          $out .= "\t";
+      } elsif(lc($seq) eq "%p") {
+         if(!defined $$prog{cmd}) {
+           $out .= "its";
+         } else {
+           my $sex = get(@{@{$$prog{cmd}}{invoker}}{obj_id},"sex");
+
+           if($sex =~ /(male|boy|garson|gent|father|mr|man|sir|son|brother)/i){
+              $out .= ($seq eq "%p") ? "his" : "His";
+           } elsif($sex =~ /(female|girl|woman|lady|dame|chick|gal|bimbo)/i) {
+              $out .= ($seq eq "%p") ? "her" : "Her";
+           } else {
+              $out .= ($seq eq "%p") ? "its" : "Its";
+           }
+         }
       } elsif($seq eq "%#") {                                # current dbref
          if(!defined $$prog{cmd}) {
             $out .= "#" . $$self{obj_id};
          } else {
             $out .= "#" . @{@{$$prog{cmd}}{invoker}}{obj_id};
          }
-      } elsif(lc($seq) eq "%n") {                          # current dbref
+      } elsif(lc($seq) eq "%n" || lc($seq) eq "%k") {         # current name 
          if(!defined $$prog{cmd}) {
             $out .= name($self);
          } else {
@@ -12697,7 +12776,7 @@ sub evaluate_substitutions
          } else {
             $out .= @{$$prog{var}}{$1} if(defined $$prog{var});
          }
-      } elsif($seq =~ /^%(v|w)[0-9]$/ || $seq =~ /^%=<([^>]+)>$/) {  # attrs
+      } elsif($seq =~ /^%((v|w)[a-zA-Z])$/ || $seq =~ /^%=<([^>]+)>$/) {
          $out .= get($user,$1);
       }
    }
@@ -12972,7 +13051,9 @@ sub logit
       printf($fmt, @args);
    }
 
-   printf($fd "$fmt", @args) if($fd ne undef);
+   my $txt = sprintf("$fmt",@args);
+#   $txt =~ s/[^[::ascii::]]//g;
+   printf($fd "%s", $txt) if($fd ne undef);
 }
 
 sub web
@@ -13671,6 +13752,7 @@ sub destroy_object
               );
       }
 
+      push(@free,$$target{obj_id});
       db_delete($target);
       return 1;
    } else {
@@ -13725,6 +13807,7 @@ sub create_object
       db_delete($id);
       db_set($id,"obj_name",$name);
       db_set($id,"obj_created_by",$$user{hostname});
+
       if($pass ne undef && $type eq "PLAYER") {
          db_set($id,"obj_password",mushhash($pass));
       }
@@ -13743,9 +13826,12 @@ sub create_object
       }
 
       if($type eq "PLAYER") {
+         db_set($id,"obj_lock_default","#" . $id);
          db_set($id,"obj_home",$where);
          db_set($id,"obj_money",@info{"conf.starting_money"});
          db_set($id,"obj_firstsite",$where);
+         db_set($id,"obj_quota",@info{"conf.starting_quota"});
+         db_set($id,"obj_total_quota",@info{"conf.starting_quota"});
          @player{lc($name)} = $id;
       } else {
          db_set($id,"obj_home",$$self{obj_id});
@@ -13882,10 +13968,12 @@ sub print_var
 
 sub inuse_player_name
 {
-   my ($name) = @_;
+   my ($name,$self) = @_;
    $name =~ s/^\s+|\s+$//g;
 
-   if(memorydb) {
+   if($self ne undef && lc(trim($name)) eq lc(name($self,1))) {
+      return 0;                                 # allow for changes in case
+   } elsif(memorydb) {
       return defined @player{lc($name)} ? 1 : 0;
    } else {
       my $result = one_val(
@@ -15401,11 +15489,11 @@ sub server_handle_sockets
                   @info{connected_raw} .= $` . "\n";
                }
 
-#               if(@{@connected{$s}}{raw} > 0) {
-#                  my $tmp = $`;
-#                  $tmp =~ s/\e\[[\d;]*[a-zA-Z]//g;
-#                  con("#%s# %s\n",@{@connected{$s}}{raw},$tmp);
-#               }
+               if(@{@connected{$s}}{raw} > 0) {
+                  my $tmp = $`;
+                  $tmp =~ s/\e\[[\d;]*[a-zA-Z]//g;
+                  web("#%s# %s\n",@{@connected{$s}}{raw},$tmp);
+               }
             }
          }
       }

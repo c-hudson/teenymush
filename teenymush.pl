@@ -15491,11 +15491,11 @@ sub server_handle_sockets
                   @info{connected_raw} .= $` . "\n";
                }
 
-               if(@{@connected{$s}}{raw} > 0) {
-                  my $tmp = $`;
-                  $tmp =~ s/\e\[[\d;]*[a-zA-Z]//g;
-                  web("#%s# %s\n",@{@connected{$s}}{raw},$tmp);
-               }
+#               if(@{@connected{$s}}{raw} > 0) {
+#                  my $tmp = $`;
+#                  $tmp =~ s/\e\[[\d;]*[a-zA-Z]//g;
+#                  web("#%s# %s\n",@{@connected{$s}}{raw},$tmp);
+#               }
             }
          }
       }

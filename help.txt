@@ -782,6 +782,7 @@ Example:
 
      You say, "#"
 
+Also see: chr()
 & asc()
 function:
 
@@ -797,3 +798,303 @@ Example:
      > say asc(35)
 
      You say, "#"
+
+Also see: ord(), chr()
+
+    
+& @perl
+command:
+
+   @perl <code>
+
+   Runs the <code> inside of perl. Not recommended but useful for fixing
+   something that can't be normally fixed.
+
+Example:
+
+   @perl printf("%s\n",print_var($prog));
+
+& say
+command:
+
+   say <text>
+   say/noeval <text>
+
+   Causes your character to say something which can be heard by everyone
+   in the current room. A shortened version of this command is to use
+   a double quote.
+
+   Using the /noeval switch causes the command not to evaluate <text>
+   so that it is said as is.
+
+Example:
+
+   > say Hello.
+   You say, "Hello."
+
+   > "Hello
+   You say, "Hello."
+
+   > say/noeval %0 %1 %2
+   You say, "%0 %1 %2"
+& @reload
+command:
+
+   @reload
+
+   If any changes to the perl script have been made, then this command will
+   load those changes into the currently running TeenyMUSH server. You must
+   be set GOD to use this command.
+
+& pose
+command:
+
+   pose <text>
+
+   This command is used to express an action. Your name is prefixed before
+   <text> and is announced to everyone in the current room. A shortcut for
+   this command is ":".
+
+Example:
+
+   > pose smiles.
+
+   Guest smiles.
+
+   > :smiles.
+
+   Guest smiles.
+
+Also see: emote
+& emote
+command:
+
+   pose <text>
+
+   This command is similar to the pose command but without a space between
+   your name and <text>. Your name is prefixed before <text> without a space
+   and is announced to everyone in the current room. A shortcut for this
+   command is ";".
+
+Example:
+
+   > emote 's eyes light up.
+
+   Guest's eyes light up.
+
+   > ;'s eyes light up.
+
+   Guest's eyes light up.
+
+Also see: pose
+& who
+command:
+
+   WHO
+   WHO <name>
+
+   This command lists all people who are connected to the TeenyMUSH server
+   at this time. This command also lists time connected, amount of time
+   idle, and their @doing. If a name, or partial name, is provided, then
+   only those players who match <name> will be listed.
+& lcon()
+function:
+
+    lcon(<object>)
+
+    Returns a list of object dbrefs that are in <object>. You may do an
+    lcon() on those objects you own, or you are in. Dark objects are always
+    excluded.
+& pid()
+function:
+
+    pid()
+
+    Returns the pid of the currently running program.
+
+Example:
+ 
+    > say pid()
+
+    You say, "31776"
+& lpid()
+function:
+
+    lpid()
+
+    Returns all pids of any currently running program that you control.
+
+Example:
+ 
+    > say lpid()
+
+    You say, "31776 31781"
+
+& whisper
+command:
+
+   whisper <object> = <message>
+   whisper <message>
+
+   Want to say something to a particular person? Whisper it to them
+   and no one else will hear it. This only works with people in the
+   same room.
+
+   If no object is specified, the whisper will go to the last person
+   that you whispered to if they are still around.
+
+ex:
+   > whisper guest = Hello
+   You whisper, "Hello" to Guest.
+
+   > whisper Hello
+   You whisper, "Hello" to Guest.
+& @quota
+
+   @quota
+   @quota <player>
+   @quota <player> = <amount>
+
+
+   Sets the amount of quota that a player may use if a <amount> is
+   specified. Otherwise the command will just list the quota for
+   yourself or a specified player.
+
+ex:
+   > @quota
+   Adrick Quota:        50  Used:         0
+
+   > @quota Kligore
+   Kligore Quota:        50  Used:         0
+
+   > @quota Kligore = 10
+   Kligore Quota:        10  Used:         0
+& `
+command:
+
+   '<person> <message>
+
+   Sends a message to everyone in the current room directed towards a
+   particular person.
+
+ex:
+   > 'kilgore Hello
+   Adrick [to Kilgore]: Hello
+& to
+run: help `
+& html_strip()
+function:
+
+    html_strip(<text>)
+
+
+    Returns what <text> would be rendered like in a purely text
+    format removing all html tags.
+
+Example:
+ 
+    > say html_strip(<a href=foo>bar</a>)
+
+    You say, "bar"
+
+& substitutions
+SUBSTITUTIONS
+  Topic: SUBSTITUTIONS
+ 
+  All messages may contain %-substitutions, which evaluate to gender-specific
+  pronouns if the player's gender is set or to other useful information.
+  Information returned is based on the player that caused the message to be
+  displayed, not the object that stored the message or which is running the
+  action list.  The substitutions available are:
+ 
+    %p, %P    = Name's, his, her, its, their.   (possessive)
+    %n, %N    = the player's name.
+    %k, %K    = the player's colorized/accented name.
+    %r        = carriage return.
+    %t        = tab character.
+    %b        = space character.
+    %%        = literal '%' character.
+    %0-%9     = Value of positional parameter/stack location 0 through 9.
+    %m0 - %m9 = Matches wild card 0 - 9 from a conditional statment in
+                @switch.
+    %va-%vz   = Contents of attribute va through vz.
+  
+& ansi
+function:
+
+  ansi(<codes>,<string>)
+
+  This allows you to change the color of the a string of text.
+
+ansi codes:
+
+  f - flash                       i - inverse
+  h - hilite                      n - normal
+  u - underline
+
+  x - black foreground            X - black background
+  r - red foreground              R - red background
+  g - green foreground            G - green background
+  y - yellow foreground           Y - yellow background
+  b - blue foreground             B - blue background
+  m - magenta foreground          M - magenta background
+  c - cyan foreground             C - cyan background
+  w - white foreground            W - white background
+& fdiv()
+
+  FUNCTION: fdiv(<number1>,<number2>)
+
+  Returns the floating point quotient from dividing <number1> by <number2>.
+  <number> may be a floating point number, and a floating point result is
+  returned.
+
+  Examples:
+    > say fdiv(15,3)
+    You say, "5"
+    > say fdiv(16,3)
+    You say, "5.333333"
+    > say fdiv(17,3)
+    You say, "5.666667"
+    > say fdiv(18,3)
+    You say, "6"
+    > say fdiv(-17,3)
+    You say, "-5.666667"
+    > say fdiv(10,3.5)
+    You say, "2.857143"
+
+& round()
+  FUNCTION: round(<number>,<places>)
+
+  Rounds <number> to <places> positions right of the decimal point. <places>
+  may be negative in which case the rounding occurs in the ones, tens,
+  hundreds, etc. place.
+
+  Examples:
+    > say round(5.123,1)
+    You say, "5.1"
+    > say round(9.8765,3)
+    You say, "9.877"
+    > say round(5.5,0)
+    You say, "6"
+    > say round(-5.5,0)
+    You say, "-6"
+    > say round(520,-3)
+    You say, "1000"
+
+& if()
+
+  FUNCTION:     if(<expression>,<true string>[,<false string>])
+            ifelse(<expression>,<true string>,<false string>)
+
+  This function returns <true string> if BOOLEAN <expression> is TRUE,
+  <false string> otherwise. Much more efficient than an equivalent switch().
+  It can also return different messages based on whether <expression> is
+  nothing or contains text.  if() does the same thing, but the third,
+  <false string> argument is optional.
+
+  Example:
+    > think ifelse(v(test),Test exists!,Test doesn't exist.)
+    Test doesn't exist.
+
+& ifelse()
+run: help if()

@@ -76,6 +76,7 @@ sub load_modules
       'Net::HTTP::NB'          => 'url_http',      
       'HTML::Entities'         => 'entities',
       'Digest::MD5'            => 'md5',
+      'File::Copy'             => 'copy',
       'HTML::Restrict'         => 'html_restrict',   # libhtml-restrict-perl
    );
 
@@ -1047,6 +1048,7 @@ sub cmd_backupmode
      );
 }
 
+#
 # cmd_while
 #    Loop while the expression is true
 #
@@ -2296,13 +2298,25 @@ sub cmd_dolist
    if($item !~ /^\s*$/) {
       my $cmds = $$cmd{dolist_cmd};
       $cmds =~ s/\#\#/$item/g;
-      mushrun(self   => $self,
-              prog   => $prog,
-              runas  => $self,
-              source => 0,
-              cmd    => $cmds,
-              child  => 1,
-             );
+      delete $$prog{attr} if defined $$prog{attr};
+
+      if($$prog{source} == 0) {            # player typed in command,
+         mushrun(self   => $self,          # new environment for each command
+                 runas  => $self,
+                 source => 0,
+                 cmd    => $cmds,
+                 child  => 1,
+                 invoker=> $self,
+                );
+      } else {
+         mushrun(self   => $self,
+                 prog   => $prog,
+                 runas  => $self,
+                 source => 0,
+                 cmd    => $cmds,
+                 child  => 1,
+                );
+      }
    }
 
    if($#{$$cmd{dolist_list}} == -1) {
@@ -3529,7 +3543,7 @@ sub cmd_pemit
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission denied.");
 
-   if($txt =~ /^\s*([^ =]+)\s*=/s) {
+   if($txt =~ /^\s*([^ =]+)\s*=\s*/s) {
       my $target = find($self,$prog,evaluate($self,$prog,$1));
       my $txt=$';
 
@@ -5461,12 +5475,22 @@ sub cf_convert
    }
 }
 
+#
+# cmd_say
+#    Say something outloud to anyone in the room the player is in.
+#
 sub cmd_say
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = @_;
+   my $say;
 
-   my $say = cf_convert(evaluate($self,$prog,$txt));
-#   my $say = evaluate($self,$prog,$txt);
+   verify_switches($self,$prog,$switch,"noeval") || return;
+
+   if(defined $$switch{noeval}) {
+      $say = $txt;
+   } else {
+      $say = cf_convert(evaluate($self,$prog,$txt));
+   }
 
    necho(self   => $self,
          prog   => $prog,
@@ -7095,19 +7119,28 @@ sub db_unsafe
    return $txt;
 }
 
+#
+# hash_serialize
+#    Convert a hash table into a text based version that can be
+#    written to a file. Limit some hash tables to certain sizes.
+#
 sub hash_serialize
 {
-   my $attr = shift;
-   my $out;
+   my ($attr,$name,$dbref) = @_;
+   my ($out, $i);
 
    return undef if ref($attr) ne "HASH";
 
-   for my $key (keys %$attr) {
+   for my $key (sort {$b cmp $a} keys %$attr) {
       $out .= ";" if($out ne undef);
       if($$attr{$key} =~ /;/) {
          $out .= "$key:M:" . db_safe($$attr{$key});
       } else {
          $out .= "$key:A:$$attr{$key}";
+      }
+
+      if(++$i >= 20 && $name eq "obj_lastsite") {
+         return $out;
       }
    }
    return $out;
@@ -7357,6 +7390,11 @@ sub db_sql_dump
    close(FILE);
 }
 
+#
+# db_object
+#    Export an object from memory to a somewhat readable ascii
+#    format.
+#
 sub db_object
 {
    my $i = shift;
@@ -7374,7 +7412,7 @@ sub db_object
             $out .= "   $name\::L:" . join(',',keys %{$$attr{value}}) . "\n";
          } elsif(reserved($name) && defined $$attr{value} &&
             $$attr{type} eq "hash") {
-            $out .= "   $name\::H:" . hash_serialize($$attr{value})."\n";
+            $out .= "   $name\::H:" . hash_serialize($$attr{value},$name,$i)."\n";
          } else {
             $out .= "   " . serialize($name,$attr) . "\n";
          }
@@ -7517,40 +7555,37 @@ sub single_line
    return $txt;
 }
 
-sub run_container_commands
+sub run_obj_commands
 {
-   my ($self,$prog,$runas,$container,$cmd) = @_;
+   my ($self,$prog,$runas,$obj,$cmd) = @_;
    my $match = 0;
 
-#
-   for my $obj (lcon($container)) {
-      if(!hasflag($obj,"NO_COMMAND")) {
-         for my $hash (latr_regexp($obj,1)) {
-            if($cmd =~ /$$hash{atr_regexp}/i) {
-               # run attribute only if last run attritube isn't the new
-               # attribute to run. I.e. infinite loop. Since we're not keeping
-               # a stack of exec() attributes, this won't catch more complex
-               # recursive calls. Future feature?
-               if(!defined $$prog{attr} || 
-                  !(@{$$prog{attr}}{atr_owner} eq $$obj{obj_id} &&
-                  @{$$prog{attr}}{atr_name} eq $$hash{atr_name})) {
-                  mushrun(self   => $self,
-                          prog   => $prog,
-                          runas  => $obj,
-                          invoker=> $self,
-                          cmd    => single_line($$hash{atr_value}),
-                          wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ],
-                          from   => "ATTR",
-                          attr   => $hash,
-                          source => 0,
-                         );
-                  $match=1;                       # signal mush command found
-               }
+   if(!hasflag($obj,"NO_COMMAND")) {
+      for my $hash (latr_regexp($obj,1)) {
+         if($cmd =~ /$$hash{atr_regexp}/i) {
+            # run attribute only if last run attritube isn't the new
+            # attribute to run. I.e. infinite loop. Since we're not keeping
+            # a stack of exec() attributes, this won't catch more complex
+            # recursive calls. Future feature?
+            if(!defined $$prog{attr} || 
+               !(@{$$prog{attr}}{atr_owner} eq $$obj{obj_id} &&
+               @{$$prog{attr}}{atr_name} eq $$hash{atr_name})) {
+               mushrun(self   => $self,
+                       prog   => $prog,
+                       runas  => $obj,
+                       invoker=> $self,
+                       cmd    => single_line($$hash{atr_value}),
+                       wild   => [ $1,$2,$3,$4,$5,$6,$7,$8,$9 ],
+                       from   => "ATTR",
+                       attr   => $hash,
+                       source => 0,
+                      );
+               return 1;
             }
          }
       }
    }
-   return $match;
+   return 0;
 }
 
 #
@@ -7562,23 +7597,45 @@ sub run_container_commands
 sub mush_command
 {
    my ($self,$prog,$runas,$cmd,$src) = @_;
-   my ($i,%list) =  0;
+   my $match;
 
    $cmd = evaluate($self,$prog,$cmd) if($src ne undef && $src == 0);
 
-   @list{$$self{obj_id}} = 1;                       # search carried objects
-   if(!defined $$prog{hint} ||                     # no hint, not web based?
-      defined $$prog{attr} ||     # from attr, okay to run even if web based
-     ($$prog{hint} ne "WEB" && $$prog{hint} ne "WEBSOCKET")) {
-      @list{loc($self)} = 1;                              # search your loc
-      @list{@info{"conf.master"}} = 1;                 # search master room
+   if(@info{master_overide} eq "no") {      # search master room first
+      for my $obj (lcon(@info{"conf.master"})) {
+         run_obj_commands($self,$prog,$runas,$obj,$cmd) && return 1;
+      }
    }
 
-   for my $obj (keys %list) {
-      $i += run_container_commands($self,$prog,$runas,$obj,$cmd);
+   # search player
+   run_obj_commands($self,$prog,$runas,$$self{obj_id},$cmd) && return 1;
+
+   # search player's contents
+   for my $obj (lcon($self)) {
+      run_obj_commands($self,$prog,$runas,$obj,$cmd) && return 1;
    }
- 
-   return ($i > 0) ? 1 : 0;
+
+   # don't search past the initial player if coming from web / websocket
+   # unless the command came from an attribute.
+   if(!defined $$prog{attr} &&
+      defined $$prog{hint} && 
+      ($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET")){
+      printf("# STOPING HERE\n");
+      return 0;
+   }
+
+   if(@info{master_overide} ne "no") {             # search master room
+      for my $obj (lcon(@info{"conf.master"})) {             # but not twice
+         run_obj_commands($self,$prog,$runas,$obj,$cmd) && return 1;
+      }
+   }
+
+   # search all objects in player's location's contents
+   for my $obj (lcon(loc($self))) {
+      $match = run_obj_commands($self,$prog,$runas,$obj,$cmd);
+   }
+
+   return ($match eq undef) ? 0 : 1;
 }
 
 
@@ -7995,7 +8052,6 @@ sub run_internal
    return if(!valid_dbref($$command{runas}));
 
    $$prog{cmd} = $command;
-#   con("CMD:\n%s\n",print_var($command));
    if(length($cmd) ne 1) {
       while($arg =~ /^\s*\/([^ =\/]+) */) {                  # find switches
          @switch{lc($1)} = 1;
@@ -8067,9 +8123,18 @@ sub spin_run
       $hash = \%command;
    }
 
-   if($$command{cmd} =~ /^\s*([^ \/]+)/s) {         # split cmd from args
-      ($cmd,$arg) = ($1,$'); 
+   if($$command{cmd} =~ /^\s*([^ \/]+)(\s*)/s) {         # split cmd from args
+      ($cmd,$arg) = ($1,$2.$'); 
        $cmd =~ s/^\\//g;
+
+       if($cmd =~ /%/) {                  # allow % substitutions in @command
+          $cmd = evaluate_substitutions($self,$prog,$cmd);
+          if($cmd =~ /^\s*([^ \/]+)\s*/s) {
+             ($cmd,$arg) = ($1,$' . $arg);
+          }
+       } else {                                    # could have extra spaces
+          $arg =~ s/^\s+//g;
+       }
        $$command{mushcmd} = $cmd;
    } else {
       return;                                                 # only spaces
@@ -8094,7 +8159,7 @@ sub spin_run
       return run_internal($hash,$$command{mushcmd},
                           $command,
                           $prog,
-                          substr($cmd,1) . $arg,
+                          substr($cmd,1) . " " . $arg,
                           \%switch,
                           1
                          );
@@ -8819,6 +8884,9 @@ use Compress::Zlib;
 sub initialize_functions
 {
    @fun{html_strip}= sub { return &fun_html_strip(@_);             };
+   @fun{round}     = sub { return &fun_round(@_);                  };
+   @fun{if}        = sub { return &fun_if(@_);                     };
+   @fun{ifelse}    = sub { return &fun_if(@_);                     };
    @fun{pid}       = sub { return &fun_pid(@_);                    };
    @fun{lpid}      = sub { return &fun_lpid(@_);                   };
    @fun{null}      = sub { return &fun_null(@_);                   };
@@ -8865,6 +8933,7 @@ sub initialize_functions
    @fun{add}       = sub { return &fun_add(@_);                    };
    @fun{sub}       = sub { return &fun_sub(@_);                    };
    @fun{div}       = sub { return &fun_div(@_);                    };
+   @fun{fdiv}      = sub { return &fun_fdiv(@_);                   };
    @fun{secs}      = sub { return &fun_secs(@_);                   };
    @fun{loadavg}   = sub { return &fun_loadavg(@_);                };
    @fun{after}     = sub { return &fun_after(@_);                  };
@@ -8966,7 +9035,40 @@ sub add_union_element
    }
 }
 
-   } elsif(@info{"conf.md5"} == -1) {
+#
+# fun_if
+#
+sub fun_if
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,2,3) ||
+      return "#-1 FUNCTION (HTML_STRIP) EXPECTS 2 OR 3 ARGUMENTS";
+
+   my $exp = evaluate($self,$prog,shift);
+
+   shift if(!$exp);
+   return trim(evaluate($self,$prog,shift));
+}
+#
+# fun_round
+#    Round a number with variable precision
+#
+sub fun_round
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,1,2) ||
+      return "#-1 FUNCTION (HTML_STRIP) EXPECTS 1 OR 2 ARGUMENTS";
+
+   my $num = evaluate($self,$prog,shift);
+   my $precision = evaluate($self,$prog,shift);
+
+   if($precision eq undef || $precision !~ /^\s*\d+\s*$/) { # emulate tinymush
+      $precision = 0;                                               # behavior
+   }
+   return sprintf("%.*f",$precision,$num);
+}
 
 sub fun_html_strip
 {
@@ -9134,7 +9236,7 @@ sub fun_ansi
       return "#-1 FUNCTION (ANSI) EXPECTS 2 ARGUMENTS";
 
    my $type = evaluate($self,$prog,shift);
-   my $txt = evaluate($self,$prog,shift);
+   my $txt = trim(evaluate($self,$prog,shift));
 
    return color($type,$txt);
 }
@@ -10409,10 +10511,6 @@ sub fun_loc
    my $target = find($self,$prog,evaluate($self,$prog,shift));
 
    if($target eq undef) {
-      if ($foo eq "%0") {
-         con("NOT FOUND: '%s'\n%s\n",$foo,code("long"));
-         con("CMD: %s\n",@{$$prog{cmd}}{cmd});
-      }
       return "#-1 NOT FOUND";
    } elsif(hasflag($target,"ROOM")) {           # rooms can't be anywhere
       return "#-1";
@@ -10920,6 +11018,29 @@ sub fun_div
       return "#-1 DIVIDE BY ZERO";
    } else {
       return sprintf("%d",$one / $two);
+   }
+}
+
+#
+# fun_fdiv
+#    Divide a number
+#
+sub fun_fdiv
+{
+   my ($self,$prog) = (shift,shift);
+
+   return "#-1 Add requires at least two arguments" if $#_ < 1;
+
+   my $one = evaluate($self,$prog,shift);
+   my $two = evaluate($self,$prog,shift);
+
+   if($two eq undef || $two == 0) {
+      return "#-1 DIVIDE BY ZERO";
+   } else {
+      my $result = sprintf("%.6f",$one / $two);
+      $result =~ s/0+$//g;
+      $result =~ s/\.$//g;
+      return $result;
    }
 }
 

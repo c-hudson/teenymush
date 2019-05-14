@@ -50,6 +50,8 @@ my (%command,                  #!# commands for after player has connected
     %c,                        #!#
     %default,                  #!# default values for config.
     %engine,                   #!# process holder for running
+    %ansi_rgb,                 #!# color number to rgb code
+    %ansi_name,                #!# color names to 256 color id
 
     #----[memory database structures]---------------------------------------#
     %help,                     #!# online-help
@@ -409,6 +411,8 @@ sub arg
 sub main
 {
    $SIG{HUP} = sub {
+      my %ansi_name;
+      my %ansi_rgb;
       my $count = reload_code();
       delete @engine{keys %engine};
       con("HUP signal caught, reloading: %s\n",$count ? $count : "none");
@@ -433,12 +437,14 @@ sub main
 
    load_new_db();                                     #!# optional new db load
    load_db_backup();                                    #!#
-   find_free_dbrefs                                     #!# search for garbage
+   find_free_dbrefs();                                  #!# search for garbage
 
    initialize_functions();                              #!#
+   initialize_ansi();                                   #!#
    initialize_commands();                               #!#
    initialize_flags();                                  #!#
    @info{source_prev} = get_source_checksums(1);        #!#
+   reload_code();
    server_start();                                      #!# start only once
 }
 
@@ -466,9 +472,306 @@ sub my_rollback
 #
 
 
+
 use Text::Wrap;
 # use Devel::Size qw(size total_size);
 use Digest::SHA qw(sha1 sha1_hex);
+
+sub initialize_ansi
+{
+   delete @ansi_rgb{keys %ansi_rgb};
+   delete @ansi_name{keys %ansi_name};
+
+   %ansi_rgb = (
+   0   => "000000", 1   => "800000", 2   => "008000", 3   => "808000",
+   4   => "000080", 5   => "800080", 6   => "008080", 7   => "c0c0c0",
+   8   => "808080", 9   => "ff0000", 10  => "00ff00", 11  => "ffff00",
+   12  => "0000ff", 13  => "ff00ff", 14  => "00ffff", 15  => "ffffff",
+   16  => "000000", 17  => "00005f", 18  => "000087", 19  => "0000af",
+   20  => "0000d7", 21  => "0000ff", 22  => "005f00", 23  => "005f5f",
+   24  => "005f87", 25  => "005faf", 26  => "005fd7", 27  => "005fff",
+   28  => "008700", 29  => "00875f", 30  => "008787", 31  => "0087af",
+   32  => "0087d7", 33  => "0087ff", 34  => "00af00", 35  => "00af5f",
+   36  => "00af87", 37  => "00afaf", 38  => "00afd7", 39  => "00afff",
+   40  => "00d700", 41  => "00d75f", 42  => "00d787", 43  => "00d7af",
+   44  => "00d7d7", 45  => "00d7ff", 46  => "00ff00", 47  => "00ff5f",
+   48  => "00ff87", 49  => "00ffaf", 50  => "00ffd7", 51  => "00ffff",
+   52  => "5f0000", 53  => "5f005f", 54  => "5f0087", 55  => "5f00af",
+   56  => "5f00d7", 57  => "5f00ff", 58  => "5f5f00", 59  => "5f5f5f",
+   60  => "5f5f87", 61  => "5f5faf", 62  => "5f5fd7", 63  => "5f5fff",
+   64  => "5f8700", 65  => "5f875f", 66  => "5f8787", 67  => "5f87af",
+   68  => "5f87d7", 69  => "5f87ff", 70  => "5faf00", 71  => "5faf5f",
+   72  => "5faf87", 73  => "5fafaf", 74  => "5fafd7", 75  => "5fafff",
+   76  => "5fd700", 77  => "5fd75f", 78  => "5fd787", 79  => "5fd7af",
+   80  => "5fd7d7", 81  => "5fd7ff", 82  => "5fff00", 83  => "5fff5f",
+   84  => "5fff87", 85  => "5fffaf", 86  => "5fffd7", 87  => "5fffff",
+   88  => "870000", 89  => "87005f", 90  => "870087", 91  => "8700af",
+   92  => "8700d7", 93  => "8700ff", 94  => "875f00", 95  => "875f5f",
+   96  => "875f87", 97  => "875faf", 98  => "875fd7", 99  => "875fff",
+   100 => "878700", 101 => "87875f", 102 => "878787", 103 => "8787af",
+   104 => "8787d7", 105 => "8787ff", 106 => "87af00", 107 => "87af5f",
+   108 => "87af87", 109 => "87afaf", 110 => "87afd7", 111 => "87afff",
+   112 => "87d700", 113 => "87d75f", 114 => "87d787", 115 => "87d7af",
+   116 => "87d7d7", 117 => "87d7ff", 118 => "87ff00", 119 => "87ff5f",
+   120 => "87ff87", 121 => "87ffaf", 122 => "87ffd7", 123 => "87ffff",
+   124 => "af0000", 125 => "af005f", 126 => "af0087", 127 => "af00af",
+   128 => "af00d7", 129 => "af00ff", 130 => "af5f00", 131 => "af5f5f",
+   132 => "af5f87", 133 => "af5faf", 134 => "af5fd7", 135 => "af5fff",
+   136 => "af8700", 137 => "af875f", 138 => "af8787", 139 => "af87af",
+   140 => "af87d7", 141 => "af87ff", 142 => "afaf00", 143 => "afaf5f",
+   144 => "afaf87", 145 => "afafaf", 146 => "afafd7", 147 => "afafff",
+   148 => "afd700", 149 => "afd75f", 150 => "afd787", 151 => "afd7af",
+   152 => "afd7d7", 153 => "afd7ff", 154 => "afff00", 155 => "afff5f",
+   156 => "afff87", 157 => "afffaf", 158 => "afffd7", 159 => "afffff",
+   160 => "d70000", 161 => "d7005f", 162 => "d70087", 163 => "d700af",
+   164 => "d700d7", 165 => "d700ff", 166 => "d75f00", 167 => "d75f5f",
+   168 => "d75f87", 169 => "d75faf", 170 => "d75fd7", 171 => "d75fff",
+   172 => "d78700", 173 => "d7875f", 174 => "d78787", 175 => "d787af",
+   176 => "d787d7", 177 => "d787ff", 178 => "d7af00", 179 => "d7af5f",
+   180 => "d7af87", 181 => "d7afaf", 182 => "d7afd7", 183 => "d7afff",
+   184 => "d7d700", 185 => "d7d75f", 186 => "d7d787", 187 => "d7d7af",
+   188 => "d7d7d7", 189 => "d7d7ff", 190 => "d7ff00", 191 => "d7ff5f",
+   192 => "d7ff87", 193 => "d7ffaf", 194 => "d7ffd7", 195 => "d7ffff",
+   196 => "ff0000", 197 => "ff005f", 198 => "ff0087", 199 => "ff00af",
+   200 => "ff00d7", 201 => "ff00ff", 202 => "ff5f00", 203 => "ff5f5f",
+   204 => "ff5f87", 205 => "ff5faf", 206 => "ff5fd7", 207 => "ff5fff",
+   208 => "ff8700", 209 => "ff875f", 210 => "ff8787", 211 => "ff87af",
+   212 => "ff87d7", 213 => "ff87ff", 214 => "ffaf00", 215 => "ffaf5f",
+   216 => "ffaf87", 217 => "ffafaf", 218 => "ffafd7", 219 => "ffafff",
+   220 => "ffd700", 221 => "ffd75f", 222 => "ffd787", 223 => "ffd7af",
+   224 => "ffd7d7", 225 => "ffd7ff", 226 => "ffff00", 227 => "ffff5f",
+   228 => "ffff87", 229 => "ffffaf", 230 => "ffffd7", 231 => "ffffff",
+   232 => "080808", 233 => "121212", 234 => "1c1c1c", 235 => "262626",
+   236 => "303030", 237 => "3a3a3a", 238 => "444444", 239 => "4e4e4e",
+   240 => "585858", 241 => "626262", 242 => "6c6c6c", 243 => "767676",
+   244 => "808080", 245 => "8a8a8a", 246 => "949494", 247 => "9e9e9e",
+   248 => "a8a8a8", 249 => "b2b2b2", 250 => "bcbcbc", 251 => "c6c6c6",
+   252 => "d0d0d0", 253 => "dadada", 254 => "e4e4e4", 255 => "eeeeee",
+   ); 
+
+   %ansi_name = (
+   aliceblue => 15, antiquewhite => 224, antiquewhite1 => 230,
+   antiquewhite2 => 224, antiquewhite3 => 181, antiquewhite4 => 8,
+   aquamarine => 122, aquamarine1 =>  122, aquamarine2 => 122,
+   aquamarine3 =>  79, aquamarine4 => 66, azure => 15, azure1 => 15,
+   azure2 => 255, azure3 => 251, azure4 => 102, beige => 230, bisque => 224,
+   bisque1 => 224, bisque2 => 223, bisque3 => 181, bisque4 => 101,
+   black => 0, blanchedalmond => 224, blue => 12, blue1 => 12, blue2 => 12,
+   blue3 => 20, blue4 => 18, blueviolet => 92, brown => 124, blueviolet => 92,
+   brown => 124, brown1 => 203, brown2 => 203, brown3 => 167, brown4 => 88,
+   burlywood => 180, burlywood1 => 222, burlywood2 => 222, burlywood3 => 180,
+   burlywood4 => 95, cadetblue => 73, cadetblue1 => 123, cadetblue2 => 117,
+   cadetblue3 => 116, cadetblue4 => 66, chartreuse => 118, chartreuse1 => 118,
+   chartreuse2 => 118, chartreuse3 => 76, chartreuse4 => 64, chocolate => 166,
+   chocolate1 => 208, chocolate2 => 208, chocolate3 => 166, chocolate4 => 94,
+   coral => 209, coral1 => 203, coral2 => 203, coral3 => 167, coral4 => 94,
+   cornflowerblue => 69, cornsilk => 230, cornsilk1 => 230, cornsilk2 => 254,
+   cornsilk3 => 187, cornsilk4 => 102, cyan => 14, cyan1 => 14, cyan2 => 14,
+   cyan3 => 44, cyan4 => 30, darkblue => 18, darkcyan => 30,
+   darkgoldenrod => 136, darkgoldenrod1 => 214, darkgoldenrod2 => 214,
+   darkgoldenrod3 => 172, darkgoldenrod4 => 94, darkgray => 248,
+   darkgreen => 22, darkgrey => 248, darkkhaki => 143, darkmagenta => 90,
+   darkolivegreen => 239, darkolivegreen1 => 191, darkolivegreen2 => 155,
+   darkolivegreen3 => 149, darkolivegreen4 => 65, darkorange => 208,
+   darkorange1 => 208, darkorange2 => 208, darkorange3 => 166,
+   darkorange4 => 94, darkorchid => 98, darkorchid1 => 135, darkorchid2 => 135,
+   darkorchid3 => 98, darkorchid4 => 54, darkred => 88, darksalmon => 174,
+   darkseagreen => 108, darkseagreen1 => 157, darkseagreen2 => 157,
+   darkseagreen3 => 114, darkseagreen4 => 65, darkslateblue => 60,
+   darkslategray => 238, darkslategray1 => 123, darkslategray2 => 123,
+   darkslategray3 => 116, darkslategray4 => 66, darkslategrey => 238,
+   darkturquoise => 44, darkviolet => 92, debianred => 161, deeppink => 198,
+   deeppink1 => 198, deeppink2 => 198, deeppink3 => 162, deeppink4 => 89,
+   deepskyblue => 39, deepskyblue1 => 39, deepskyblue2 => 39,
+   deepskyblue3 => 32, deepskyblue4 => 24, dimgrey => 242, dodgerblue => 33,
+   dodgerblue1 => 33, dodgerblue2 => 33, dodgerblue3 => 32, dodgerblue4 => 24,
+   firebrick => 124, firebrick1 => 203, firebrick2 => 9, firebrick3 => 160,
+   firebrick4 => 88, floralwhite => 15, forestgreen => 28, gainsboro => 253,
+   ghostwhite => 15, gold => 220, gold1 => 220, gold2 => 220, gold3 => 178,
+   gold4 => 3, goldenrod => 178, goldenrod1 => 214, goldenrod2 => 214,
+   goldenrod3 => 172, goldenrod4 => 94, gray => 7, gray0 => 0, gray1 => 0,
+   gray2 => 232, gray3 => 232, gray4 => 232, gray5 => 232, gray6 => 233,
+   gray7 => 233, gray8 => 233, gray9 => 233, gray10 => 234, gray11 => 234,
+   gray12 => 234, gray13 => 234, gray14 => 235, gray15 => 235, gray16 => 235,
+   gray17 => 235, gray18 => 236, gray19 => 236, gray20 => 236, gray21 => 237,
+   gray22 => 237, gray23 => 237, gray24 => 237, gray25 => 238, gray26 => 238,
+   gray27 => 238, gray28 => 238, gray29 => 239, gray30 => 239, gray31 => 239,
+   gray32 => 239, gray33 => 240, gray34 => 240, gray35 => 240, gray36 => 59,
+   gray37 => 59, gray38 => 241, gray39 => 241, gray40 => 241, gray41 => 242,
+   gray42 => 242, gray43 => 242, gray44 => 242, gray45 => 243, gray46 => 243,
+   gray47 => 243, gray48 => 243, gray49 => 8, gray50 => 8, gray51 => 8,
+   gray52 => 102, gray53 => 102, gray54 => 245, gray55 => 245, gray56 => 245,
+   gray57 => 246, gray58 => 246, gray59 => 246, gray60 => 246, gray61 => 247,
+   gray62 => 247, gray63 => 247, gray64 => 247, gray65 => 248, gray66 => 248,
+   gray67 => 248, gray68 => 145, gray69 => 145, gray70 => 249, gray71 => 249,
+   gray72 => 250, gray73 => 250, gray74 => 250, gray75 => 7, gray76 => 7,
+   gray77 => 251, gray78 => 251, gray79 => 251, gray80 => 252, gray81 => 252,
+   gray82 => 252, gray83 => 188, gray84 => 188, gray85 => 253, gray86 => 253,
+   gray87 => 253, gray88 => 254, gray89 => 254, gray90 => 254, gray91 => 254,
+   gray92 => 255, gray93 => 255, gray94 => 255, gray95 => 255, gray96 => 255,
+   gray97 => 15, gray98 => 15, gray99 => 15, gray100 => 15, green => 10,
+   green1 => 10, green2 => 10, green3 => 40, green4 => 28, greenyellow => 154,
+   grey => 7, grey0 => 0, grey1 => 0, grey2 => 232, grey3 => 232, grey4 => 232,
+   grey5 => 232, grey6 => 233, grey7 => 233, grey8 => 233, grey9 => 233,
+   grey10 => 234, grey11 => 234, grey12 => 234, grey13 => 234, grey14 => 235,
+   grey15 => 235, grey16 => 235, grey17 => 235, grey18 => 236, grey19 => 236,
+   grey20 => 236, grey21 => 237, grey22 => 237, grey23 => 237, grey24 => 237,
+   grey25 => 238, grey26 => 238, grey27 => 238, grey28 => 238, grey29 => 239,
+   grey30 => 239, grey31 => 239, grey32 => 239, grey33 => 240, grey34 => 240,
+   grey35 => 240, grey36 => 59, grey37 => 59, grey38 => 241, grey39 => 241,
+   grey40 => 241, grey41 => 242, grey42 => 242, grey43 => 242, grey44 => 242,
+   grey45 => 243, grey46 => 243, grey47 => 243, grey48 => 243, grey49 => 8,
+   grey50 => 8, grey51 => 8, grey52 => 102, grey53 => 102, grey54 => 245,
+   grey55 => 245, grey56 => 245, grey57 => 246, grey58 => 246, grey59 => 246,
+   grey60 => 246, grey61 => 247, grey62 => 247, grey63 => 247, grey64 => 247,
+   grey65 => 248, grey66 => 248, grey67 => 248, grey68 => 145, grey69 => 145,
+   grey70 => 249, grey71 => 249, grey72 => 250, grey73 => 250, grey74 => 250,
+   grey75 => 7, grey76 => 7, grey77 => 251, grey78 => 251, grey79 => 251,
+   grey80 => 252, grey81 => 252, grey82 => 252, grey83 => 188, grey84 => 188,
+   grey85 => 253, grey86 => 253, grey87 => 253, grey88 => 254, grey89 => 254,
+   grey90 => 254, grey91 => 254, grey92 => 255, grey93 => 255, grey94 => 255,
+   grey95 => 255, grey96 => 255, grey97 => 15, grey98 => 15, grey99 => 15,
+   grey100 =>  231, honeydew => 255, honeydew1 => 255, honeydew2 =>  194,
+   honeydew2 => 254, honeydew3 => 251, honeydew4 => 102, hotpink => 205,
+   hotpink1 => 205, hotpink2 => 205, hotpink3 => 168, hotpink4 => 95,
+   indianred => 167, indianred1 => 203, indianred2 => 203, indianred3 => 167,
+   indianred4 => 95, indigo => 54, ivory => 15, ivory1 => 15, ivory2 => 255,
+   ivory3 => 251, ivory4 => 102, khaki => 222, khaki1 => 228, khaki2 => 222,
+   khaki3 => 185, khaki4 => 101, lavender => 255, lavenderblush => 15,
+   lavenderblush1 => 15, lavenderblush2 => 254, lavenderblush3 => 251,
+   lavenderblush4 => 102, lawngreen => 118, lemonchiffon => 230,
+   lemonchiffon1 => 230, lemonchiffon2 => 223, lemonchiffon3 => 187,
+   lemonchiffon4 => 101, lightblue => 152, lightblue1 => 159,
+   lightblue2 => 153, lightblue3 => 110, lightblue4 => 66, lightcoral => 210,
+   lightcyan => 195, lightcyan1 => 195, lightcyan2 => 254, lightcyan3 => 152,
+   lightcyan4 => 102, lightgoldenrod => 222, lightgoldenrod1 => 228,
+   lightgoldenrod2 => 222, lightgoldenrod3 => 179, lightgoldenrod4 => 101,
+   lightgoldenrodyellow => 205, lightgray => 252, lightgreen => 120,
+   lightgrey => 252, lightpink => 217, lightpink1 => 217, lightpink2 => 217,
+   lightpink3 => 174, lightpink4 => 95, lightsalmon => 216,
+   lightsalmon1 => 216, lightsalmon2 => 209, lightsalmon3 => 173,
+   lightsalmon4 => 95, lightseagreen => 37, lightskyblue => 117,
+   lightskyblue1 => 153, lightskyblue2 => 153, lightskyblue3 => 110,
+   lightskyblue4 => 66, lightslateblue => 99, lightslategrey => 102,
+   lightsteelblue => 152, lightsteelblue1 => 189, lightsteelblue2 => 153,
+   lightsteelblue3 => 146, lightsteelblue4 => 66, lightyellow => 230,
+   lightyellow1 => 230, lightyellow2 => 254, lightyellow3 => 187,
+   lightyellow4 => 102, limegreen => 77, linen => 255, magenta => 13,
+   magenta1 => 13, magenta2 => 13, magenta3 => 164, magenta4 => 90,
+   maroon => 131, maroon1 => 205, maroon2 => 205, maroon3 => 162,
+   maroon4 => 89, mediumaquamarine => 79, mediumblue => 20,
+   mediumorchid => 134, mediumorchid1 => 171, mediumorchid2 => 171,
+   mediumorchid3 => 134, mediumorchid4 => 96, mediumpurple => 98,
+   mediumpurple1 => 141, mediumpurple2 => 141, mediumpurple3 => 98,
+   mediumpurple4 => 60, mediumseagreen => 71, mediumslateblue => 99,
+   mediumspringgreen => 48, mediumturquoise => 80, mediumvioletred => 162,
+   midnightblue => 4, mintcream => 15, mistyrose => 224, mistyrose1 => 224,
+   mistyrose2 => 224, mistyrose3 => 181, mistyrose4 => 8, moccasin => 223,
+   navajowhite => 223, navajowhite1 => 223, navajowhite2 => 223,
+   navajowhite3 => 180, navajowhite4 => 101, navy => 4, navyblue => 4,
+   oldlace => 230, olivedrab => 64, olivedrab1 => 155, olivedrab2 => 155,
+   olivedrab3 => 113, olivedrab4 => 64, orange => 214, orange1 => 214,
+   orange2 => 208, orange3 => 172, orange4 => 94, orangered => 202,
+   orangered1 => 202, orangered2 => 202, orangered3 => 166, orangered4 => 88,
+   orchid => 170, orchid1 => 213, orchid2 => 212, orchid3 => 170,
+   orchid4 => 96, palegoldenrod => 223, palegreen => 120, palegreen1 => 120,
+   palegreen2 => 120, palegreen3 => 114, palegreen4 => 65,
+   paleturquoise => 159, paleturquoise1 => 159, paleturquoise2 => 159,
+   paleturquoise3 => 116, paleturquoise4 => 66, palevioletred => 168,
+   palevioletred1 => 211, palevioletred2 => 211, palevioletred3 => 168,
+   palevioletred4 => 95, papayawhip => 230, peachpuff => 223,
+   peachpuff1 => 223, peachpuff2 => 223, peachpuff3 => 180, peachpuff4 => 101,
+   peru => 173, pink => 218, pink1 => 218, pink2 => 217, pink3 => 175,
+   pink4 => 95, plum => 182, plum1 => 219, plum2 => 183, plum3 => 176,
+   plum4 => 96, powderblue => 152, purple => 129, purple1 => 99,
+   purple2 => 93, purple3 => 92, purple4 => 54, red => 9, red1 => 9, red2=>9,
+   red3 => 160, red4 => 88, rosybrown => 138, rosybrown1 => 217,
+   rosybrown2 => 217, rosybrown3 => 174, rosybrown4 => 95, royalblue => 62,
+   royalblue1 => 69, royalblue2 => 63, royalblue3 => 62, royalblue4 => 24,
+   saddlebrown => 94, salmon => 209, salmon1 => 209, salmon2 => 209,
+   salmon3 => 167, salmon4 => 95, sandybrown => 215, seagreen => 29,
+   seagreen1 => 85, seagreen2 => 84, seagreen3 => 78, seagreen4 => 29,
+   seashell => 255, seashell1 => 255, seashell2 => 254, seashell3 => 251,
+   seashell4 => 102, sienna => 130, sienna1 => 209, sienna1 => 209,
+   sienna2 => 209, sienna3 => 167, sienna4 => 94, skyblue => 116,
+   skyblue1 => 117, skyblue2 => 111, skyblue3 => 74, skyblue4 => 60,
+   slateblue => 62, slateblue1 => 99, slateblue2 => 99, slateblue3 => 62,
+   slateblue4 => 60, slategray => 66, slategray1 => 189, slategray2 => 153,
+   slategray3 => 146, slategray4 => 66, slategrey => 66, snow => 15,
+   snow1 => 15, snow2 => 255, snow3 => 251, snow4 => 245, springgreen => 48,
+   springgreen1 => 48, springgreen2 => 48, springgreen3 => 41,
+   springgreen4 => 29, steelblue => 67, steelblue1 => 75, steelblue2 => 75,
+   steelblue3 => 68, steelblue4 => 60, tan => 180, tan1 => 215, tan2 => 209,
+   tan3 => 173, tan4 => 94, thistle => 182, thistle1 => 225, thistle2 => 254,
+   thistle3 => 182, thistle4 => 102, tomato => 203, tomato1 => 203,
+   tomato2 => 203, tomato3 => 167, tomato4 => 94, turquoise => 80,
+   turquoise1 => 14, turquoise2 => 45, turquoise3 => 44, turquoise4 => 30,
+   violet => 213, violetred => 162, violetred1 => 204, violetred2 => 204,
+   violetred3 => 168, violetred4 => 89, wheat => 223, wheat1 => 223,
+   wheat2 => 223, wheat3 => 180, wheat4 => 101, white => 15, whitesmoke => 255,
+   xterm0 => 0, xterm1 => 1, xterm2 => 2, xterm3 => 3, xterm4 => 4,
+   xterm5 => 5, xterm6 => 6, xterm7 => 7, xterm8 => 8, xterm9 => 9,
+   xterm10 => 10, xterm11 => 11, xterm12 => 12, xterm13 => 13, xterm14 => 14,
+   xterm15 => 15, xterm16 => 16, xterm17 => 17, xterm18 => 18, xterm19 => 19,
+   xterm20 => 20, xterm21 => 21, xterm22 => 22, xterm23 => 23, xterm24 => 24,
+   xterm25 => 25, xterm26 => 26, xterm27 => 27, xterm28 => 28, xterm29 => 29,
+   xterm30 => 30, xterm31 => 31, xterm32 => 32, xterm33 => 33, xterm34 => 34,
+   xterm35 => 35, xterm36 => 36, xterm37 => 37, xterm38 => 38, xterm39 => 39,
+   xterm40 => 40, xterm41 => 41, xterm42 => 42, xterm43 => 43, xterm44 => 44,
+   xterm45 => 45, xterm46 => 46, xterm47 => 47, xterm48 => 48, xterm49 => 49,
+   xterm50 => 50, xterm51 => 51, xterm52 => 52, xterm53 => 53, xterm54 => 54,
+   xterm55 => 55, xterm56 => 56, xterm57 => 57, xterm58 => 58, xterm59 => 59,
+   xterm60 => 60, xterm61 => 61, xterm62 => 62, xterm63 => 63, xterm64 => 64,
+   xterm65 => 65, xterm66 => 66, xterm67 => 67, xterm68 => 68, xterm69 => 69,
+   xterm70 => 70, xterm71 => 71, xterm72 => 72, xterm73 => 73, xterm74 => 74,
+   xterm75 => 75, xterm76 => 76, xterm77 => 77, xterm78 => 78, xterm79 => 79,
+   xterm80 => 80, xterm81 => 81, xterm82 => 82, xterm83 => 83, xterm84 => 84,
+   xterm85 => 85, xterm86 => 86, xterm87 => 87, xterm88 => 88, xterm89 => 89,
+   xterm90 => 90, xterm91 => 91, xterm92 => 92, xterm93 => 93, xterm94 => 94,
+   xterm95 => 95, xterm96 => 96, xterm97 => 97, xterm98 => 98, xterm99 => 99,
+   xterm100 => 100, xterm101 => 101, xterm102 => 102, xterm103 => 103,
+   xterm104 => 104, xterm105 => 105, xterm106 => 106, xterm107 => 107,
+   xterm108 => 108, xterm109 => 109, xterm110 => 110, xterm111 => 111,
+   xterm112 => 112, xterm113 => 113, xterm114 => 114, xterm115 => 115,
+   xterm116 => 116, xterm117 => 117, xterm118 => 118, xterm119 => 119,
+   xterm120 => 120, xterm121 => 121, xterm122 => 122, xterm123 => 123,
+   xterm124 => 124, xterm125 => 125, xterm126 => 126, xterm127 => 127,
+   xterm128 => 128, xterm129 => 129, xterm130 => 130, xterm131 => 131,
+   xterm132 => 132, xterm133 => 133, xterm134 => 134, xterm135 => 135,
+   xterm136 => 136, xterm137 => 137, xterm138 => 138, xterm139 => 139,
+   xterm140 => 140, xterm141 => 141, xterm142 => 142, xterm143 => 143,
+   xterm144 => 144, xterm145 => 145, xterm146 => 146, xterm147 => 147,
+   xterm148 => 148, xterm149 => 149, xterm150 => 150, xterm151 => 151,
+   xterm152 => 152, xterm153 => 153, xterm154 => 154, xterm155 => 155,
+   xterm156 => 156, xterm157 => 157, xterm158 => 158, xterm159 => 159,
+   xterm160 => 160, xterm161 => 161, xterm162 => 162, xterm163 => 163,
+   xterm164 => 164, xterm165 => 165, xterm166 => 166, xterm167 => 167,
+   xterm168 => 168, xterm169 => 169, xterm170 => 170, xterm171 => 171,
+   xterm172 => 172, xterm173 => 173, xterm174 => 174, xterm175 => 175,
+   xterm176 => 176, xterm177 => 177, xterm178 => 178, xterm179 => 179,
+   xterm180 => 180, xterm181 => 181, xterm182 => 182, xterm183 => 183,
+   xterm184 => 184, xterm185 => 185, xterm186 => 186, xterm187 => 187,
+   xterm188 => 188, xterm189 => 189, xterm190 => 190, xterm191 => 191,
+   xterm192 => 192, xterm193 => 193, xterm194 => 194, xterm195 => 195,
+   xterm196 => 196, xterm197 => 197, xterm198 => 198, xterm199 => 199,
+   xterm200 => 200, xterm201 => 201, xterm202 => 202, xterm203 => 203,
+   xterm204 => 204, xterm205 => 205, xterm206 => 206, xterm207 => 207,
+   xterm208 => 208, xterm209 => 209, xterm210 => 210, xterm211 => 211,
+   xterm212 => 212, xterm213 => 213, xterm214 => 214, xterm215 => 215,
+   xterm216 => 216, xterm217 => 217, xterm218 => 218, xterm219 => 219,
+   xterm220 => 220, xterm221 => 221, xterm222 => 222, xterm223 => 223,
+   xterm224 => 224, xterm225 => 225, xterm226 => 226, xterm227 => 227,
+   xterm228 => 228, xterm229 => 229, xterm230 => 230, xterm231 => 231,
+   xterm232 => 232, xterm233 => 233, xterm234 => 234, xterm235 => 235,
+   xterm236 => 236, xterm237 => 237, xterm238 => 238, xterm239 => 239,
+   xterm240 => 240, xterm241 => 241, xterm242 => 242, xterm243 => 243,
+   xterm244 => 244, xterm245 => 245, xterm246 => 246, xterm247 => 247,
+   xterm248 => 248, xterm249 => 249, xterm250 => 250, xterm251 => 251,
+   xterm252 => 252, xterm253 => 253, xterm254 => 254, xterm255 => 255,
+   yellow => 11, yellow1 => 11, yellow2 => 11, yellow3 => 184, yellow4 => 100,
+   yellowgreen => 113,
+   );
+}
 
 #
 # initialize_commands
@@ -536,6 +839,7 @@ sub initialize_commands
    @command{enter}      = { fun => sub { cmd_enter(@_); }                   };
    @command{leave}      = { fun => sub { cmd_leave(@_); }                   };
    @command{"\@name"}   = { fun => sub { cmd_name(@_); }                    };
+   @command{"\@moniker"}= { fun => sub { cmd_name(@_); }                    };
    @command{"\@describe"}={ fun => sub { cmd_generic_set(@_); }             };
    @command{"\@pemit"}  = { fun => sub { cmd_pemit(@_); }                   };
    @command{"\@emit"}   = { fun => sub { cmd_emit(@_); }                    };
@@ -2278,7 +2582,6 @@ sub cmd_dolist
       $delim = " ";
    }
 
-
    if(!defined $$cmd{dolist_list}) {                      # initialize dolist
        my ($first,$second) = balanced_split($txt,"=",4);
        $$cmd{dolist_cmd}   = $second;
@@ -2300,9 +2603,9 @@ sub cmd_dolist
       $cmds =~ s/\#\#/$item/g;
       delete $$prog{attr} if defined $$prog{attr};
 
-      if($$prog{source} == 0) {            # player typed in command,
-         mushrun(self   => $self,          # new environment for each command
-                 runas  => $self,
+      if(defined $$prog{cmd} && @{$$prog{cmd}}{source} == 1) {
+         mushrun(self   => $self,                    # player typed in command,
+                 runas  => $self,            # new environment for each command
                  source => 0,
                  cmd    => $cmds,
                  child  => 1,
@@ -3543,7 +3846,7 @@ sub cmd_pemit
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission denied.");
 
-   if($txt =~ /^\s*([^ =]+)\s*=\s*/s) {
+   if($txt =~ /^\s*([^ =]+)\s*=/s) {
       my $target = find($self,$prog,evaluate($self,$prog,$1));
       my $txt=$';
 
@@ -3551,7 +3854,7 @@ sub cmd_pemit
          return err($self,$prog,"I don't see that here - '$target'");
       } 
 
-      my $txt = evaluate($self,$prog,$txt);
+      my $txt = evaluate($self,$prog,trim($txt));
 
       if($txt !~ /^\s*$/) {
          necho(self   => $self,
@@ -3707,10 +4010,11 @@ sub cmd_name
 {
    my ($self,$prog,$txt) = @_;
 
+   printf("NAME: '%s'\n",$txt);
    if(hasflag($self,"GUEST")) {
       return err($self,$prog,"Permission Denied.");
    } elsif($txt =~ /^\s*([^=]+?)\s*=\s*(.+?)\s*$/) {
-      my $target = find($self,$prog,$1) ||
+      my $target = find($self,$prog,evaluate($self,$prog,$1)) ||
          return err($self,$prog,"I don't see that here.");
       my $cname = trim(evaluate($self,$prog,$2));
       my $name = ansi_remove($cname);
@@ -5444,7 +5748,7 @@ sub myisnum
 {
    my $num = shift;
 
-   if($num =~ /^\s*-?(\d+)\s*$/ && substr($1,1,1) ne "0") {
+   if($num =~ /^\s*-?(\d+)\s*$/ && substr($1,0,1) ne "0") {
       return 1;
    } elsif($num =~ /^\s*-?(\d+)\.\d+\s*$/ && substr($1,1,1) ne "0") {
       return 1;
@@ -5456,23 +5760,25 @@ sub myisnum
 sub cf_convert
 {
    my $txt = shift;
+   my $out;
 
-   if($txt =~ /(\-{0,1})([\d]+)(\.?)(\d*)\s*(F|C)/ && 
-      myisnum("$1$2$3$4")) {
+   while($txt =~ /(\-{0,1})(\d+)(\.?)(\d*)\s*(F|C)/ && myisnum("$1$2$3$4")) {
+       $out .= $`;
+       $txt = $';
       if($5 eq "F") {
-         my $value = sprintf("%.1f",("$1$2$3$4" - 32)*.5556);
-         my ($before,$after) = ("$`$1$2$3$4$5 (","C)$'");
+         my $value = sprintf("%s%s%s%s%s (%.1fC)",
+            $1,$2,$3,$4,$5,("$1$2$3$4" - 32) * .5556);
          $value =~ s/\.0//g;
-         return "$before$value$after";
-      } elsif($5 eq "C") {
-         my $value = sprintf("%.1f","$1$2$3$4" * 1.8 + 32);
-         my ($before,$after) = ("$`$1$2$3$4$5 (","F)$'");
-         $value =~ s/\.0//g;
-         return "$before$value$after";
+         $out .= $value;
+      } else {
+         my $value = sprintf("%s%s%s%s%s (%.1fF)",
+            $1,$2,$3,$4,$5,"$1$2$3$4" * 1.8 + 32);
+         $value =~ s/\.0$//g;
+         $out .= $value;
       }
-   } else {
-      return $txt;
    }
+
+   return $out . $txt;
 }
 
 #
@@ -5548,13 +5854,19 @@ sub reload_code
    my $count = 0;
    my $prev = @info{source_prev};
    my $curr = get_source_checksums(1);
-   eval("my %engine;");
+
+   if(!defined @info{reload_init}) {
+      @info{reload_init} = 1;
+   } else {
+      @info{reload_init} = 0;
+   }
+
 
    for my $key (sort keys %$curr) {
 #      if(@{$$curr{$key}}{src} =~ /^#line (\d+)/) {
 #         printf("$key -> '%s'\n",$1);
 #      }
-      if(@{$$prev{$key}}{chk} ne @{$$curr{$key}}{chk}) {
+      if(@{$$prev{$key}}{chk} ne @{$$curr{$key}}{chk} || @info{reload_init}) {
          $count++;
          con("Reloading: %-40s",$key);
 #         con("    before: '%s'\n",@{$$prev{$key}}{chk});
@@ -5589,6 +5901,7 @@ sub reload_code
    load_modules();
    initialize_functions();
    initialize_commands();
+   initialize_ansi();
    initialize_flags();
    find_free_dbrefs();
 
@@ -6611,6 +6924,65 @@ sub ansi_length
    }
 }
 
+#
+# ansi_post_match
+#    Match up $1 .. $9 with the original string.
+#
+sub ansi_post_match
+{
+   my ($data,$pat,@arg) = @_;
+   my ($pos,$wild,@wildcard) = (0,0);
+
+   while($pat =~ /(\*|\?)/ && $pos < 10) {
+      $pos += length($`) if($` ne undef);
+      push(@wildcard,ansi_substr($data,$pos,length(@arg[$wild])));
+      $pos += length(@arg[$wild]);
+      $pat = $';
+      $wild++;
+   }
+
+   if($#wildcard > 8) {
+      delete @wildcard[ 9 .. $#wildcard];
+   } elsif($#wildcard < 8) {
+      for my $i (($#wildcard+1) .. 8) {
+         push(@wildcard,undef);
+      }
+   }
+   return @wildcard
+}
+
+
+#
+# ansi_match
+#  
+#   Match a string with a glob pattern and return the result containing
+#   escape sequences. Since string matching can't be accurately done with
+#   escape codes in them the following is done:
+#
+#      1. Perform a match after removing all escape sequences.
+#      2. Pull the glob pattern apart to seperate wild cards
+#         from non-wildcards.
+#      3. Use the results from the match without escape sequences
+#          to determine how to tear apart the original string
+#         containing the escape sequences. This will allow the code
+#         to return string segments with any escape sequences without
+#         having to write a full pattern match algorithm.
+#
+sub ansi_match
+{  
+   my ($txt,$pattern) = @_;
+   
+   my $pat = glob2re($pattern);                    # convert pat to regexp
+   my $str = ansi_init($txt);
+   my $non = ansi_remove($txt);
+   
+   if($non =~ /$pat/) {                                          # matched
+      return ansi_post_match($str,$pattern,$1,$2,$3,$4,$5,$6,$7,$8,$9);
+   } else {
+      return ();                                                # no match
+   }
+}
+
 sub color
 {
    my ($codes,$txt) = @_;
@@ -7597,7 +7969,7 @@ sub run_obj_commands
 sub mush_command
 {
    my ($self,$prog,$runas,$cmd,$src) = @_;
-   my $match;
+   my $match = 0;
 
    $cmd = evaluate($self,$prog,$cmd) if($src ne undef && $src == 0);
 
@@ -7608,7 +7980,7 @@ sub mush_command
    }
 
    # search player
-   run_obj_commands($self,$prog,$runas,$$self{obj_id},$cmd) && return 1;
+   run_obj_commands($self,$prog,$runas,$self,$cmd) && return 1;
 
    # search player's contents
    for my $obj (lcon($self)) {
@@ -7620,7 +7992,6 @@ sub mush_command
    if(!defined $$prog{attr} &&
       defined $$prog{hint} && 
       ($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET")){
-      printf("# STOPING HERE\n");
       return 0;
    }
 
@@ -7632,10 +8003,10 @@ sub mush_command
 
    # search all objects in player's location's contents
    for my $obj (lcon(loc($self))) {
-      $match = run_obj_commands($self,$prog,$runas,$obj,$cmd);
+      $match += run_obj_commands($self,$prog,$runas,$obj,$cmd);
    }
 
-   return ($match eq undef) ? 0 : 1;
+   return ($match) ? 1 : 0;
 }
 
 
@@ -7859,14 +8230,16 @@ sub set_digit_variables
 
    if(ref($_[0]) eq "HASH") {
       my $new = shift;
-      for my $i (keys %$new) {
-         @{$$prog{var}}{$sub . $i} = $$new{$i};
+#      for my $i (keys %$new) {
+       for my $i (0 .. 9) {
+         @{$$prog{var}}{$sub . $i} = "$$new{$i}";
       }
    } else {
       my @var = @_;
 
-      for my $i ( 0 .. (($#_ > 9) ? $#_ : 9)) {
-         @{$$prog{var}}{$sub . $i} = $var[$i];
+#      for my $i ( 0 .. (($#_ > 9) ? $#_ : 9)) {
+      for my $i ( 0 .. 9 ) {
+         @{$$prog{var}}{$sub . $i} = "$var[$i]";
       }
    }
 }
@@ -8127,13 +8500,14 @@ sub spin_run
       ($cmd,$arg) = ($1,$2.$'); 
        $cmd =~ s/^\\//g;
 
-       if($cmd =~ /%/) {                  # allow % substitutions in @command
+       # allow % substitutions in @command
+       if(!defined $$hash{substr($cmd,0,1)}{nsp} && $cmd =~ /%/) { 
           $cmd = evaluate_substitutions($self,$prog,$cmd);
           if($cmd =~ /^\s*([^ \/]+)\s*/s) {
              ($cmd,$arg) = ($1,$' . $arg);
           }
-       } else {                                    # could have extra spaces
-          $arg =~ s/^\s+//g;
+       } elsif(!defined $$hash{substr($cmd,0,1)}{nsp}) {
+          $arg =~ s/^\s+//g;                           # remove extra spaces
        }
        $$command{mushcmd} = $cmd;
    } else {
@@ -8159,7 +8533,7 @@ sub spin_run
       return run_internal($hash,$$command{mushcmd},
                           $command,
                           $prog,
-                          substr($cmd,1) . " " . $arg,
+                          substr($cmd,1) . $arg,
                           \%switch,
                           1
                          );
@@ -8254,7 +8628,10 @@ sub find
    my ($self,$prog,$thing,$debug) = (shift,shift,trim(lc(shift)),shift);
    my ($partial, $dup);
 
-   if($thing eq undef) {
+   my $debug = 0;
+
+   if(ansi_remove($thing) eq undef) {
+      printf("got here: 0\n") if $debug;
       return undef;
    } elsif($thing =~ /^\s*#(\d+)\s*$/) {
       printf("got here: 1\n") if $debug;
@@ -8884,6 +9261,12 @@ use Compress::Zlib;
 sub initialize_functions
 {
    @fun{html_strip}= sub { return &fun_html_strip(@_);             };
+   @fun{foreach}   = sub { return &fun_foreach(@_);                };
+   @fun{itext}     = sub { return &fun_itext(@_);                  };
+   @fun{inum}      = sub { return &fun_inum(@_);                   };
+   @fun{ilev}      = sub { return &fun_ilev(@_);                   };
+   @fun{pack}      = sub { return &fun_pack(@_);                   };
+   @fun{unpack}    = sub { return &fun_unpack(@_);                 };
    @fun{round}     = sub { return &fun_round(@_);                  };
    @fun{if}        = sub { return &fun_if(@_);                     };
    @fun{ifelse}    = sub { return &fun_if(@_);                     };
@@ -8901,7 +9284,7 @@ sub initialize_functions
    @fun{escape}    = sub { return &fun_escape(@_);                 };
    @fun{trim}      = sub { return &fun_trim(@_);                   };
    @fun{ansi}      = sub { return &fun_ansi(@_);                   };
-   @fun{ansi_debug}= sub { return &ansi_debug($_[2]);              };
+   @fun{ansi_debug}= sub { return &fun_ansi_debug(@_);             };
    @fun{substr}    = sub { return &fun_substr(@_);                 };
    @fun{mul}       = sub { return &fun_mul(@_);                    };
    @fun{file}      = sub { return &fun_file(@_);                   };
@@ -8975,6 +9358,7 @@ sub initialize_functions
    @fun{lcstr}     = sub { return &fun_lcstr(@_);                  };
    @fun{ucstr}     = sub { return &fun_ucstr(@_);                  };
    @fun{setinter}  = sub { return &fun_setinter(@_);               };
+   @fun{listinter} = sub { return &fun_listinter(@_);              };
    @fun{sort}      = sub { return &fun_sort(@_);                   };
    @fun{mudname}   = sub { return &fun_mudname(@_);                };
    @fun{version}   = sub { return &fun_version(@_);                };
@@ -8986,6 +9370,7 @@ sub initialize_functions
    @fun{lcon}      = sub { return &fun_lcon(@_);                   };
    @fun{home}      = sub { return &fun_home(@_);                   };
    @fun{rand}      = sub { return &fun_rand(@_);                   };
+   @fun{lrand}     = sub { return &fun_lrand(@_);                  };
    @fun{reverse}   = sub { return &fun_reverse(@_);                };
    @fun{base64}    = sub { return &fun_base64(@_);                 };
    @fun{compress}  = sub { return &fun_compress(@_);               };
@@ -9012,6 +9397,7 @@ sub initialize_functions
    @fun{stats}      = sub { return &fun_stats(@_);                 };
    @fun{mod}        = sub { return &fun_mod(@_);                   };
    @fun{filter}     = sub { return &fun_filter(@_);                };
+   @fun{pickrand}   = sub { return &fun_pickrand(@_);              };
 }
 
 
@@ -9035,6 +9421,130 @@ sub add_union_element
    }
 }
 
+sub atr_get
+{
+   my ($self,$prog) = (shift,shift);
+   my ($target,$atr);
+
+   my $txt = evaluate($self,$prog,shift);
+
+   if($txt =~ /\//) {
+      $target = find($self,$prog,$`) || return undef;
+      $atr = $';
+   } else {
+      $target = $self;
+      $atr = $txt;
+   }
+
+   return get($target,$atr);
+}
+
+sub fun_ansi_debug
+{
+   my($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (FOREACH) EXPECTS 1 ARGUMENT";
+
+   return ansi_debug(evaluate($self,$prog,shift));
+}
+#
+# for_foreach
+#    Take a list of characters and feed it through the specified function
+#    like u().
+#
+sub fun_foreach
+{
+   my($self,$prog) = (obj(shift),shift);
+   my ($out,$left,$tmp);
+
+   good_args($#_,2,4) ||
+     return "#-1 FUNCTION (FOREACH) EXPECTS 2 OR 4 ARGUMENTS";
+
+   my $atr = atr_get($self,$prog,shift);                  # no attr/ no error
+   return "#-1 no attr" if($atr eq undef);                 # emulate mux/mush
+
+   my $str = trim(evaluate($self,$prog,shift));
+
+   if($#_ == 1) {                               # handle optional start/stop
+      my $start     = evaluate($self,$prog,shift);
+      my $end       = evaluate($self,$prog,shift);
+      ($out,$tmp) = balanced_split($str,$start,4);
+
+      return if($tmp eq undef);                           # no starting point
+                                                                  # no change
+      ($str,$left) = balanced_split($tmp,$end,4);
+   }
+
+   my $prev = get_digit_variables($prog);                     # save %0 .. %9
+   my $count = 0;
+
+   for(my ($i,$len)=(0,length($str));$i < $len;$i++) {
+      set_digit_variables($self,$prog,"",substr($str,$i,1),$count++);
+      $out .= evaluate($self,$prog,$atr);
+   }
+
+   set_digit_variables($self,$prog,"",$prev);              # restore %0 .. %9
+
+   return $out . $left;
+}
+
+
+# src: http://rosettacode.org/wiki/Non-decimal_radices/Convert#Perl
+sub fun_pack
+{
+   my($self,$prog,$n,$b) = (obj(shift),shift);
+
+   good_args($#_,1,2,3) ||
+     return "#-1 FUNCTION (PACK) EXPECTS 1, 2, or 3 ARGUMENTS - $#_";
+
+   my $n = evaluate($self,$prog,shift);
+   my $b = evaluate($self,$prog,shift);
+   $b = 10 if $b eq undef;
+
+   my $s = "";
+   while ($n) {
+      printf("Processing $n\n");
+      $s .= ('0'..'9','a'..'z')[$n % $b];
+      $n = int($n/$b);
+   }
+   return "x" . scalar(reverse($s));
+}
+
+sub fun_unpack
+{
+   my($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,1,2,3) ||
+     return "#-1 FUNCTION (PACK) EXPECTS 1, 2, or 3 ARGUMENTS - $#_";
+
+   my $n = evaluate($self,$prog,shift);
+   my $b = evaluate($self,$prog,shift);
+   $b = 16 if $b eq undef;
+
+   my $t = 0;
+   for my $c (split(//, lc($n))) {
+     $t = $b * $t + index("0123456789abcdefghijklmnopqrstuvwxyz", $c);
+   }
+  return $t;
+}
+
+sub fun_pickrand
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,1,2) ||
+     return "#-1 FUNCTION (PICKRAND) EXPECTS 1 OR 2 ARGUMENTS";
+
+   my $txt = evaluate($self,$prog,shift);
+   my $delim = evaluate($self,$prog,shift);
+   $delim =  " " if($delim eq undef);
+  
+   my $list = [ safe_split($txt,$delim) ];
+
+   return $$list[int(rand($#$list+1))];
+}
+
 #
 # fun_if
 #
@@ -9043,7 +9553,7 @@ sub fun_if
    my ($self,$prog) = (obj(shift),shift);
 
    good_args($#_,2,3) ||
-      return "#-1 FUNCTION (HTML_STRIP) EXPECTS 2 OR 3 ARGUMENTS";
+      return "#-1 FUNCTION (IF/IF_ELSE) EXPECTS 2 OR 3 ARGUMENTS";
 
    my $exp = evaluate($self,$prog,shift);
 
@@ -9127,9 +9637,51 @@ sub fun_null
 
 sub fun_trim
 {
-   my ($self,$prog,$txt) = (obj(shift),shift);
+   my ($self,$prog) = (obj(shift),shift);
+   my ($start,$end,%filter);
 
-   return trim(evaluate($self,$prog,shift));
+   good_args($#_,1,2,3) ||
+      return "#-1 FUNCTION (TRIM) EXPECTS 1, 2, OR 3 ARGUMENTS";
+
+   my $txt    = ansi_init(evaluate($self,$prog,shift));
+   my $type   = trim(ansi_remove(evaluate($self,$prog,shift)));
+   my $chars  = trim(ansi_remove(evaluate($self,$prog,shift)));
+
+   if($type =~ /^\s*(b|l|r)\s*$/) {                             # check args
+      $type = $1;
+   } else {
+      $type = "b";                               # emulate Mush w/no errors
+   }
+
+   if($chars eq undef) {                               # set chars to filter
+      @filter{" "} = 1;
+   } else {
+      for my $i (0 .. length($chars)) {
+         @filter{substr($chars,$i,1)} = 1;
+      }
+   }
+
+   if($type eq "b" || $type eq "l") {                  # find starting point
+      for my $i (0 .. ansi_length($txt)) {
+         $start = $i;
+         last if(!defined @filter{ansi_remove(ansi_substr($txt,$i,1))});
+         $start = $i;
+      }
+   } else {
+      $start = 0;
+   }
+
+   
+   if($type eq "b" || $type eq "r") {                   # find ending point
+      for my $i (reverse 0 .. ansi_length($txt)) {
+         $end = $i;
+         last if(!defined @filter{ansi_remove(ansi_substr($txt,$i-1,1))});
+      }
+   } else {
+      $end = ansi_length($txt);
+   }
+
+   return ansi_substr($txt,$start,$end-$start);              # return result
 }
 
 sub fun_escape
@@ -9228,17 +9780,56 @@ sub fun_lit
    return join(',',@_);
 }
 
+sub rgb2ansi
+{
+   my ($r1,$g1,$b1) = @_;
+   my ($rgb_diff,$rgb_diff2,$result) = (1000,1000);
+
+   for my $i (16 .. 255) {
+      if(@ansi_rgb{$i} =~ /^(.{2})(.{2})(.{2})$/) {
+         $rgb_diff = abs(hex($1)-$r1) + abs(hex($2)-$g1) + abs(hex($3)-$b1);
+
+         if($rgb_diff < $rgb_diff2) {
+            $rgb_diff2 = $rgb_diff;
+            $result = $i;
+            return $i if($rgb_diff2 ==  0);
+         }
+      } else {
+         printf("Unparseable entry $i -> '@ansi_rgb{$i}'\n");
+      }
+   }
+   return $result;
+}
+
 sub fun_ansi
 {
    my ($self,$prog) = (obj(shift),shift);
+   my $color;
 
    good_args($#_,2) ||
       return "#-1 FUNCTION (ANSI) EXPECTS 2 ARGUMENTS";
 
-   my $type = evaluate($self,$prog,shift);
-   my $txt = trim(evaluate($self,$prog,shift));
+   my $code = evaluate($self,$prog,shift);
+   my $txt = evaluate($self,$prog,trim(shift));
+   printf("ANSI: '%s' -> '%s'\n",$code,$txt);
 
-   return color($type,$txt);
+   if($code =~ /^\s*<\s*(\d+)\s+(\d+)\s+(\d+)\s*>\s*$/) {
+      $color = rgb2ansi($1,$2,$3);
+   } elsif($code =~ /^\s*<\s*#\s*(\d{2})(\d{2})(\d{2})\s*>\s*$/) {
+      $color = rgb2ansi(hex($1),hex($2),hex($3));
+   } elsif($code =~ /^\s*\+\s*([^ ]+)\s*$/) {
+      if(defined @ansi_name{lc($1)}) {
+         $color = @ansi_name{lc($1)};
+      } else {
+         return $txt;                               # emulate Rhost, no error
+      }
+   } elsif($code =~ /^\s*</) {
+      return $txt;                                  # emulate Rhost, no error
+   } else {
+      return color($code,$txt);
+   }
+
+   return "\e[38;5;$color\m$txt\e[0m";
 }
 
 #
@@ -9278,6 +9869,46 @@ sub fun_setunion
    } else {                                              # alphanumeric sort
       return join($sep,sort({$a cmp $b} keys %list));
    }
+}
+
+#
+# fun_listinter
+#    Return only those items in both lists
+#
+sub fun_listinter
+{
+   my ($self,$prog) = (obj(shift),shift);
+   my (%l1, %l2, @result,$count);
+
+   #--- [ handle arguments ]---------------------------------------------#
+   good_args($#_,2 .. 5) ||
+      return "#-1 FUNCTION (SETUNION) EXPECTS 2 to 5 ARGUMENTS";
+
+   my $list1 = evaluate($self,$prog,shift);
+   my $list2 = evaluate($self,$prog,shift);
+   my $delim = evaluate($self,$prog,shift);
+   my $sep = evaluate($self,$prog,shift);
+   my $type  = evaluate($self,$prog,shift);
+
+   $delim = " " if($delim eq undef);
+   $sep   = " " if($sep eq undef);
+   $type = 0 if($type ne 0 && $type ne 1);          # emulate rhost behavior
+
+   #--- [ do the work ]--------------------------------------------------#
+
+   for my $i (safe_split($list2,$delim)) {               # split up 2nd list
+      @l2{$i} = 1;
+   }
+
+   for my $i (safe_split($list1,$delim)) {
+      if(defined @l2{$i}) {                               # item in 2nd list
+         push(@result,$i) if(!defined @l1{$i});             # weed out dups?
+         @l2{$i} = 1 if($type == 0);
+      }
+   }
+
+   #--- [ return the results ]-------------------------------------------#
+   return join($sep,@result);
 }
 
 #
@@ -9470,13 +10101,8 @@ sub fun_url
          my $data = shift(@$buff);
 
 # wttr.in debug
-#         if(ansi_remove($data) =~ / mi/)  {
-#            printf("%s -> %s\n",$data,lord($data));
-#            printf("DATA: '%s' -> '%s' -> '%s,%s,%s'\n",
-#                ansi_remove(trim($data)),$1,
-#                ord(substr($1,0,1)),
-#                ord(substr($1,1,1)),
-#                ord(substr($1,2,1)));
+#         if($data =~ /F/)  {
+#            printf("%s -> %s\n",$data,lord($`));
 #             printf("      '%s'\n",$data);
 #             printf("      '%s'\n",base($data));
 #         }
@@ -9996,6 +10622,45 @@ sub fun_rand
    }
 }
 
+sub isint
+{
+   my $num = shift;
+
+   return ($num =~ /^\s*(\d+)\s*$/) ? 1 : 0;
+}
+
+sub fun_lrand
+{
+   my ($self,$prog) = (obj(shift),shift);
+   my @result;
+
+   good_args($#_,3,4) ||
+     return "#-1 FUNCTION (LRAND) EXPECTS 3 OR 4 ARGUMENTS";
+
+   my $lower = evaluate($self,$prog,shift);
+   my $upper = evaluate($self,$prog,shift);
+   my $count = evaluate($self,$prog,shift);
+   my $delim = evaluate($self,$prog,shift);
+
+   $lower = 0 if(!isint($lower));
+   $upper = 0 if(!isint($upper));
+   $delim = " " if $delim eq undef;
+
+   if(!isint($count)) {
+      $count = 0;
+   } elsif($count > 4000) {                              # set upper limit
+      $count = 4000;
+   }
+
+   my $diff = $upper - $lower;
+
+   for my $i (1 .. $count) {
+      push(@result,int(rand($diff) + $lower));
+   }
+
+   return join("$delim",@result);
+}
+
 
 sub var_backup
 {
@@ -10279,8 +10944,8 @@ sub safe_split
       $delim =~ s/^\s+|\s+$//g;
  
       if($delim eq " " || $delim eq undef) {
-         $txt =~ s/\s+/ /g;
-         $txt =~ s/^\s+|\s+$//g;
+#         $txt =~ s/\s+/ /g;
+#         $txt =~ s/^\s+|\s+$//g;
          $delim = " ";
       }
    }
@@ -10619,14 +11284,36 @@ sub fun_isnum
 sub fun_lnum
 {
    my ($self,$prog) = (shift,shift);
+   my @result;
 
-   good_args($#_,1) ||
-      return "#-1 FUNCTION (LNUM) EXPECTS 1 ARGUMENT";
+   good_args($#_,1,2,3,4) ||
+      return "#-1 FUNCTION (LNUM) EXPECTS 1,2,3 OR 4 ARGUMENTS";
 
-   my $num = evaluate($self,$prog,shift);
-   return "#-1 ARGUMENT MUST BE NUMBER" if(!looks_like_number($num));
+   my $start  = evaluate($self,$prog,shift);
+   my $end    = evaluate($self,$prog,shift);
+   my $odelim = evaluate($self,$prog,shift);
+   my $step   = evaluate($self,$prog,shift);
 
-   return join(' ',0 .. ($num - 1));
+   if($end eq undef && $start ne undef) {
+      $end = $start - 1;
+      $start = 0;
+   }
+   $start = 0 if $start eq undef;
+   $end = 0 if $end eq undef;
+   $odelim = " " if $odelim eq undef;
+   $step = 1 if $step eq undef;
+
+   if($start <= $end) {
+      for(my $i=$start;$i <= $end && $#result < 2000;$i += $step) {
+         push(@result,$i);
+      }
+   } else {
+      for(my $i=$start;$i >= $end && $#result < 2000;$i -= $step) {
+         push(@result,$i);
+      }
+   }
+
+   return join($odelim,@result);
 }
 
 sub fun_and
@@ -10742,32 +11429,31 @@ sub fun_center
 sub fun_switch
 {
    my ($self,$prog) = (shift,shift);
+   my $debug = 0;
 
-   my $first = trim(single_line(ansi_remove(evaluate($self,$prog,shift))));
+   my $first = single_line(evaluate($self,$prog,trim(shift)));
 
    while($#_ >= 0) {
       if($#_ >= 1) {
-         my $txt = trim(single_line(ansi_remove(evaluate($self,$prog,shift))));
-         my $pat = glob2re($txt);
+         my $txt = single_line(ansi_remove(evaluate($self,$prog,trim(shift))));
          my $cmd = shift;
 
          if($txt =~ /^\s*(<|>)\s*/) {
              if($1 eq ">" && $first > $' || $1 eq "<" && $first < $') {
                 return evaluate($self,$prog,$cmd);
              }
-         } elsif($first =~ /$pat/) {
-             my $prev = get_digit_variables($prog);
-             set_digit_variables($self,$prog,"m",$1,$2,$3,$4,$5,$6,$7,$8,$9);
-             my $result = evaluate($self,$prog,$cmd);
-             set_digit_variables($self,$prog,"m",$prev);
-             return $result;
+         } else {
+            my @wild = ansi_match($first,$txt);
+            if($#wild >=0) {
+               my $prev = get_digit_variables($prog);
+               set_digit_variables($self,$prog,"m",@wild[0..9]);
+               my $result = evaluate($self,$prog,$cmd);
+               set_digit_variables($self,$prog,"m",$prev);
+               return $result;
+            }
          }
-      } else {
-         my $prev = get_digit_variables($prog);
-         set_digit_variables($self,$prog,"m",$1,$2,$3,$4,$5,$6,$7,$8,$9);
-         my $result = evaluate($self,$prog,shift);
-         set_digit_variables($self,$prog,"m",$prev);
-         return $result;
+      } else {                                      # handle switch() default
+         return evaluate($self,$prog,shift);
       }
    }
 }
@@ -10927,17 +11613,19 @@ sub fun_last
 {
    my ($self,$prog) = (shift,shift);
 
-   my ($txt,$delim) = @_;
-   if($#_ != 0 && $#_ != 1) {
-      return "#-1 Function (FIRST) EXPECTS 1 or 2 ARGUMENTS";
-   }
+   good_args($#_,1,2) ||
+      return "#-1 Function (LAST) EXPECTS 1 or 2 ARGUMENTS";
+
+   my $txt   = evaluate($self,$prog,shift);
+   my $delim = evaluate($self,$prog,shift);
 
    if($delim eq undef || $delim eq " ") {
       $txt =~ s/^\s+|\s+$//g;
       $txt =~ s/\s+/ /g;
       $delim = " ";
    }
-   my $loc = rindex(evaluate($self,$prog,$txt),$delim);
+
+   my $loc = rindex($txt,$delim);
 
    if($loc == -1) {
       return $txt;
@@ -11286,6 +11974,7 @@ sub fun_u
    my $prev = get_digit_variables($prog);                   # save %0 .. %9
    set_digit_variables($self,$prog,"",@arg);          # update to new values
 
+   printf("U[%s/%s]: '%s'\n",$$obj{obj_id},$attr,single_line(get($obj,$attr)));
    my $result = evaluate($self,$prog,single_line(get($obj,$attr)));
 
    set_digit_variables($self,$prog,"",$prev);            # restore %0 .. %9
@@ -11341,9 +12030,9 @@ sub fun_setq
    good_args($#_,2) ||
       return "#-1 FUNCTION (SETQ) EXPECTS 2 ARGUMENTS";
 
-   my $register = trim(evaluate($self,$prog,shift));
+   my $register = lc(trim(evaluate($self,$prog,shift)));
 
-   if($register !~ /^\s*(0|1|2|3|4|5|6|7|8|9)\s*$/) {
+   if($register !~ /^\s*([0-9a-z])\s*$/) {
       return "#-1 INVALID GLOBAL REGISTER"
    }
 
@@ -11814,27 +12503,110 @@ sub fun_lattr
 }
 
 #
+# fun_itext
+#    Returns the current value of iter() by depth.
+#
+sub fun_itext
+{
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,0,1) ||
+     return "#-1 FUNCTION (ITEXT) EXPECTS 0 OR 1 ARGUMENTS";
+
+   return if(!defined $$prog{iter_stack});                 # not in iter()
+
+   my $pos = evaluate($self,$prog,shift);
+
+   if($pos eq undef) {
+      $pos = 0;
+   } elsif(!isint($pos)) {
+      return "#-1 INVALID NUMBER";
+   }
+
+   my $stack = $$prog{iter_stack};
+
+   return if($pos >= $#$stack+1);                  # request is to deep and
+                                                 # MUSH doesn't return error
+
+   return @{$$stack[$#$stack - $pos]}{val};
+}
+
+#
+# fun_inum
+#    Returns the positional count in the list of where iter() currently
+#    is by depth.
+#
+sub fun_inum
+{
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,0,1) ||
+     return "#-1 FUNCTION (INUM) EXPECTS 0 OR 1 ARGUMENTS";
+
+   return if(!defined $$prog{iter_stack});                 # not in iter()
+
+   my $pos = evaluate($self,$prog,shift);
+
+   if($pos eq undef) {
+      $pos = 0;
+   } elsif(!isint($pos)) {
+      return "#-1 INVALID NUMBER";
+   }
+
+   my $stack = $$prog{iter_stack};
+
+   return if($pos >= $#$stack+1);                  # request is to deep and
+                                                 # MUSH doesn't return error
+
+   return @{$$stack[$#$stack - $pos]}{pos};
+}
+
+sub fun_ilev
+{
+   for my $i (0 .. $#_) {
+      printf("$i : '%s'\n",$_[$i]);
+   }
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,0) ||
+     return "#-1 FUNCTION (ILEV) EXPECTS 0 ARGUMENTS - $#_";
+
+   return -1 if(!defined $$prog{iter_stack});                 # not in iter()
+
+   return $#{$$prog{iter_stack}};
+}
+
+#
 # fun_iter
 #
 sub fun_iter
 {
    my ($self,$prog) = (shift,shift);
+   my $count = 0;
 
    good_args($#_,2 .. 4) ||
-     return "#-1 FUNCTION (ITER) EXPECTS 2 AND 4 ARGUMENTS-$#_";
+     return "#-1 FUNCTION (ITER) EXPECTS 2 AND 4 ARGUMENTS";
 
    my ($list,$txt) = ($_[0],$_[1]);
    my $idelim = evaluate($self,$prog,$_[2]);
    $idelim = " " if($idelim eq undef);
    my $odelim = ($#_ < 3) ? " " : evaluate($self,$prog,$_[3]);
 
+   if($odelim =~ /^\s*\@\@\s*$/) {
+      $odelim = "";
+   }
+
    my @result;
 
+   $$prog{iter_stack} = [] if(!defined $$prog{iter_stack});
+   my $loc = $#{$$prog{iter_stack}} + 1;
    for my $item (safe_split(evaluate($self,$prog,$list),$idelim)) {
+       @{$$prog{iter_stack}}[$loc] = { val => $item, pos => ++$count };
        my $new = $txt;
        $new =~ s/##/$item/g;
        push(@result,evaluate($self,$prog,$new));
    }
+   delete @{$$prog{iter_stack}}[$loc];
 
    return join($odelim,@result);
 }
@@ -11885,7 +12657,7 @@ sub fun_lookup
 #    Keep track of the depth of {}[]"s so that the function is
 #    not split in the wrong place.
 #
-sub parse_function 
+sub parse_function
 {
    my ($self,$prog,$fun,$txt,$type) = @_;
 
@@ -11921,6 +12693,79 @@ sub parse_function
 #    4 : split until delim, delim not included in result
 #
 sub balanced_split
+{
+   my ($txt,$delim,$type,$debug) = @_;
+   my ($last,$i,@stack,@depth,$ch,$buf) = (0,-1);
+
+   my $size = length($txt);
+   while(++$i < $size) {
+      $ch = substr($txt,$i,1);
+
+      if($ch eq "\e" && substr($txt,$i,20) =~ /^\e\[([\d;]*)([a-zA-Z])/) {
+         $i += length("x$1$2");                       # move 1 char short
+         $buf .= "\e\[$1$2";
+         next;
+      } elsif($ch eq "\\") {
+#         $buf .= substr($txt,++$i,1);
+         $buf .= substr($txt,$i++,2); # CHANGE
+         next;
+      } else {
+         if($ch eq "(" || $ch eq "{") {                  # start of segment
+            $buf .= $ch;
+            push(@depth,{ ch    => $ch,
+                          last  => $last,
+                          i     => $i,
+                          stack => $#stack+1,
+                          buf   => $buf
+                        });
+         } elsif($#depth >= 0) {
+            $buf .= $ch;
+            if($ch eq ")" && @{@depth[$#depth]}{ch} eq "(") {
+               pop(@depth);
+            } elsif($ch eq "}" && @{@depth[$#depth]}{ch} eq "{") {
+               pop(@depth);
+            }
+         } elsif($#depth == -1) {
+            if($ch eq $delim) {    # delim at right depth
+               if($type == 4) {                        # found delim, done
+                  return $buf, substr($txt,$i+1);
+               } else {
+                  push(@stack,$buf);
+                  $last = $i+1;
+                  $buf = undef;
+               }
+            } elsif($type <= 2 && $ch eq ")") {                   # func end
+               push(@stack,$buf) if($buf !~ /^\s*$/);
+               $last = $i+1;
+               $i = $size;
+               $buf = undef;
+               last;                                      # jump out of loop
+            } else {
+               $buf .= $ch;
+            }
+         } else {
+            $buf .= $ch;
+         }
+      }
+      if($i +1 >= $size && $#depth != -1) {   # parse error, start unrolling
+         my $hash = pop(@depth);
+         $i = $$hash{i};
+         delete @stack[$$hash{stack} .. $#stack];
+         $last = $$hash{last};
+         $buf = $$hash{buf};
+      }
+   }
+
+   if($type == 3 || $type == 4) {
+      push(@stack,substr($txt,$last)) if(substr($txt,$last) !~ /^\s*$/);
+      return @stack;
+   } else {
+      unshift(@stack,substr($txt,$last));
+      return ($#depth != -1) ? undef : @stack;
+   }
+}
+
+sub balanced_split_old
 {
    my ($txt,$delim,$type,$debug) = @_;
    my ($last,$i,@stack,@depth,$ch,$buf) = (0,-1);
@@ -11996,16 +12841,26 @@ sub balanced_split
 #
 sub script
 {
-   my ($fun,$args,$result) = @_;
+   my ($self,$prog,$fun,$args,$result) = @_;
+   return;
 
+   con("think [switch(%s(%s),%s,,{WRONG %s(%s) -> %s})]\n",
+      $fun,
+      evaluate_substitutions($self,$prog,$args),
+      evaluate_substitutions($self,$prog,$result),
+      $fun,
+      evaluate_substitutions($self,$prog,$args),
+      evaluate_substitutions($self,$prog,$result)
+      );
 #   if($result =~ /^\s*$/) {
 #      con("FUN: '%s(%s) returned undef\n",$fun,$args);
 #   }
 #   return;
 #   if($args !~ /(v|u|get|r)\(/i && $fun !~ /^(v|u|get|r)$/) {
+#    my $eval_args = evaluate($self,$prog,$args);
 #      con("think [switch(%s(%s),%s,,{WRONG %s(%s) -> %s})]\n",
-#          $fun,$args,$result,$fun,$args,$result);
-#   }
+#          $fun,$eval_args,$result,$fun,$eval_args,$result);
+##   }
 }
 
 sub meval
@@ -12046,7 +12901,7 @@ sub evaluate
             $$prog{function_duration} +=Time::HiRes::gettimeofday()-$start;
             $$prog{"fun_$fun"}++;
          
-            script($fun,join(',',@$result),$r);
+            script($self,$prog,$fun,join(',',@$result),$r);
 
             return $r;
          }
@@ -12079,7 +12934,7 @@ sub evaluate
             my $r = &{@fun{$fun}}($self,$prog,@$result);
             $$prog{function_duration} +=Time::HiRes::gettimeofday()-$start;
 
-            script($fun,join(',',@$result),$r);
+            script($self,$prog,$fun,join(',',@$result),$r);
             $out .= "$r";
          }
       } else {                                # start of function escaped out
@@ -12605,6 +13460,7 @@ sub generic_action
               cmd    => $atr,
               source => 0,
               from   => "ATTR",
+              invoker=> $self,
              );
    }
 
@@ -12620,7 +13476,8 @@ sub generic_action
 # glob2re
 #    Convert a global pattern into a regular expression
 #
-sub glob2re {
+sub glob2re
+{
     my ($pat) = trim(single_line(ansi_remove(shift)));
 
     return "^\s*\$" if $pat eq undef;
@@ -12782,13 +13639,13 @@ sub code
 
    if(!$type || $type eq "short") {
       for my $line (split(/\n/,Carp::shortmess)) {
-         if($line =~ /at ([^ ]+) line (\d+)\s*$/) {
+         if($line =~ / at ([^ ]+) line (\d+)/) {
             my ($fun,$ln) = ($1,$2);
      
             if(defined $$prev{$fun}) {
                push(@stack,@{$$prev{$fun}}{ln} + $2);
             } else {
-               push(@stack,"$fun:$ln");
+               push(@stack,"$ln*");
             }
          }
       }
@@ -12813,7 +13670,7 @@ sub renumber_code
       if($line =~ / at ([^ ]+) line (\d+)/ && defined $$prev{$1}) {
          push(@out,"$` at $1 line " . ($2 + @{$$prev{$1}}{ln}));
       } else {
-         push(@out,$line);
+         push(@out,$line . " [*]");
       }
    }
    return join("\n",@out);
@@ -12841,7 +13698,7 @@ sub evaluate_substitutions
    my ($out,$seq,$debug);
 
    my $orig = $t;
-   while($t =~ /(\[|\]|\\|%m[0-9]|%[pbrtnk#0-9%]|%(v|w)[a-zA-Z]|\[|\]|%=<[^>]+>|%\{[^}]+\})/i) {
+   while($t =~ /(\[|\]|\\|%m[0-9]|%q[0-9a-z]|%i[0-9]|%[!pbrtnk#0-9%]|%(v|w)[a-zA-Z]|\[|\]|%=<[^>]+>|%\{[^}]+\})/i) {
       ($seq,$t)=($1,$');                                   # store variables
       $out .= $`;
 
@@ -12849,7 +13706,7 @@ sub evaluate_substitutions
          $out .= substr($t,0,1);
          $t = substr($t,1);
       } elsif($seq eq "%%") {
-         $out .= "%";
+         $out .= "\%";
       } elsif($seq eq "[") {
          $out .= "[" if(ord(substr($`,-1)) == 27);       # escape sequence?
       } elsif($seq eq "]" || $seq eq "]") {
@@ -12860,6 +13717,10 @@ sub evaluate_substitutions
          $out .= "\n";
       } elsif($seq eq "%t") {                                          # tab
          $out .= "\t";
+      } elsif($seq eq "%!") {                                          # tab
+         if(defined $$self{obj_id}) {
+           $out .= "#$$self{obj_id}";
+         }
       } elsif(lc($seq) eq "%p") {
          if(!defined $$prog{cmd}) {
            $out .= "its";
@@ -12886,10 +13747,18 @@ sub evaluate_substitutions
          } else {
             $out .= name(@{@{$$prog{cmd}}{invoker}}{obj_id});
          }
+      } elsif($seq =~ /^%q([0-9a-z])$/i) {
+         if(defined $$prog{var}) {
+            $out .= @{$$prog{var}}{"setq_$1"} if(defined $$prog{var});
+         }
       } elsif($seq =~ /^%m([0-9])$/) {
          if(defined $$prog{cmd} && 
             defined @{$$prog{cmd}}{mdigits}) {
             $out .= @{@{$$prog{cmd}}{mdigits}}{$1};
+         }
+      } elsif($seq =~ /^%i([0-9])$/) {
+         if(defined $$prog{iter_stack}) {
+            $out .= fun_itext($self,$prog,$1);
          }
       } elsif($seq =~ /^%([0-9])$/ || $seq =~ /^%\{([^}]+)\}$/) {  # temp vars
          if($1 eq "hostname") {

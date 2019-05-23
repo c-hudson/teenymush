@@ -11987,7 +11987,7 @@ sub fun_sub
       if($val =~ /^\s*0x([0-9a-f]{2})\s*$/i) {
          $result -= hex(trim($val));
       } else {
-         $result -= ansi_remove(evaluate($self,$prog,shift));
+         $result -= $val;
       }
    }
    return $result;

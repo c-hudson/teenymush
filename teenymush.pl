@@ -411,8 +411,6 @@ sub arg
 sub main
 {
    $SIG{HUP} = sub {
-      my %ansi_name;
-      my %ansi_rgb;
       my $count = reload_code();
       delete @engine{keys %engine};
       con("HUP signal caught, reloading: %s\n",$count ? $count : "none");
@@ -794,6 +792,7 @@ sub initialize_commands
    # ------------------------------------------------------------------------#
    @command{screenwidth} ={ fun => sub { return 1;}                         };
    @command{screenheight}={ fun => sub { return 1;}                         };
+   @command{"\@function"}={ fun => sub { return &cmd_function(@_);}         };
    @command{"\@perl"}   = { fun => sub { return &cmd_perl(@_); }            };
    @command{say}        = { fun => sub { return &cmd_say(@_); }             };
    @command{"\""}       = { fun => sub { return &cmd_say(@_); },     nsp=>1 };
@@ -975,6 +974,33 @@ sub get_mail
       return undef;
    }
 }
+
+sub cmd_function
+{
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
+
+   hasflag($self,"WIZARD") ||
+      return err($self,$prog,"Permission denied.");
+
+   if($txt =~ /^\s*([a-z][a-z0-9]*)\s*=\s*/) {
+      my $atr = fun_get($self,$prog,$');
+
+      if($atr eq undef) {
+         return err($self,$prog,"Invalid object/attribute specified.");
+      }
+
+      @info{mush_function} = {} if(!defined @info{mush_function});
+
+      @{@info{mush_function}}{"$1$2"} = $';
+      necho(self   => $self,                                    # notify user
+            prog   => $prog,
+            source => [ "Set." ]
+        );
+   } else {
+      return err($self,$prog,"Usage: \@function <function> = <obj>/<attr>");
+   }
+}
+
 
 sub cmd_quota
 {
@@ -4010,7 +4036,6 @@ sub cmd_name
 {
    my ($self,$prog,$txt) = @_;
 
-   printf("NAME: '%s'\n",$txt);
    if(hasflag($self,"GUEST")) {
       return err($self,$prog,"Permission Denied.");
    } elsif($txt =~ /^\s*([^=]+?)\s*=\s*(.+?)\s*$/) {
@@ -6313,9 +6338,8 @@ sub latr_regexp
 
 sub lcon
 {
-   my $object = obj(shift);
+   my $object = obj_nocheck(shift);
    my @result;
-
 
    if(memorydb) {
       my $attr = mget($object,"obj_content");
@@ -6350,7 +6374,7 @@ sub lcon
 
 sub lexits
 {
-   my $object = obj(shift);
+   my $object = obj_nocheck(shift);
    my @result;
 
    if(memorydb) {
@@ -6933,11 +6957,11 @@ sub ansi_post_match
    my ($data,$pat,@arg) = @_;
    my ($pos,$wild,@wildcard) = (0,0);
 
-   while($pat =~ /(\*|\?)/ && $pos < 10) {
+   while($pat =~ /(\*|\?)/ && $wild < 10) {
+      $pat = $';
       $pos += length($`) if($` ne undef);
       push(@wildcard,ansi_substr($data,$pos,length(@arg[$wild])));
       $pos += length(@arg[$wild]);
-      $pat = $';
       $wild++;
    }
 
@@ -6985,27 +7009,26 @@ sub ansi_match
 
 sub color
 {
-   my ($codes,$txt) = @_;
+   my ($codes,$txt,$type) = @_;
    my $pre;
    #
    # conversion table for letters to numbers used in escape codes as defined
    # by TinyMUSH, or maybe TinyMUX.
    #
    my %ansi = (
-      x => 30, X => 40, r => 31, R => 41, g => 32, G => 42, y => 33, Y => 43,
-      b => 34, B => 44, m => 35, M => 45, c => 36, C => 46, w => 37, W => 47,
-      u => 4,  i => 7, h => 1,  f => 5, n => 0
+      x => 30, X => 40, r => 31, R => 41, g => 32, G => 42, y => 33,
+      Y => 43, b => 34, B => 44, m => 35, M => 45, c => 36, C => 46,
+      w => 37, W => 47, u => 4, i => 7, h => 1, f => 5, n => 0
    );
 
-
    for my $ch (split(//,$codes)) {
-      if(defined @ansi{$ch}) {
-         $pre .= "\e[@ansi{$ch};1m";
-      } elsif(defined @ansi{$ch}) {
-         $pre .= "\e[@ansi{$ch}m";
-      }
+      $pre .= "\e[@ansi{$ch}m" if(defined @ansi{$ch});
    }
-   return $pre . $txt . "\e[0m";
+   if($type eq 1) {
+      return $pre;
+   } else {
+      return $pre . $txt . "\e[0m";
+   }
 }
 
 
@@ -9260,7 +9283,10 @@ use Compress::Zlib;
 
 sub initialize_functions
 {
+   delete @fun{keys %fun};
+   @fun{EVAL}      = sub { return &fun_eval(@_);                   };
    @fun{html_strip}= sub { return &fun_html_strip(@_);             };
+   @fun{tohex}     = sub { return &fun_tohex(@_);                  };
    @fun{foreach}   = sub { return &fun_foreach(@_);                };
    @fun{itext}     = sub { return &fun_itext(@_);                  };
    @fun{inum}      = sub { return &fun_inum(@_);                   };
@@ -9284,6 +9310,7 @@ sub initialize_functions
    @fun{escape}    = sub { return &fun_escape(@_);                 };
    @fun{trim}      = sub { return &fun_trim(@_);                   };
    @fun{ansi}      = sub { return &fun_ansi(@_);                   };
+   @fun{colors}    = sub { return &fun_colors(@_);                 };
    @fun{ansi_debug}= sub { return &fun_ansi_debug(@_);             };
    @fun{substr}    = sub { return &fun_substr(@_);                 };
    @fun{mul}       = sub { return &fun_mul(@_);                    };
@@ -9303,6 +9330,7 @@ sub initialize_functions
    @fun{left}      = sub { return &fun_left(@_);                   };
    @fun{lattr}     = sub { return &fun_lattr(@_);                  };
    @fun{iter}      = sub { return &fun_iter(@_);                   };
+   @fun{citer}     = sub { return &fun_citer(@_);                  };
    @fun{parse}     = sub { return &fun_iter(@_);                   };
    @fun{huh}       = sub { return "#-1 Undefined function";        };
    @fun{ljust}     = sub { return &fun_ljust(@_);                  };
@@ -9333,6 +9361,7 @@ sub initialize_functions
    @fun{v}         = sub { return &fun_v(@_);                      };
    @fun{r}         = sub { return &fun_r(@_);                      };
    @fun{setq}      = sub { return &fun_setq(@_);                   };
+   @fun{setr}      = sub { return &fun_setr(@_);                   };
    @fun{mid}       = sub { return &fun_substr(@_);                 };
    @fun{center}    = sub { return &fun_center(@_);                 };
    @fun{rest}      = sub { return &fun_rest(@_);                   };
@@ -9398,6 +9427,7 @@ sub initialize_functions
    @fun{mod}        = sub { return &fun_mod(@_);                   };
    @fun{filter}     = sub { return &fun_filter(@_);                };
    @fun{pickrand}   = sub { return &fun_pickrand(@_);              };
+   @fun{ldelete}    = sub { return &fun_ldelete(@_);               };
 }
 
 
@@ -9437,6 +9467,105 @@ sub atr_get
    }
 
    return get($target,$atr);
+}
+
+sub fun_eval
+{
+   my($self,$prog) = (obj(shift),shift);
+
+   return undef if(!defined $$prog{mush_function_name});
+
+   my $name = lc($$prog{mush_function_name});
+   my $hash = @info{mush_function};
+
+   return undef if(!defined $$hash{$name});
+
+   return fun_u($self,$prog,$$hash{$name},@_);
+}
+
+sub fun_tohex
+{
+   my($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (TOHEX) EXPECTS 1 ARGUMENTS";
+
+   my $txt = evaluate($self,$prog,shift);
+
+   return sprintf("%X",$txt);
+}
+
+sub fun_colors
+{
+   my($self,$prog) = (obj(shift),shift);
+   my @result;
+   
+   good_args($#_,1,2) ||
+     return "#-1 FUNCTION (COLORS) EXPECTS 1 OR 2 ARGUMENTS";
+
+   my $txt = trim(evaluate($self,$prog,shift));
+   my $key = evaluate($self,$prog,shift);
+
+   if($key =~ /^\s*x\s*$/) {
+      if($txt =~ /^\s*0x\+\s*(.+?)\s*$/ || $txt =~ /^\s*\+\s*(.+?)\s*$/) {
+         if(defined @ansi_name{lc($1)}) {
+            if(!defined @ansi_rgb{@ansi_name{lc($1)}}) {
+               return "#-1 INTERNAL ERROR - UNDEFINED RGB VALUE " .
+                  @ansi_name{lc($1)};
+            } else {
+               return "#" . @ansi_rgb{@ansi_name{lc($1)}};
+            }
+         }
+      }
+      return "#-1 INVALID COLOR SPECIFIED";
+   } elsif($key =~ /^\s*n\s*$/) {
+      if($txt =~ /^\s*0x\+\s*(.+?)\s*$/ || $txt =~ /^\s*\+\s*(.+?)\s*$/) {
+         if(defined @ansi_name{lc($1)}) {
+            for my $i (keys %ansi_name) {
+               if(@ansi_name{$i} eq @ansi_name{lc($1)}) {
+                  push(@result,$i);
+               }
+            }
+            return join(" ",@result);
+         }
+      }
+      return "#-1 INVALID COLOR SPECIFIED";
+   } else {
+      return "#-1 UNIMPLIMENTED KEY";
+   }
+}
+#
+# fun_ldelete
+#    Delete a word/item from the text.
+sub fun_ldelete
+{
+   my($self,$prog) = (obj(shift),shift);
+   my (@delete, @result);
+
+   good_args($#_,2,3,4) ||
+     return "#-1 FUNCTION (LDELETE) EXPECTS BETWEEN 2 AND 4 ARGUMENTS";
+
+   my $txt       = evaluate($self,$prog,shift);
+   my $positions = evaluate($self,$prog,shift);
+   my $idelim    = evaluate($self,$prog,trim(shift));
+   my $odelim    = evaluate($self,$prog,trim(shift));
+   $idelim = " " if $idelim eq undef;
+   $odelim = $idelim if $odelim eq undef;
+
+   my @list = safe_split($txt,$idelim);
+
+   for my $i (sort {$b <=> $a} safe_split($positions," ")) {
+      if(isint($i) && $i > 1 && $i <= $#list + 1) {
+         splice(@list,$i-1,1);
+      }
+   }
+
+   if($odelim ne " ") {
+      for my $i (0 .. $#list) {
+         @list[$i] = space_compress(@list[$i]);
+      }
+   }
+   return join($odelim,@list);
 }
 
 sub fun_ansi_debug
@@ -9792,44 +9921,42 @@ sub rgb2ansi
          if($rgb_diff < $rgb_diff2) {
             $rgb_diff2 = $rgb_diff;
             $result = $i;
-            return $i if($rgb_diff2 ==  0);
+            return "\e[38;5;$i\m" if($rgb_diff2 ==  0);
          }
       } else {
          printf("Unparseable entry $i -> '@ansi_rgb{$i}'\n");
       }
    }
-   return $result;
+   return "\e[38;5;$result\m";
 }
 
 sub fun_ansi
 {
    my ($self,$prog) = (obj(shift),shift);
-   my $color;
+   my $out;
 
    good_args($#_,2) ||
       return "#-1 FUNCTION (ANSI) EXPECTS 2 ARGUMENTS";
 
    my $code = evaluate($self,$prog,shift);
    my $txt = evaluate($self,$prog,trim(shift));
-   printf("ANSI: '%s' -> '%s'\n",$code,$txt);
 
-   if($code =~ /^\s*<\s*(\d+)\s+(\d+)\s+(\d+)\s*>\s*$/) {
-      $color = rgb2ansi($1,$2,$3);
-   } elsif($code =~ /^\s*<\s*#\s*(\d{2})(\d{2})(\d{2})\s*>\s*$/) {
-      $color = rgb2ansi(hex($1),hex($2),hex($3));
-   } elsif($code =~ /^\s*\+\s*([^ ]+)\s*$/) {
-      if(defined @ansi_name{lc($1)}) {
-         $color = @ansi_name{lc($1)};
-      } else {
-         return $txt;                               # emulate Rhost, no error
+   for my $item (split(" ",$code)) {
+      if($item =~ /^\s*<\s*(\d+)\s+(\d+)\s+(\d+)\s*>\s*$/) {
+         $out .= rgb2ansi($1,$2,$3);
+      } elsif($item=~/^\s*#\s*([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})\s*$/i ||
+         $item=~/^\s*<\s*#\s*([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})\s*>\s*$/i){
+         $out .= rgb2ansi(hex($1),hex($2),hex($3));
+      } elsif($item=~ /^\s*\+\s*([^ ]+)\s*$/) {
+         if(defined @ansi_name{lc($1)}) {
+            $out .= @ansi_name{lc($1)};
+         }
+      } elsif($code !~ /^\s*</) {
+         $out .= color($code,undef,1);
       }
-   } elsif($code =~ /^\s*</) {
-      return $txt;                                  # emulate Rhost, no error
-   } else {
-      return color($code,$txt);
    }
 
-   return "\e[38;5;$color\m$txt\e[0m";
+   return $out . $txt . "\e[0m";
 }
 
 #
@@ -10071,15 +10198,14 @@ sub fun_url
    my ($host,$path,$sock,$secure);
 
    good_args($#_,1) ||
-      return "#-1 FUNCTION (URl) EXPECTS 1 ARGUMENT";
+      return "#-1 FUNCTION (URL) EXPECTS 1 ARGUMENT";
+
+   hasflag($self,"SOCKET_INPUT") ||
+      return "#-1 FUNCTION (URL) REQUIRES SOCKET_INPUT FLAG";
 
    my $txt = evaluate($self,$prog,shift);
 
-   my $input = hasflag($self,"SOCKET_INPUT");
-
-   if(!$input) {
-      return err($self,$prog,"#-1 Permission DENIED.");
-   } elsif($txt =~ /^https:\/\/([^\/]+)\//) {
+   if($txt =~ /^https:\/\/([^\/]+)\//) {
       ($host,$path,$secure) = ($1,$',1);
    } elsif($txt =~ /^http:\/\/([^\/]+)\//) {
       ($host,$path,$secure) = ($1,$',0);
@@ -10101,10 +10227,9 @@ sub fun_url
          my $data = shift(@$buff);
 
 # wttr.in debug
-#         if($data =~ /F/)  {
+#         if($data =~ /mph/)  {
 #            printf("%s -> %s\n",$data,lord($`));
 #             printf("      '%s'\n",$data);
-#             printf("      '%s'\n",base($data));
 #         }
 
          set_var($prog,"data",$data);
@@ -10304,6 +10429,9 @@ sub fun_ord
 sub fun_chr
 {
    my ($self,$prog) = (shift,shift);
+
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (CONTROLS) EXPECTS 1 ARGUMENT";
 
    my $num = evaluate($self,$prog,shift);
 
@@ -10932,6 +11060,50 @@ sub fun_run
    }
 }
 
+sub safe_split_new
+{
+   my ($txt,$delim) = @_;
+   my ($start,$pos,@result) = (0,0);
+   my $orig = $txt;
+
+   if($delim =~ /^\s*\n\s*/m) {
+      $delim = "\n";
+   } else {
+      $delim =~ s/^\s+|\s+$//g;
+ 
+      if($delim eq " " || $delim eq undef) {
+#         $txt =~ s/\s+/ /g;
+#         $txt =~ s/^\s+|\s+$//g;
+         $delim = " ";
+      }
+   }
+
+   my $txt = ansi_init($txt);
+   my $size = ansi_length($txt);
+   my $dsize = ansi_length($delim);
+   my $ch = $$txt{ch};
+
+#   if($delim eq " ") {                                # exclude inital spaces
+#      for(;$$ch[$pos] eq " " && $pos < $size;$pos++){}; # when delim is a space
+#   }
+
+   for(;$pos < $size;$pos++) {
+      if(ansi_substr($txt,$pos,$dsize) eq $delim) {
+#         if($delim eq " ") {
+#            printf("START: '%s' = '%s'\n",$pos,$$ch[$pos]);
+#            for(;$$ch[$pos] eq " " && $pos < $size;$pos++) {};
+#            printf("END:   '%s'\n",$pos);
+#         }
+         push(@result,ansi_substr($txt,$start,$pos-$start));
+         $result[$#result] =~ s/^\s+|\s+$//g if($delim eq " ");
+         $start = $pos + $dsize;
+      }
+   }
+
+   push(@result,ansi_substr($txt,$start,$size)) if($start < $size);
+   return @result;
+}
+
 sub safe_split
 {
    my ($txt,$delim) = @_;
@@ -10953,10 +11125,21 @@ sub safe_split
    my $txt = ansi_init($txt);
    my $size = ansi_length($txt);
    my $dsize = ansi_length($delim);
-   for($pos=0;$pos < $size;$pos++) {
-      if(ansi_substr($txt,$pos,$dsize) eq $delim) {
+   my $ch = $$txt{ch};
+
+   if($delim eq " ") {                                # exclude inital spaces
+      for(;$pos < $size;$pos++) {                     # when delim is a space
+          last if(ansi_remove(ansi_substr($txt,$pos,$dsize)) ne $delim);
+      }
+   }
+
+   for(;$pos < $size;$pos++) {
+      if(ansi_remove(ansi_substr($txt,$pos,$dsize)) eq $delim) {
+         if($delim eq " ") {
+            for($pos++;$pos < $size && $$ch[$pos] eq " ";$pos++) {};
+            $pos-- if($$ch[$pos] ne " ");
+         }
          push(@result,ansi_substr($txt,$start,$pos-$start));
-         $result[$#result] =~ s/^\s+|\s+$//g if($delim eq " ");
          $start = $pos + $dsize;
       }
    }
@@ -11345,7 +11528,7 @@ sub fun_words
    good_args($#_,1,2) ||
       return "#-1 FUNCTION (WORDS) EXPECTS 1 OR 2 ARGUMENTS";
 
-   my $txt = evaluate($self,$prog,shift);
+   my $txt = trim(evaluate($self,$prog,shift));
    my $delim = evaluate($self,$prog,shift);
 
    return scalar(safe_split(ansi_remove($txt),
@@ -11429,16 +11612,15 @@ sub fun_center
 sub fun_switch
 {
    my ($self,$prog) = (shift,shift);
-   my $debug = 0;
 
    my $first = single_line(evaluate($self,$prog,trim(shift)));
 
    while($#_ >= 0) {
       if($#_ >= 1) {
-         my $txt = single_line(ansi_remove(evaluate($self,$prog,trim(shift))));
+         my $txt = single_line(evaluate($self,$prog,trim(shift)));
          my $cmd = shift;
 
-         if($txt =~ /^\s*(<|>)\s*/) {
+         if(ansi_remove($txt) =~ /^\s*(<|>)\s*/) {
              if($1 eq ">" && $first > $' || $1 eq "<" && $first < $') {
                 return evaluate($self,$prog,$cmd);
              }
@@ -11699,8 +11881,11 @@ sub fun_div
 
    return "#-1 Add requires at least two arguments" if $#_ < 1;
 
-   my $one = evaluate($self,$prog,shift);
-   my $two = evaluate($self,$prog,shift);
+   my $one = ansi_remove(evaluate($self,$prog,shift));
+   my $two = ansi_remove(evaluate($self,$prog,shift));
+
+   $one = hex(trim($one)) if($one =~ /^\s*0x([0-9a-f]{2})\s*$/i);
+   $two = hex(trim($two)) if($two =~ /^\s*0x([0-9a-f]{2})\s*$/i);
 
    if($two eq undef || $two == 0) {
       return "#-1 DIVIDE BY ZERO";
@@ -11719,8 +11904,8 @@ sub fun_fdiv
 
    return "#-1 Add requires at least two arguments" if $#_ < 1;
 
-   my $one = evaluate($self,$prog,shift);
-   my $two = evaluate($self,$prog,shift);
+   my $one = ansi_remove(evaluate($self,$prog,shift));
+   my $two = ansi_remove(evaluate($self,$prog,shift));
 
    if($two eq undef || $two == 0) {
       return "#-1 DIVIDE BY ZERO";
@@ -11739,13 +11924,21 @@ sub fun_fdiv
 sub fun_add
 {
    my ($self,$prog) = (shift,shift);
-
    my $result = 0;
+   my (@out, @before);
 
    return "#-1 Add requires at least one argument" if $#_ < 0;
 
    for my $i (0 .. $#_) {
-      $result += evaluate($self,$prog,@_[$i]);
+      push(@before,@_[$i]);
+      my $val = ansi_remove(evaluate($self,$prog,@_[$i]));
+
+      push(@out,$val);
+      if($val =~ /^\s*0x([0-9a-f]{2})\s*$/i) {
+         $result += hex(trim($val));
+      } else {
+         $result += $val;
+      }
    }
    return $result;
 }
@@ -11762,10 +11955,13 @@ sub fun_mul
    good_args($#_,1 .. 100) ||
       return "#-1 FUNCTION (MUL) EXPECTS BETWEEN 1 and 100 ARGUMENTS";
 
-   my $result = evaluate($self,$prog,shift);
+   my $result = ansi_remove(evaluate($self,$prog,shift));
+   $result = tohex($1) if($result =~ /^\s*0x([0-9a-f]{2})\s*$/i);
 
    while($#_ > -1) {
-      $result *= evaluate($self,$prog,shift);
+      my $val = ansi_remove(evaluate($self,$prog,shift));
+      $val = tohex($1) if($val =~ /^\s*0x([0-9a-f]{2})\s*$/i);
+      $result *= $val;
    }
 
    return $result;
@@ -11781,10 +11977,18 @@ sub fun_sub
 
    return "#-1 Sub requires at least one argument" if $#_ < 0;
 
-   my $result = evaluate($self,$prog,shift);
+   my $result = ansi_remove(evaluate($self,$prog,shift));
+   
+   $result = hex(trim($result)) if($result =~ /^\s*0x([0-9a-f]{2})\s*$/i);
 
    while($#_ >= 0) {
-      $result -= evaluate($self,$prog,shift);
+      my $val = ansi_remove(evaluate($self,$prog,shift));
+
+      if($val =~ /^\s*0x([0-9a-f]{2})\s*$/i) {
+         $result -= hex(trim($val));
+      } else {
+         $result -= ansi_remove(evaluate($self,$prog,shift));
+      }
    }
    return $result;
 }
@@ -11808,27 +12012,50 @@ sub fun_edit
    my ($self,$prog) = (shift,shift);
    my ($start,$out);
 
-   good_args($#_,3) ||
-      return "#-1 FUNCTION (EDIT) EXPECTS 3 ARGUMENTS";
+   good_args($#_,3,4,5) ||
+      return "#-1 FUNCTION (EDIT) EXPECTS 3 AND 5 ARGUMENTS";
 
-   my $txt  = ansi_init(evaluate($self,$prog,shift));
-   my $from = trim(ansi_remove(evaluate($self,$prog,shift)));
-   my $to   = evaluate($self,$prog,shift);
-   my $size = ansi_length($from);
+   my $txt    = evaluate($self,$prog,shift);
+   my $from   = trim(ansi_remove(evaluate($self,$prog,shift)));
+   my $to     = evaluate($self,$prog,shift);
+   my $type   = evaluate($self,$prog,shift);
+   my $strict = evaluate($self,$prog,shift);
+   my $size   = ansi_length($from);
+   $strict = 1 if($strict eq undef || ($strict ne 1 & $strict ne 2));
 
-   for(my $i = 0, $start=0;$i <= $#{$$txt{ch}};$i++) {
-      if(ansi_remove(ansi_substr($txt,$i,$size)) eq $from) {
-         if($start ne undef || $i != $start) {
-            $out .= ansi_substr($txt,$start,$i - $start);
+   if($strict == 2) {                                   # edit whole string
+      my $size   = length($from);
+      for(my $i = 0, $start = 0;$i <= length($txt);$i++) {
+         if(substr($txt,$i,$size) eq $from) {
+            if($start ne undef || $i != $start) {
+               $out .= substr($txt,$start,$i - $start);
+            }
+            $out .= $to;
+            $i += $size;
+            $start = $i;
+            last if($type);
          }
-         $out .= $to;
-         $i += $size;
-         $start = $i;
       }
-   }
-
-   if($start ne undef or $start >= $#{$$txt{ch}}) {       # add left over chars
-      $out .= ansi_substr($txt,$start,$#{$$txt{ch}} - $start + 1);
+      if($start ne undef or $start >= length($txt)) {  # add left over chars
+         $out .= substr($txt,$start,length($txt) - $start + 1);
+      }
+   } else {                                         # don't edit ansi strings
+      $txt = ansi_init($txt);
+      my $size   = ansi_length($from);
+      for(my $i = 0, $start=0;$i <= $#{$$txt{ch}};$i++) {
+         if(ansi_remove(ansi_substr($txt,$i,$size)) eq $from) {
+            if($start ne undef || $i != $start) {
+               $out .= ansi_substr($txt,$start,$i - $start);
+            }
+            $out .= $to;
+            $i += $size;
+            $start = $i;
+            last if($type);
+         }
+      }
+      if($start ne undef or $start >= $#{$$txt{ch}}) {  # add left over chars
+         $out .= ansi_substr($txt,$start,$#{$$txt{ch}} - $start + 1);
+      }
    }
 
    return $out;
@@ -11974,7 +12201,6 @@ sub fun_u
    my $prev = get_digit_variables($prog);                   # save %0 .. %9
    set_digit_variables($self,$prog,"",@arg);          # update to new values
 
-   printf("U[%s/%s]: '%s'\n",$$obj{obj_id},$attr,single_line(get($obj,$attr)));
    my $result = evaluate($self,$prog,single_line(get($obj,$attr)));
 
    set_digit_variables($self,$prog,"",$prev);            # restore %0 .. %9
@@ -12036,8 +12262,26 @@ sub fun_setq
       return "#-1 INVALID GLOBAL REGISTER"
    }
 
-   my $result = evaluate($self,$prog,shift);
-   @{$$prog{var}}{"setq_$register"} = $result;
+   @{$$prog{var}}{"setq_$register"} = evaluate($self,$prog,$_[0]);
+
+   return undef;
+}
+
+sub fun_setr
+{
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,2) ||
+      return "#-1 FUNCTION (SETQ) EXPECTS 2 ARGUMENTS";
+
+   my $register = lc(trim(evaluate($self,$prog,shift)));
+
+   if($register !~ /^\s*([0-9a-z])\s*$/) {
+      return "#-1 INVALID GLOBAL REGISTER"
+   }
+
+   @{$$prog{var}}{"setq_$register"} = evaluate($self,$prog,shift);
+   return @{$$prog{var}}{"setq_$register"};
    return undef;
 }
 
@@ -12065,11 +12309,15 @@ sub fun_extract
 {
    my ($self,$prog) = (shift,shift);
 
+   good_args($#_,3,4,5) ||
+      return "#-1 FUNCTION (EXTRACT) EXPECTS BETWEEN 3 AND 5 ARGUMENTS";
+
    my $txt    = evaluate($self,$prog,shift);
    my $first  = evaluate($self,$prog,shift);
    my $length = evaluate($self,$prog,shift);
    my $idelim = evaluate($self,$prog,shift);
    my $odelim = evaluate($self,$prog,shift);
+   my $orig = $length;
 
    my (@list,$last);
    $idelim = " " if($idelim eq undef);
@@ -12083,18 +12331,25 @@ sub fun_extract
    }
    $first--;
 
-   my $text = $txt;
-   $text =~ s/\r|\n//g;
-   $text =~ s/\n/<RETURN>/g;
-   @list = safe_split($text,$idelim);
+#  my $text = $txt;
+#   $text =~ s/\r|\n//g;
+#   $text =~ s/\n/<RETURN>/g;
+#   if($idelim eq " ") {
+#      $txt =~ s/\s+/ /g;
+#   }
+   @list = safe_split($txt,$idelim);
    if($first + $length > $#list) {
       $length = $#list - $first;
    } else {
       $length--;
    }
-   return join($odelim,@list[$first .. ($first+$length)]);
-}
 
+   if($idelim eq " ") {
+      return trim(join($odelim,@list[$first .. ($first+$length)]));
+   } else {
+      return join($odelim,@list[$first .. ($first+$length)]);
+   }
+}
 
 sub fun_remove
 {
@@ -12182,6 +12437,9 @@ sub fun_strlen
 {
    my ($self,$prog) = (shift,shift);
 
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (STRLEN) EXPECTS 1 ARGUMENTS";
+   
    return ansi_length(evaluate($self,$prog,shift));
 }
 
@@ -12586,25 +12844,62 @@ sub fun_iter
 
    good_args($#_,2 .. 4) ||
      return "#-1 FUNCTION (ITER) EXPECTS 2 AND 4 ARGUMENTS";
+   my $argc = $#_;
 
    my ($list,$txt) = ($_[0],$_[1]);
    my $idelim = evaluate($self,$prog,$_[2]);
    $idelim = " " if($idelim eq undef);
-   my $odelim = ($#_ < 3) ? " " : evaluate($self,$prog,$_[3]);
+   my $odelim = evaluate($self,$prog,$_[3]);
 
-   if($odelim =~ /^\s*\@\@\s*$/) {
-      $odelim = "";
-   }
+   $odelim = " " if(($argc < 3 && $odelim eq undef) || $odelim eq "\@\@");
 
    my @result;
 
    $$prog{iter_stack} = [] if(!defined $$prog{iter_stack});
    my $loc = $#{$$prog{iter_stack}} + 1;
    for my $item (safe_split(evaluate($self,$prog,$list),$idelim)) {
+       $item = trim($item) if ($idelim eq " ");
        @{$$prog{iter_stack}}[$loc] = { val => $item, pos => ++$count };
        my $new = $txt;
        $new =~ s/##/$item/g;
+       $new =~ s/#\@/$count/g;
        push(@result,evaluate($self,$prog,$new));
+   }
+   delete @{$$prog{iter_stack}}[$loc];
+
+   return join($odelim,@result);
+}
+
+#
+# fun_citer
+#
+sub fun_citer
+{
+   my ($self,$prog) = (shift,shift);
+   my ($count) = 0;
+   my @result;
+
+   good_args($#_,2,3) ||
+     return "#-1 FUNCTION (ITER) EXPECTS 2 OR 3 ARGUMENTS";
+   my $argc = $#_;
+
+   my $list   = evaluate($self,$prog,shift);
+   my $txt    = shift;
+   my $odelim = evaluate($self,$prog,shift);
+
+   $odelim = " " if(($argc != 2 && $odelim eq undef) || $odelim eq "\@\@");
+
+   $$prog{iter_stack} = [] if(!defined $$prog{iter_stack});
+   my $loc = $#{$$prog{iter_stack}} + 1;
+   my $data = ansi_init(evaluate($self,$prog,$list));
+
+   for my $i (0 .. $#{$$data{ch}}) {
+       my $item = ansi_substr($data,$i,1);
+       @{$$prog{iter_stack}}[$loc] = { val => $item, pos => ++$count };
+       my $new = trim($txt);
+       $new =~ s/##/$item/g;
+       $new =~ s/#\@/$count/g;
+       push(@result,trim(evaluate($self,$prog,$new)));
    }
    delete @{$$prog{iter_stack}}[$loc];
 
@@ -12642,12 +12937,19 @@ sub fun_lookup
 {
    my ($self,$prog,$name,$before,$flag) = (shift,shift,lc(shift),shift,shift);
 
-   if(!defined @fun{$name} && !$flag) {
+   if(defined @fun{lc($name)}) {
+      return lc($name);
+   } elsif(defined @info{mush_function}) {
+      my $mush = @info{mush_function};
+      return "EVAL" if(defined $$mush{lc($name)});
+   }
+   
+   if(!$flag) {
       con("undefined function '%s'\n",$name);
       con("                   '%s'\n",ansi_debug($before));
       con("%s",code("long"));
    }
-   return (defined @fun{$name}) ? $name: "huh";
+   return "huh";
 }
 
 
@@ -12695,7 +12997,7 @@ sub parse_function
 sub balanced_split
 {
    my ($txt,$delim,$type,$debug) = @_;
-   my ($last,$i,@stack,@depth,$ch,$buf) = (0,-1);
+   my ($last,$i,@stack,@depth,$ch,$buf,$found) = (0,-1);
 
    my $size = length($txt);
    while(++$i < $size) {
@@ -12727,6 +13029,7 @@ sub balanced_split
             }
          } elsif($#depth == -1) {
             if($ch eq $delim) {    # delim at right depth
+               $found = 1;
                if($type == 4) {                        # found delim, done
                   return $buf, substr($txt,$i+1);
                } else {
@@ -12735,10 +13038,11 @@ sub balanced_split
                   $buf = undef;
                }
             } elsif($type <= 2 && $ch eq ")") {                   # func end
-               push(@stack,$buf) if($buf !~ /^\s*$/);
+               push(@stack,$buf) if($found || $i != $last);
                $last = $i+1;
                $i = $size;
                $buf = undef;
+               $found = 0;
                last;                                      # jump out of loop
             } else {
                $buf .= $ch;
@@ -12757,7 +13061,7 @@ sub balanced_split
    }
 
    if($type == 3 || $type == 4) {
-      push(@stack,substr($txt,$last)) if(substr($txt,$last) !~ /^\s*$/);
+      push(@stack,substr($txt,$last)) if($found || $last != $size);
       return @stack;
    } else {
       unshift(@stack,substr($txt,$last));
@@ -12897,7 +13201,9 @@ sub evaluate
             con("undefined function: '%s'\n",$fun) if($fun eq "huh");
 
             my $start = Time::HiRes::gettimeofday();
+            $$prog{mush_function_name} = $1 if($fun eq "EVAL");
             my $r=&{@fun{$fun}}($self,$prog,@$result);
+            delete @$prog{mush_function_name};
             $$prog{function_duration} +=Time::HiRes::gettimeofday()-$start;
             $$prog{"fun_$fun"}++;
          
@@ -12931,7 +13237,9 @@ sub evaluate
             $txt = shift(@$result);
 
             my $start = Time::HiRes::gettimeofday();
+            $$prog{mush_function_name} = $unmod if($fun eq "EVAL");
             my $r = &{@fun{$fun}}($self,$prog,@$result);
+            delete @$prog{mush_function_name};
             $$prog{function_duration} +=Time::HiRes::gettimeofday()-$start;
 
             script($self,$prog,$fun,join(',',@$result),$r);
@@ -14548,7 +14856,7 @@ sub set_atr_flag
        } elsif(!db_attr_exist($object,$atr)) {
           return "#-1 UNKNOWN ATTRIBUTE ($atr).";
        } else {
-          db_set_flag($$object{obj_id},$atr,$flag,$remove ? undef : 1);
+          db_set_flag($$object{obj_id},$atr,lc($flag),$remove ? undef : 1);
           return "Set.";
        }
     } else {
@@ -15356,6 +15664,17 @@ sub obj
    }
 }
 
+sub obj_nocheck
+{
+   my $id = shift;
+
+   if(ref($id) eq "HASH") {
+      return $id;
+   } else {
+      return { obj_id => $id };
+   }
+}
+
 sub obj_import
 {
    my @result;
@@ -16158,6 +16477,15 @@ sub trim
    my $txt = shift;
 
    $txt =~ s/^ +| +$//g;
+   return $txt;
+}
+
+sub space_compress
+{
+   my $txt = shift;
+
+   $txt =~ s/^ +| +$//g;
+   $txt =~ s/\s{2,9999}/ /g;
    return $txt;
 }
 

@@ -86,7 +86,7 @@ sub load_modules
       if(!defined @info{"conf.@mod{$key}"} || @info{"conf.@mod{$key}"} == 1) {
          eval "use $key; 1;" or @info{"conf.@mod{$key}"} = -1;
          if(@info{"conf.@mod{$key}"} == -1) {
-            con("WARNING: Missing $key  module, @mod{$key} disabled\n");
+            con("WARNING: Missing $key module, @mod{$key} disabled\n");
          } elsif(!defined @info{"conf.@mod{$key}"}) {
             @info{"conf.@mod{$key}"} = 0;
          }
@@ -922,6 +922,8 @@ sub initialize_commands
    delete @command{q};                                 # no alias for QUIT
    delete @command{qu};
    delete @command{qui};
+   delete @command{va};
+   delete @command{var};
 }
  
 
@@ -2049,6 +2051,15 @@ sub cmd_var
        @{$$prog{var}}{evaluate($self,$prog,$1)}++;
     } elsif($txt =~ /^\s*([^ ]+)\-\-\s*$/) {
        @{$$prog{var}}{evaluate($self,$prog,$1)}--;
+    } elsif($txt =~ /^\s*([^ ]+)\s*\+=\s*(.*?)\s*$/) {                # append
+       my $attr = trim(evaluate($self,$prog,$1));
+       if(defined @{$$prog{var}}{$attr} && @{$$prog{var}}{$attr} ne undef) {
+          @{$$prog{var}}{evaluate($self,$prog,$1)} = 
+             @{$$prog{var}}{evaluate($self,$prog,$1)} . " " .
+             evaluate($self,$prog,$2);
+       } else {
+          @{$$prog{var}}{evaluate($self,$prog,$1)} = evaluate($self,$prog,$2);
+       }
     } elsif($txt =~ /^\s*([^ ]+)\s*=\s*(.*?)\s*$/) {
        @{$$prog{var}}{evaluate($self,$prog,$1)} = evaluate($self,$prog,$2);
     } else {
@@ -2470,7 +2481,7 @@ sub cmd_dump
                prog   => $prog,
                source => [ "\@dump completed." ],
               );
-         prune_dumps("dumps",@info{"conf.mudname"} . "\..*\.tdb");
+#         prune_dumps("dumps",@info{"conf.mudname"} . "\..*\.tdb");
       }
       return;
    } else {
@@ -2613,6 +2624,8 @@ sub cmd_dolist
        $$cmd{dolist_cmd}   = $second;
        $$cmd{dolist_list} = [safe_split(evaluate($self,$prog,$first),$delim)];
        $$cmd{dolist_count} = 0;
+       $$prog{iter_stack} = [] if(!defined $$prog{iter_stack});
+       $$cmd{dolist_loc} = $#{$$prog{iter_stack}} + 1;
    }
    $$cmd{dolist_count}++;
 
@@ -2626,7 +2639,10 @@ sub cmd_dolist
 
    if($item !~ /^\s*$/) {
       my $cmds = $$cmd{dolist_cmd};
-      $cmds =~ s/\#\#/$item/g;
+#      $cmds =~ s/\#\#/$item/g;
+      @{$$prog{iter_stack}}[$$cmd{dolist_loc}] = { val => $item, 
+                                                   pos => $$cmd{dolist_count}
+                                                 };
       delete $$prog{attr} if defined $$prog{attr};
 
       if(defined $$prog{cmd} && @{$$prog{cmd}}{source} == 1) {
@@ -5729,7 +5745,7 @@ sub cmd_set
 sub cmd_set2
 {
    my ($self,$prog) = (obj(shift),obj(shift));
-   my ($obj,$attr);
+   my ($obj,$append,$attr);
 
    return err($self,$prog,"Permission denied") if hasflag($self,"GUEST");
 
@@ -5742,30 +5758,30 @@ sub cmd_set2
       return err($self,$prog,"Unable to parse &attribute command");
    }
 
-   my $target = find($self,$prog,$obj) || # find target
-      return err($self,$prog,"I don't see that here.");
+   ($obj,$append) = ($`,1) if($obj =~ /\s*\+$/);             # flag appending
 
-#   necho(self   => $self,
-#         prog   => $prog,
-#         source => [ "OBJ: '%s'", $obj ],
-#        );
-   
+   my $target = find($self,$prog,$obj) || # find target
+      return err($self,$prog,"I don't see that here. '$obj'");
 
    if(!controls($self,$target)) {                                    # nope
       return err($self,$prog,"Permission denied");
    } elsif(reserved($attr) && !$flag) {                     # don't set that!
       return err($self,$prog,"Thats not a good name for an attribute.");
    } else {
-      if(@{$$prog{cmd}}{source} == 0) {
-         set($self,$prog,$target,$attr,trim(evaluate($self,$prog,$value)));
-      } else {
-         set($self,$prog,$target,$attr,trim($value));
+      if($append && get($target,$attr) ne undef) {
+         $append = get($target,$attr) . " ";
       }
-
-#      necho(self   => $self,
-#            prog   => $prog,
-#            source => [ "Set." ],
-#           );
+        
+      if(@{$$prog{cmd}}{source} == 0) {
+         set($self,
+             $prog,
+             $target,
+             $attr,
+             $append . trim(evaluate($self,$prog,$value))
+            );
+      } else {
+         set($self,$prog,$target,$attr,$append . trim($value));
+      }
    }
 }
 
@@ -5806,6 +5822,16 @@ sub cf_convert
    return $out . $txt;
 }
 
+sub remove_punctuation
+{
+   my $txt = shift;
+
+   if($txt =~ /\s*([:;.,"\(\)\[\]]+)\s*$/) {
+      return $`;
+   } else {
+      return $txt;
+   }
+}
 #
 # cmd_say
 #    Say something outloud to anyone in the room the player is in.
@@ -5813,20 +5839,38 @@ sub cf_convert
 sub cmd_say
 {
    my ($self,$prog,$txt,$switch) = @_;
-   my $say;
+   my $out;
 
    verify_switches($self,$prog,$switch,"noeval") || return;
 
    if(defined $$switch{noeval}) {
-      $say = $txt;
+      $out = $txt;
    } else {
-      $say = cf_convert(evaluate($self,$prog,$txt));
+      $txt = cf_convert(evaluate($self,$prog,$txt));
+ 
+      for my $word (safe_split($txt," ",1)) {
+         my $target = find($self,$prog,remove_punctuation($word));
+
+         if($target eq undef) {
+            $out .= (($out eq undef) ? "" : " ") . $word;
+         } elsif(lc(name($target,1)) eq trim(lc(remove_punctuation($word)))) {
+            my ($before,$after);
+            $before = $1 if($word =~ /^(\s+)/);           # preserve spaces
+            $after = $1 if($word =~ /([ :;.,"\(\)\[\]]+)$/);
+            $out .= (($out eq undef) ? "" : " ") . 
+                    $before .
+                    name($target) .
+                    $after;
+         } else {
+            $out .= (($out eq undef) ? "" : " ") . $word;
+         }
+      }
    }
 
    necho(self   => $self,
          prog   => $prog,
-         source => [ "You say, \"%s\"",$say ],
-         room   => [ $self, "%s says, \"%s\"",name($self),$say ],
+         source => [ "You say, \"%s\"",$out],
+         room   => [ $self, "%s says, \"%s\"",name($self),$out ],
         );
 }
 
@@ -5888,19 +5932,15 @@ sub reload_code
 
 
    for my $key (sort keys %$curr) {
-#      if(@{$$curr{$key}}{src} =~ /^#line (\d+)/) {
-#         printf("$key -> '%s'\n",$1);
-#      }
       if(@{$$prev{$key}}{chk} ne @{$$curr{$key}}{chk} || @info{reload_init}) {
          $count++;
-         con("Reloading: %-40s",$key);
-#         con("    before: '%s'\n",@{$$prev{$key}}{chk});
-#         con("    after:  '%s'\n",@{$$curr{$key}}{chk});
+
+         con("Reloading: %-40s",$key) if($self ne undef);
 
          eval(@{$$curr{$key}}{src});
 
          if($@) {
-            con("*FAILED*\n%s\n",renumber_code($@));
+            con("*FAILED*\n%s\n",renumber_code($@)) if($self ne undef);
             @{$$curr{$key}}{chk} = -1;
             if($self ne undef) {
                necho(self   => $self,
@@ -5909,8 +5949,8 @@ sub reload_code
                     );
             }
          } else {
-            con("Successful\n");
             if($self ne undef) {
+               con("Successful\n");
                necho(self   => $self,
                      prog   => $prog,
                      source => [ "Reloading %-40s Success", $key ]
@@ -5983,13 +6023,57 @@ sub nvl
 sub short_hn
 {
    my $addr = shift;
+   my ($val,$name) = (0,undef);
+   my $data;
 
-   if($addr =~ /^\s*(\d+)\.(\d+)\.(\d+)\.(\d+)\s*$/) {
-      return "$1.$2.*.*";
-   } elsif($addr =~ /[A-Za-z]/ && $addr  =~ /\.([^\.]+)\.([^\.]+)$/) {
-      return "*.$1.$2";
+   if(@info{"conf.hostmask"} =~ /^\s*(color|mask|colormask)\s*$/) {
+      if($addr =~ /^\s*(\d+)\.(\d+)\.(\d+)\.(\d+)\s*$/) {
+         $addr = "$1.$2.*.*";
+      } elsif($addr =~ /[A-Za-z]/ && $addr  =~ /\.([^\.]+)\.([^\.]+)$/) {
+         $addr = "*.$1.$2";
+      } else {
+         $addr = "*" . substr($addr,length($addr) * .3);
+      }
+
+      return $addr if @info{"conf.hostmask"} eq "mask";
+   
+      for my $i (split(//,$addr)) {
+         $val += ord($i);
+      }
+
+      if(!defined @info{short_hn}) {
+         $data = {};
+         for my $key (sort keys %ansi_name) {
+            if(@ansi_name{$key} !~ 
+               /^(15|195|222|223|224|230|253|255|118|187)$/) {
+               if($key =~ /^light/) {
+                  # skip
+               } elsif($key =~ /^deep(.*)([^\d]+)/) {
+                  $$data{$1} = $key;
+               } elsif($key =~ /^([^\d]+)/) {
+                  $$data{$1} = $key;
+               }
+            }
+         }
+         @info{short_hn} = [ sort values(%$data) ];
+      }
+      $data = @info{short_hn};
+
+      if($val > $#$data) {
+         $name = @$data[$val % $#$data];
+      } else {
+         $name = @$data[$#$data % $val];
+      }
+
+      if(@info{"conf.hostmask"} eq "colormask") {
+         return "\e[38;5;@ansi_name{$name}m$addr\e[0m";
+      } elsif($name =~ /\d+$/) {
+         return "\e[38;5;@ansi_name{$name}m$`\e[0m";
+      } else {
+         return "\e[38;5;@ansi_name{$name}m$name\e[0m";
+      }
    } else {
-      return "*" . substr($addr,length($addr) * .3);
+      return $addr;
    }
 }
 
@@ -6855,6 +6939,28 @@ sub ansi_init
       }
    }
    return $data;
+}
+
+#
+# ansi_clone
+#   Clone the ansi escape codes at a particular position to the new
+#   string.
+#
+sub ansi_clone
+{
+   my ($str,$pos,$txt) = @_;
+
+   if(ref($str) ne "HASH") {
+      $str = ansi_init($str);
+   }
+
+   my $snap = $$str{snap};
+
+   if($#$snap >= 0 && $#$snap > $pos) {
+      return join('',@{@$snap[$pos]}) . $txt . "\e[0m";
+   } else {
+      return $txt;
+   }
 }
 
 #sub ansi_debug
@@ -8087,8 +8193,9 @@ sub mushrun_add_cmd
                    source  => $$arg{source},
                    invoker => $$arg{invoker},
                    prog    => $$arg{prog},
-                   mdigits => $$arg{match}
+                   mdigits => $$arg{match},
                  };
+      $$data{wild} = $$arg{wild} if(defined $$arg{wild});
       if($$arg{child} == 1) {                         # add to top of stack
          $$data{cmd} = @cmd[$#cmd - $i];
          unshift(@$stack,$data);
@@ -8227,9 +8334,9 @@ sub mushrun
       mushrun_add_cmd(\%arg,balanced_split(@arg{cmd},";",3,1));
    }
 
-   if(defined $arg{wild}) {
-      set_digit_variables($arg{self},$arg{prog},"",@{$arg{wild}}); # copy %0-%9
-   }
+#   if(defined $arg{wild}) {
+#      set_digit_variables($arg{self},$arg{prog},"",@{$arg{wild}}); # copy %0-%9
+#   }
    return @arg{prog};
 }
 
@@ -8253,14 +8360,12 @@ sub set_digit_variables
 
    if(ref($_[0]) eq "HASH") {
       my $new = shift;
-#      for my $i (keys %$new) {
        for my $i (0 .. 9) {
          @{$$prog{var}}{$sub . $i} = "$$new{$i}";
       }
    } else {
       my @var = @_;
 
-#      for my $i ( 0 .. (($#_ > 9) ? $#_ : 9)) {
       for my $i ( 0 .. 9 ) {
          @{$$prog{var}}{$sub . $i} = "$var[$i]";
       }
@@ -8488,15 +8593,23 @@ sub run_internal
    }
 
    if($$command{source} == 1  || money($$command{runas}) > 0) {
-       my $result = &{@{$$hash{$cmd}}{fun}}($$command{runas},
-                                            $prog,
-                                            trim($arg),
-                                            \%switch
-                                           );
-       $$prog{command_duration} += Time::HiRes::gettimeofday() - $start;
-       $$prog{command}++;
+      if(defined $$command{wild}) {
+         set_digit_variables($$command{runas},                    # copy %0-%9
+                             $prog,
+                             "",
+                             @{$$command{wild}}
+                            );
+      }
+         
+      my $result = &{@{$$hash{$cmd}}{fun}}($$command{runas},
+                                           $prog,
+                                           trim($arg),
+                                           \%switch
+                                          );
+      $$prog{command_duration} += Time::HiRes::gettimeofday() - $start;
+      $$prog{command}++;
     #   $$prog{"command_$cmd"}++;
-       return $result;
+      return $result;
    }
 }
 
@@ -9816,11 +9929,24 @@ sub fun_trim
 sub fun_escape
 {
    my ($self,$prog,$txt) = (obj(shift),shift);
+   my $out;
 
-   my $txt = evaluate($self,$prog,shift);
+   my $str = ansi_init(evaluate($self,$prog,shift));
 
-   $txt =~ s/([%\\\[\]{};,()])/\\\1/g;
-   return "\\" . $txt;
+   for my $i (0 .. $#{$$str{ch}}) {
+      if(@{$$str{ch}}[$i] eq "%" ||
+         @{$$str{ch}}[$i] eq "\\" ||
+         @{$$str{ch}}[$i] eq "[" ||
+         @{$$str{ch}}[$i] eq "]" ||
+         @{$$str{ch}}[$i] eq "(" ||
+         @{$$str{ch}}[$i] eq ")" ||
+         @{$$str{ch}}[$i] eq ";") {
+         $out .= join('',@{@{$$str{code}}[$i]}) . "\\" . @{$$str{ch}}[$i];
+      } else {
+         $out .= join('',@{@{$$str{code}}[$i]}) . @{$$str{ch}}[$i];
+      }
+   }
+   return "\\" . $out;
 }
 #
 # fun_mod
@@ -11106,7 +11232,7 @@ sub safe_split_new
 
 sub safe_split
 {
-   my ($txt,$delim) = @_;
+   my ($txt,$delim,$flag) = @_;
    my ($start,$pos,@result) = (0,0);
    my $orig = $txt;
 
@@ -11127,7 +11253,7 @@ sub safe_split
    my $dsize = ansi_length($delim);
    my $ch = $$txt{ch};
 
-   if($delim eq " ") {                                # exclude inital spaces
+   if($delim eq " " && !$flag) {                      # exclude inital spaces
       for(;$pos < $size;$pos++) {                     # when delim is a space
           last if(ansi_remove(ansi_substr($txt,$pos,$dsize)) ne $delim);
       }
@@ -11737,7 +11863,7 @@ sub fun_after
    if($loc == -1) {
       return undef;
    } else {
-      my $result = substr(evaluate($self,$prog,$txt),$loc + length($after));
+      my $result = substr($txt,$loc + length($after));
       $result =~ s/^\s+//g;
       return $result;
    }
@@ -12016,7 +12142,8 @@ sub fun_edit
       return "#-1 FUNCTION (EDIT) EXPECTS 3 AND 5 ARGUMENTS";
 
    my $txt    = evaluate($self,$prog,shift);
-   my $from   = trim(ansi_remove(evaluate($self,$prog,shift)));
+   my $from   = ansi_remove(evaluate($self,$prog,trim(shift)));
+#   my $from   = trim(ansi_remove(evaluate($self,$prog,shift)));
    my $to     = evaluate($self,$prog,shift);
    my $type   = evaluate($self,$prog,shift);
    my $strict = evaluate($self,$prog,shift);
@@ -12047,7 +12174,7 @@ sub fun_edit
             if($start ne undef || $i != $start) {
                $out .= ansi_substr($txt,$start,$i - $start);
             }
-            $out .= $to;
+            $out .= ansi_clone($txt,$i,$to);
             $i += $size;
             $start = $i;
             last if($type);
@@ -12428,7 +12555,7 @@ sub fun_ljust
    } elsif($size !~ /^\s*(\d+)\s*$/) {
       return "#-1 ljust expects a numeric value for the second argument";
    } else {
-      my $sub = ansi_substr(evaluate($self,$prog,$txt),0,$size);
+      my $sub = ansi_substr($txt,0,$size);
       return $sub . ($fill x ($size - ansi_length($sub)));
    }
 }
@@ -12850,7 +12977,6 @@ sub fun_iter
    my $idelim = evaluate($self,$prog,$_[2]);
    $idelim = " " if($idelim eq undef);
    my $odelim = evaluate($self,$prog,$_[3]);
-
    $odelim = " " if(($argc < 3 && $odelim eq undef) || $odelim eq "\@\@");
 
    my @result;
@@ -12861,7 +12987,7 @@ sub fun_iter
        $item = trim($item) if ($idelim eq " ");
        @{$$prog{iter_stack}}[$loc] = { val => $item, pos => ++$count };
        my $new = $txt;
-       $new =~ s/##/$item/g;
+#       $new =~ s/##/$item/g;
        $new =~ s/#\@/$count/g;
        push(@result,evaluate($self,$prog,$new));
    }
@@ -13425,10 +13551,10 @@ sub http_reply
    http_out($s,"Connection: close");
    http_out($s,"Content-Type: text/html; charset=ISO-8859-1");
    http_out($s,"");
-   http_out($s,"%s\n",evaluate($$prog{user},
+   http_out($s,"%s\n",ansi_remove(evaluate($$prog{user},
                                $prog,
                                @info{"conf.httpd_template"}
-                              )
+                              ))
            );
    http_out($s,"<body>\n");
    http_out($s,"<div id=\"Content\">\n");
@@ -13467,7 +13593,9 @@ sub http_out
 {
    my ($s,$fmt,@args) = @_;
 
-   printf({@{@http{$s}}{sock}} "$fmt\r\n", @args) if(defined @http{$s});
+   if(defined @http{$s}) {
+      printf({@{@http{$s}}{sock}} "$fmt\r\n", @args);
+   }
 }
 
 #
@@ -14006,7 +14134,7 @@ sub evaluate_substitutions
    my ($out,$seq,$debug);
 
    my $orig = $t;
-   while($t =~ /(\[|\]|\\|%m[0-9]|%q[0-9a-z]|%i[0-9]|%[!pbrtnk#0-9%]|%(v|w)[a-zA-Z]|\[|\]|%=<[^>]+>|%\{[^}]+\})/i) {
+   while($t =~ /(##|\[|\]|\\|%m[0-9]|%q[0-9a-z]|%i[0-9]|%[!pbrtnk#0-9%]|%(v|w)[a-zA-Z]|\[|\]|%=<[^>]+>|%\{[^}]+\})/i) {
       ($seq,$t)=($1,$');                                   # store variables
       $out .= $`;
 
@@ -14063,6 +14191,12 @@ sub evaluate_substitutions
          if(defined $$prog{cmd} && 
             defined @{$$prog{cmd}}{mdigits}) {
             $out .= @{@{$$prog{cmd}}{mdigits}}{$1};
+         }
+      } elsif($seq eq "##") {
+         if(defined $$prog{iter_stack}) {
+            $out .= fun_itext($self,$prog,0);
+         } else {
+            $out .= "##";
          }
       } elsif($seq =~ /^%i([0-9])$/) {
          if(defined $$prog{iter_stack}) {
@@ -17378,6 +17512,20 @@ sub post_db_read_fix
    }
 }
 
+sub fudge
+{
+   my $txt = shift;
+
+#   return $txt;
+   if($txt < 3) {
+      return $txt;
+   } elsif($txt == 3) {
+      return -99999999;
+   } else {
+      return ($txt - 1);
+   }
+}
+
 #
 # db_read_import
 #    Read a mush flat file and put it at the "end" of the database.
@@ -17388,6 +17536,7 @@ sub db_read_import
 {
    my ($self,$prog,$file) = @_;
    my ($inattr,$id,$pos,$lock,$attr_id,%attr,$name,%impflag,$prev) = (1, undef);
+   my $unnamed = 0;
 
    # The data from the flags.h and attrs.h could be hard coded into the
    # db but reading it from the source will probably allow for different
@@ -17437,6 +17586,7 @@ sub db_read_import
       return err($self,$prog,"Could not open file '%s' for reading",$file);
 
    while(<FILE>) {
+      $_ = $1 if($_ =~ /^"(.*)"$/);
       if($_ =~ /$/) {
          $prev = $_;
          next;
@@ -17448,48 +17598,53 @@ sub db_read_import
       s/\r|\n//g;
       if($. == 1 || $. == 2 || $. == 3) {
 #         printf("# $_\n");
-      } elsif($inattr && /^\+A(\d+)$/) {
+      } elsif($inattr && /^\+A(\d+)$/) {                           # attr id
          $id = $1;
-      } elsif($inattr && $id ne undef && /^(\d+):([^ ]+)$/) {
+      } elsif($inattr && $id ne undef &&                    # attr flag/name
+              (/^(\d+):([^ ]+)$/ || /^"(\d+):([^ ]+)"$/)) {
          @attr{$id} = $2;
          $id = undef;
-      } elsif(/^!(\d+)$/) {
+      } elsif(/^!(\d+)$/) {                                     # new object
          $inattr = 0;
          $id = $1;
          $pos = $.;
+         $unnamed = 1;
+         db_set($id+$start,"imported_dbref",$id);
       } elsif($inattr) {
          printf("INATTR[$.,%s]: '$_'\n",$. - $pos);
-         exit();
-      } elsif($.  - $pos == 1) {                                   # name
+#         exit();
+      } elsif(fudge($.  - $pos) == 1) {                                # name
          $name = $_;
          db_set($id+$start,"obj_name",$_);
          db_set($id+$start,"obj_cname",$_);
-      } elsif($.  - $pos == 2) {
+      } elsif(fudge($.  - $pos) == 2) {
          db_set($id+$start,"obj_location",($_ == -1) ? -1 : ($_+$start));
-      } elsif($.  - $pos == 3) {
+      } elsif(fudge($.  - $pos) == 3) {
          db_set_list($id+$start,"obj_content",($_ == -1) ? -1 : ($_+$start));
-      } elsif($.  - $pos == 4) {
+      } elsif(fudge($.  - $pos) == 4) {
          db_set_list($id+$start,"obj_exits",($_ == -1) ? -1 : ($_+$start));
-      } elsif($.  - $pos == 5) {
+      } elsif(fudge($.  - $pos) == 5) {
          db_set($id+$start,"obj_home",$_+$start);
-      } elsif($.  - $pos == 6) {          # unused, but needed during clean up
+      } elsif(fudge($.  - $pos) == 6) {    # unused, but needed during clean up
          db_set($id+$start,"obj_next",($_ == -1) ? -1 : ($_+$start));
-      } elsif($lock ne undef || $.  - $pos == 7) {
+      } elsif($lock ne undef || fudge($.  - $pos) == 7) {
          $lock .= $_;
-         if(balanced($lock)) {
+         if(($lock =~ /\(/ && balanced($lock)) || $_ eq undef) {
             db_set($id+$start,"obj_lock_default",$lock);
             $lock = undef;
          } else {
             $pos++;
          }
-      } elsif($.  - $pos == 8) {
+      } elsif(fudge($.  - $pos) == 8) {
          db_set($id+$start,"obj_owner",($_ == -1) ? -1 : ($_+$start));
-      } elsif($.  - $pos == 9) {
-         # printf("$id-PARENT[%s]? '%s'\n",$. - $pos,$_);     # unsupported
-      } elsif($.  - $pos == 10) {
+      } elsif(fudge($.  - $pos) == 9) {
+         db_set($id+$start,"A_PARENT",$_);
+      } elsif(fudge($.  - $pos) == 10) {
          db_set($id+$start,"obj_money",$_);
-      } elsif($.  - $pos == 11) {
+      } elsif(fudge($.  - $pos) == 11) {
+         my %list;
          for my $flag (decode_flags(\%impflag,$_,1)) {
+            @list{$flag} = 1;
             if(defined @flag{uc($flag)}) {
                db_set_list($id+$start,"obj_flag",lc($flag));
             }
@@ -17499,14 +17654,18 @@ sub db_read_import
                db_set($id+$start,"obj_cname","imp_$name");
             }
          }
+         if(!defined @list{PLAYER} && !defined @list{ROOM}) {
+            db_set_list($id+$start,"obj_flag","object");
+         }
          db_set_list($id+$start,"obj_flag","imported");
-      } elsif($.  - $pos == 12) {
+      } elsif(fudge($.  - $pos) == 12) {
          for my $flag (decode_flags(\%impflag,$_,2)) {
             if(defined @flag{lc($flag)}) {
                db_set_list($id+$start,"obj_flag",lc($flag));
             }
          }
       } elsif($_ =~ /^>(\d+)$/) {
+         $unnamed = 0;
          db_set($id+$start,"obj_created_date",scalar localtime());
          $attr_id = $1;
       } elsif($attr_id ne undef) {
@@ -17525,8 +17684,10 @@ sub db_read_import
          $id = undef;
       } elsif(/^\*\*\*END OF DUMP\*\*\*$/) {
          # yay!
+      } elsif($unnamed == 1) {
+         # unsupported attribute type?
       } else {
-         printf("UNKNOWN[$.,%s]: '$_'\n",$. - $pos);
+#         printf("UNKNOWN[$.,%s]: '$_'\n",$. - $pos);
 #         exit();
       }
 
@@ -17535,6 +17696,7 @@ sub db_read_import
    close(FILE);
 
    post_db_read_fix($start);
+   printf("%s\n",db_object(2685));
    necho(self   => $self,
          prog   => $prog,
          source => [ "Import starts at object $start" ]

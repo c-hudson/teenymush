@@ -17,19 +17,9 @@
 # ^ = Do not attempt to compile with gcc or any other C compiler. 
 #
 use strict;
-use Carp;
 use IO::Select;
 use IO::Socket;
 use File::Basename;
-use Text::Wrap;
-use Digest::SHA qw(sha1 sha1_hex);
-use Time::HiRes "ualarm";
-use Scalar::Util qw(looks_like_number);
-use Time::Local;
-use Math::BigInt;
-$Text::Wrap::huge = 'overflow';
-use POSIX;
-use Fcntl qw( SEEK_END SEEK_SET);
 
 #
 #    Certain variables can not be re-loaded or the MUSH will forget about
@@ -56,7 +46,9 @@ my (%command,                  #!# commands for after player has connected
     %info,                     #!# misc info storage
     $user,                     #!# current user details
     $enactor,                  #!# object who initated the action
+    %cache,                    #!# cached data from sql database
     %c,                        #!#
+    %default,                  #!# default values for config.
     %engine,                   #!# process holder for running
     %ansi_rgb,                 #!# color number to rgb code
     %ansi_name,                #!# color names to 256 color id
@@ -80,7 +72,7 @@ sub load_modules
 {
    my %mod = (
       'URI::Escape'            => 'httpd',    
-#      'DBI'                    => 'mysqldb',   
+      'DBI'                    => 'mysqldb',   
       'Net::WebSocket::Server' => 'websocket',
       'Net::HTTPS::NB'         => 'url_https',
       'Net::HTTP::NB'          => 'url_http',      
@@ -88,23 +80,56 @@ sub load_modules
       'Digest::MD5'            => 'md5',
       'File::Copy'             => 'copy',
       'HTML::Restrict'         => 'html_restrict',   # libhtml-restrict-perl
-      'MIME::Base64'           => 'mime',
-      'Compress::Zlib'         => 'compress',
    );
 
    for my $key (keys %mod) {
-      if(!defined @info{"@mod{$key}"} || @info{"@mod{$key}"} == 1) {
-         eval "use $key; 1;" or @info{"@mod{$key}"} = -1;
-         if(@info{"@mod{$key}"} == -1) {
+      if(!defined @info{"conf.@mod{$key}"} || @info{"conf.@mod{$key}"} == 1) {
+         eval "use $key; 1;" or @info{"conf.@mod{$key}"} = -1;
+         if(@info{"conf.@mod{$key}"} == -1) {
             con("WARNING: Missing $key module, @mod{$key} disabled\n");
-         } elsif(!defined @info{"@mod{$key}"}) {
-            @info{"@mod{$key}"} = 0;
+         } elsif(!defined @info{"conf.@mod{$key}"}) {
+            @info{"conf.@mod{$key}"} = 0;
          }
       }
    }
 }
 
                                                                                 
+#
+# mysqldb
+#    Return 0/1 if the MUSH is using mysql
+#
+sub mysqldb                                                                     
+{                                                                               
+   if(@info{"conf.mysqldb"} == 1 && @info{"conf.memorydb"} == 1) {              
+      die("Only conf.mysqldb or conf.memorydb may be defined as 1");            
+   } elsif(@info{"conf.mysqldb"} == 1) {                                        
+      return 1;                                                                 
+   } else {                                                                     
+      return 0;                                                                 
+   }                                                                            
+}                                                                               
+                                                                                
+#
+# memorydb 
+#    Return 0/1 if the MUSH is using a memory based database . Default to 
+#    memory db if neither is specified.
+#
+sub memorydb                                                                    
+{                                                                               
+#   @info{"conf.memorydb"} = 1;
+#   @info{"conf.mysqldb"} = 0;
+   if(@info{"conf.mysqldb"} == 1  && @info{"conf.memorydb"} == 1) {             
+      die("Only conf.mysqldb or conf.memorydb may be defined as 1");            
+   } elsif(@info{"conf.mysqldb"} == 0  && @info{"conf.memorydb"} == 0) {
+      return 1;
+   } elsif(@info{"conf.memorydb"} == 1) {                                       
+      return 1;                                                                 
+   } else {                                                                     
+      return 0;                                                                 
+   }                                                                            
+} 
+
 #
 # getfile
 #    Load a file into memory and return the contents of that file.
@@ -157,18 +182,18 @@ sub getbinfile
    return $content;
 }
 
-sub load_defaults
+sub load_config_default
 {
-   my %default;
+   delete @default{keys %default};
 
    @default{money_name_plural}        = "Pennies";
    @default{money_name_singular}      = "Penny";
    @default{paycheck}                 = 50;
-   @default{starting_room}            = 1;
    @default{starting_money}           = 150;
    @default{linkcost}                 = 1;
    @default{digcost}                  = 10;
    @default{createcost}               = 10;
+   @default{backup_interval}          = 3600;                  # once an hour
    @default{function_invocation_limit}= 2500;
    @default{weblog}                   = "teenymush.web.log";
    @default{conlog}                   = "teenymush.log";
@@ -181,11 +206,208 @@ sub load_defaults
    @default{badsite}                  = "Your site has been banned.";
    @default{httpd_template}           = "<pre>";
    @default{mudname}                  = "TeenyMUSH";
-   @default{port}                     = "4096";
+}
 
-   
-   for my $i (keys %default) {
-      set(obj(0),{},0,"conf.$i",@default{$i}) if(conf($i) eq undef);
+#
+# read_config
+#    Read the configuration file for TeenyMUSH. If an option is set to
+#    -1, then don't reload that option. -1 Options are considered disabled
+#    because of missing modules.
+#
+sub read_config
+{
+   my $flag = shift;
+   my ($count,$fn)=(0,undef);
+
+   if($0 =~ /\.([^\.]+)$/ && -e "$1.conf.dev") {
+      $fn = "$1.conf.dev";
+   } elsif($0 =~ /\.([^\.]+)$/ && -e "$1.conf") {
+      $fn = "$1.conf";
+   } elsif(-e "teenymush.conf.dev") {
+      $fn = "teenymush.conf.dev";
+   } else {
+      $fn = "teenymush.conf";
+   }
+
+   if(!-e $fn) {
+      @info{"conf.mudname"} = "TeenyMUSH" if @info{"conf.mudname"} eq undef;
+      return;
+   }
+
+   con("Reading Config: $fn\n") if $flag;
+   for my $line (split(/\n/,getfile($fn))) {
+      $line =~ s/\r|\n//g;
+      if($line =~/^\s*#/ || $line =~ /^\s*$/) {
+         # comment or blank line, ignore
+      } elsif($line =~ /^\s*([^ =]+)\s*=\s*#(\d+)\s*$/) {
+         @info{$1} = $2 if @info{$1} != -1
+      } elsif($line =~ /^\s*([^ =]+)\s*=\s*(.*?)\s*$/) {
+         @info{$1} = $2 if @info{$1} != -1
+      } else {
+         con("Invalid data in $fn:\n") if($count == 0);
+         con("    '%s'\n",$line);
+         $count++;
+      }
+   }
+
+   load_config_default();
+}
+
+
+
+#
+# prompt
+#    prompt the user for input
+#
+sub prompt
+{
+   my $txt = shift;
+   my $result;
+
+   $| = 1;                                        # set input to unbuffered
+
+   while($result eq undef) {
+      con("%s ",$txt);                                     # show prompt
+      $result = <STDIN>;                         # grab one line from stdin
+      $result =~ s/^\s+|\s+$//g;
+      $result =~ s/\n|\r//g;                 # strip leading spaces/returns
+   }
+   return $result;
+}
+
+sub write_to_file
+{
+   my ($fn,$data,$flag) = @_;
+   my $file;
+
+   if($flag && -e $fn) {
+      die("Source file $fn already exists, not over-writing");
+   }
+ 
+   con("Writing out: %s\n",$fn);
+
+   open($file,"> $fn") ||
+      die("Could not open $fn for writing");
+ 
+   if(ref($data) eq "ARRAY") {
+      printf($file "%s",join("\n",@$data));
+   } else {
+      printf($file "%s",$data);
+   }
+
+   close($file);
+}
+
+#
+# get_credentials
+#    Prompt the user for database credentials, if needed.
+#
+sub get_credentials
+{
+   my ($file,%save);
+
+   return if memorydb;
+   if(@info{user} =~ /^\s*$/) {
+      @info{user} = prompt("Enter database user: ");
+      @save{user} = @info{user};
+   }
+   if(@info{pass} =~ /^\s*$/) {
+      @info{pass} = prompt("Enter database password: ");
+      @save{pass} = @info{pass};
+   }
+   if(@info{database} =~ /^\s*$/) {
+      @info{database} = prompt("Enter database name: ");
+      @save{database} = @info{database};
+   }
+   if(@info{host} =~ /^\s*$/) {
+      @info{host} = prompt("Enter database host: ");
+      @save{host} = @info{host};
+   }
+
+   return if scalar keys %save == -1;
+  
+   open($file,">> teenymush.conf") ||                # write to teenymush.conf
+     die("Could not append to teenymush.conf");
+
+   for my $key (keys %save) {                                   # save data
+      printf($file "%s=%s\n",$key,@save{$key});
+   }
+   close($file);                                                     # done
+}
+
+#
+# load_new_db
+#    Check to see if there has been a database loaded, if not
+#    prompt to load the default database
+#
+sub load_new_db
+{
+   my $result;
+
+   return if(memorydb);
+   return if(one_val("select count(*) value ".
+                     "  from information_schema.tables  " .
+                     " where table_name = 'object' " .
+                     "   and table_schema = database()"
+                    ) != 0);
+
+   con("##############################################################\n");
+   con("##                                                          ##\n");
+   con("##                  Empty database found                    ##\n");
+   con("##                                                          ##\n");
+   con("##############################################################\n");
+   @info{no_db_found} = 1;
+
+   con("\nDatabase: %s@%s on %s\n\n",
+          @info{user},@info{database},$info{host});
+   while($result ne "y" && $result ne "yes") {
+       $result = prompt("No database found, load default database [yes/no]?");
+
+       if($result eq "n" || $result eq "no") {
+          return;
+       }
+   }
+   con("Default database creation log: tm_db_create.log");
+   system("mysql -u @info{user} -p{pass} {database} " .
+          "< base_structure.sql >> tm_db_create.log");
+   system("mysql -u @info{user} -p@info{pass} {database} " .
+          " < base_objects.sql >> tm_db_create.log");
+   system("mysql -u @info{user} -p@info{pass} @info{database} " .
+          " < base_inserts.sql >> tm_db_create.log");
+   delete @info{no_db_found};
+}
+
+#
+# load_db_backup
+#    A tm_backup.sql file was found, so mysql will be invoke to reload
+#    the database from thsi file.
+#
+sub load_db_backup
+{
+   my $result;
+
+   return if memorydb;
+   return if(!defined @info{no_db_found} || arg("restore"));
+
+   if(!-e "tm_backup.sql") {
+      con("\nLoading backup requires backup stored as tm_backup.sql\n\n");
+      con("tm_backup.sql file not found, aborting.\n");
+      exit();
+   }
+
+   while($result ne "y" && $result ne "yes") {
+       $result = prompt("Load database backup from tm_backup.sql [yes/no]? ");
+
+       if($result eq "n" || $result eq "no") {
+          exit();
+          return;
+       }
+   }
+   system("mysql -u @info{user} -p@info{pass} @info{database} < " .
+          "tm_backup.sql >> tm_db_load.log");
+   if(!rename("tm_backup.sql","tm_backup.sql.loaded")) {
+      con("WARNING: Unable to rename tm_backup.sql, backup will be " .
+             "reloaded upon next run unless the file is renamed/deleted.");
    }
 }
 
@@ -202,47 +424,20 @@ sub arg
    return 0;
 }
 
-sub process_commandline
-{
-   my $hit  = 0;
-
-   for my $i (0 .. $#ARGV) {             # set conf attributes from cmdline
-      if(@ARGV[$i] =~ /^--D([^=]+)=/) {
-         if($' eq undef) {
-            con("%s   Deleting conf.%s setting\n",
-                ($hit == 0) ? "\n" : "",$1,$');
-         } else {
-            con("%s   Setting conf.%s to %s\n",($hit == 0) ? "\n" : "",$1,$');
-         }
-         set(obj(0),{},0,"conf.$1",$');
-         $hit = 1;
-      }
-   }
-
-   if($hit) {
-     printf("\nShutting down as per commandline defines.\n");
-     exit(0);
-   }
-}
-
-#
-# main
-#   The one that rules them all
-#
 sub main
 {
-   # trap signal HUP and try to reload the code
    $SIG{HUP} = sub {
       my $count = reload_code();
       delete @engine{keys %engine};
       con("HUP signal caught, reloading: %s\n",$count ? $count : "none");
    };
 
-   # trap signal INIT and try to dump the database
-   $SIG{'INT'} = sub {  con("**** Program Exiting ******\n");
-                        cmd_dump(obj(0),{},"CRASH");
-                        @info{crash_dump_complete} = 1;
-                        con("**** Dump Complete Exiting ******\n");
+   $SIG{'INT'} = sub {  if(memorydb && $#db > -1) {
+                           con("**** Program Exiting ******\n");
+                           cmd_dump(obj(0),{},"CRASH");
+                           @info{crash_dump_complete} = 1;
+                           con("**** Dump Complete Exiting ******\n");
+                        }
                         exit(1);
                      };
 
@@ -251,22 +446,50 @@ sub main
    @info{version} = "TeenyMUSH 0.9";
    @info{max} = 78;
 
-   initialize_functions(); 
-   initialize_ansi();
-   initialize_commands();
-   initialize_flags();
-   @info{source_prev} = get_source_checksums(1);
+   read_config(1);                                               #!# load once
+   get_credentials();
+
+   load_new_db();                                     #!# optional new db load
+   load_db_backup();                                    #!#
+   find_free_dbrefs();                                  #!# search for garbage
+
+   initialize_functions();                              #!#
+   initialize_ansi();                                   #!#
+   initialize_commands();                               #!#
+   initialize_flags();                                  #!#
+   @info{source_prev} = get_source_checksums(1);        #!#
    reload_code();
-
-   load_db();
-
-   load_defaults();
-   find_free_dbrefs();
-
-   process_commandline();
-
    server_start();                                      #!# start only once
 }
+
+# #!/usr/bin/perl
+#
+# tm_compat.pl
+#    Any code required for compatiblity when a file/module does not load.
+#
+
+
+sub my_commit   
+{        
+   return;
+}
+
+sub my_rollback
+{        
+   return;
+}       
+# #!/usr/bin/perl
+#
+# tm_commands.pl
+#    All user commands should be stored here, except for those which are
+#    not. Check tm_putitsomewherelese.pl if it isn't here.
+#
+
+
+
+use Text::Wrap;
+# use Devel::Size qw(size total_size);
+use Digest::SHA qw(sha1 sha1_hex);
 
 sub initialize_ansi
 {
@@ -575,128 +798,132 @@ sub initialize_commands
    delete @command{keys %command};
    delete @offline{keys %offline};
 
-   @offline{connect}        = sub { return cmd_connect(@_);                 };
-   @offline{who}            = sub { return cmd_who(@_);                     };
-   @offline{create}         = sub { return cmd_pcreate(@_);                 };
-   @offline{quit}           = sub { return cmd_quit(@_);                    };
-   @offline{huh}            = sub { return cmd_offline_huh(@_);             };
-   @offline{screenwidth}    = sub { return;                                 };
-   @offline{screenheight}   = sub { return;                                 };
+   @offline{connect}     = sub { return cmd_connect(@_);                    };
+   @offline{who}         = sub { return cmd_who(@_);                        };
+   @offline{create}      = sub { return cmd_pcreate(@_);                    };
+   @offline{quit}        = sub { return cmd_quit(@_);                       };
+   @offline{huh}         = sub { return cmd_offline_huh(@_);                };
+   @offline{screenwidth} = sub { return;                                    };
+   @offline{screenheight}= sub { return;                                    };
    # ------------------------------------------------------------------------#
-   @command{screenwidth}    ={ fun => sub { return 1;}                      };
-   @command{screenheight}   ={ fun => sub { return 1;}                      };
-   @command{"\@function"}   ={ fun => sub { return &cmd_function(@_);}      };
-   @command{"\@perl"}       ={ fun => sub { return &cmd_perl(@_); }         };
-   @command{say}            ={ fun => sub { return &cmd_say(@_); }          };
-   @command{"\""}           ={ fun => sub { return &cmd_say(@_); },  nsp=>1 };
-   @command{"`"}            ={ fun => sub { return &cmd_to(@_); },   nsp=>1 };
-   @command{"&"}            ={ fun => sub { return &cmd_set2(@_); }, nsp=>1 };
-   @command{"\@reload"}     ={ fun => sub { return &cmd_reload_code(@_); }  };
-   @command{pose}           ={ fun => sub { return &cmd_pose(@_); }         };
-   @command{":"}            ={ fun => sub { return &cmd_pose(@_); }, nsp=>1 };
-   @command{";"}            ={ fun => sub { return &cmd_pose(@_,1); },nsp=>1};
-   @command{"emote"}        ={ fun => sub { return &cmd_pose(@_,1); },nsp=>1};
-   @command{"\\"}           ={ fun => sub { return &cmd_slash(@_,1);},nsp=>1};
-   @command{who}            ={ fun => sub { return &cmd_who(@_); }          };
-   @command{whisper}        ={ fun => sub { return &cmd_whisper(@_); }      };
-   @command{w}              ={ fun => sub { return &cmd_whisper(@_); }      };
-   @command{doing}          ={ fun => sub { return &cmd_DOING(@_); }        };
-   @command{"\@doing"}      ={ fun => sub { return &cmd_doing(@_); }        };
-   @command{"\@poll"}       ={ fun => sub { return &cmd_doing(@_[0],@_[1],
-                                               @_[2],{ header=>1}); }       };
-   @command{help}           ={ fun => sub { return &cmd_help(@_); }         };
-   @command{"\@dig"}        ={ fun => sub { return &cmd_dig(@_); }          };
-   @command{"\@idesc"}      ={ fun => sub { return &cmd_generic_set(@_); }  };
-   @command{"\@parent"}     ={ fun => sub { return &cmd_parent(@_); }       };
-   @command{"look"}         ={ fun => sub { return &cmd_look(@_); }         };
-   @command{"l"}            ={ fun => sub { return &cmd_look(@_); }         };
-   @command{quit}           ={ fun => sub { return cmd_quit(@_); }          };
-   @command{"\@trigger"}    ={ fun => sub { return cmd_trigger(@_); }       };
-   @command{"\@set"}        ={ fun => sub { return cmd_set(@_); }           };
-   @command{"\@cls"}        ={ fun => sub { return cmd_clear(@_); }         };
-   @command{"\@create"}     ={ fun => sub { return cmd_create(@_); }        };
-   @command{"print"}        ={ fun => sub { return cmd_print(@_); }         };
-   @command{"go"}           ={ fun => sub { return cmd_go(@_); }            };
-   @command{"home"}         ={ fun => sub { return cmd_go($_[0],$_[1],
-                                               "home");}                    };
-   @command{"examine"}      ={ fun => sub { return cmd_ex(@_); }            };
-   @command{"ex"}           ={ fun => sub { return cmd_ex(@_); }            };
-   @command{"e"}            ={ fun => sub { return cmd_ex(@_); }            };
-   @command{"\@last"}       ={ fun => sub { return cmd_last(@_); }          };
-   @command{page}           ={ fun => sub { cmd_page(@_); }                 };
-   @command{p}              ={ fun => sub { cmd_page(@_); }                 };
-   @command{take}           ={ fun => sub { cmd_take(@_); }                 };
-   @command{get}            ={ fun => sub { cmd_take(@_); }                 };
-   @command{drop}           ={ fun => sub { cmd_drop(@_); }                 };
-   @command{"\@force"}      ={ fun => sub { cmd_force(@_); }                };
-   @command{inventory}      ={ fun => sub { cmd_inventory(@_); }            };
-   @command{i}              ={ fun => sub { cmd_inventory(@_); }            };
-   @command{enter}          ={ fun => sub { cmd_enter(@_); }                };
-   @command{leave}          ={ fun => sub { cmd_leave(@_); }                };
-   @command{"\@name"}       ={ fun => sub { cmd_name(@_); }                 };
-   @command{"\@moniker"}    ={ fun => sub { cmd_name(@_); }                 };
-   @command{"\@describe"}   ={ fun => sub { cmd_generic_set(@_); }          };
-   @command{"\@pemit"}      ={ fun => sub { cmd_pemit(@_); }                };
-   @command{"\@emit"}       ={ fun => sub { cmd_emit(@_); }                 };
-   @command{"think"}        ={ fun => sub { cmd_think(@_); }                };
-   @command{"version"}      ={ fun => sub { cmd_version(@_); }              };
-   @command{"\@version"}    ={ fun => sub { cmd_version(@_); }              };
-   @command{"\@link"}       ={ fun => sub { cmd_link(@_); }                 };
-   @command{"\@teleport"}   ={ fun => sub { cmd_teleport(@_); }             };
-   @command{"\@tel"}        ={ fun => sub { cmd_teleport(@_); }             };
-   @command{"\@open"}       ={ fun => sub { cmd_open(@_); }                 };
-   @command{"\@uptime"}     ={ fun => sub { cmd_uptime(@_); }               };
-   @command{"\@destroy"}    ={ fun => sub { cmd_destroy(@_); }              };
-   @command{"\@wipe"}       ={ fun => sub { cmd_wipe(@_); }                 };
-   @command{"\@toad"}       ={ fun => sub { cmd_toad(@_); }                 };
-   @command{"\@sleep"}      ={ fun => sub { cmd_sleep(@_); }                };
-   @command{"\@wait"}       ={ fun => sub { cmd_wait(@_); }                 };
-   @command{"\@sweep"}      ={ fun => sub { cmd_sweep(@_); }                };
-   @command{"\@list"}       ={ fun => sub { cmd_list(@_); }                 };
-   @command{"\@mail"}       ={ fun => sub { cmd_mail(@_); }                 };
-   @command{"score"}        ={ fun => sub { cmd_score(@_); }                };
-   @command{"\@telnet"}     ={ fun => sub { cmd_telnet(@_); }               };
-   @command{"\@close"}      ={ fun => sub { cmd_close(@_); }                };
-   @command{"\@reset"}      ={ fun => sub { cmd_reset(@_); }                };
-   @command{"\@send"}       ={ fun => sub { cmd_send(@_); }                 };
-   @command{"\@password"}   ={ fun => sub { cmd_password(@_); }             };
+   @command{screenwidth} ={ fun => sub { return 1;}                         };
+   @command{screenheight}={ fun => sub { return 1;}                         };
+   @command{"\@function"}={ fun => sub { return &cmd_function(@_);}         };
+   @command{"\@perl"}   = { fun => sub { return &cmd_perl(@_); }            };
+   @command{say}        = { fun => sub { return &cmd_say(@_); }             };
+   @command{"\""}       = { fun => sub { return &cmd_say(@_); },     nsp=>1 };
+   @command{"`"}        = { fun => sub { return &cmd_to(@_); },      nsp=>1 };
+   @command{"&"}        = { fun => sub { return &cmd_set2(@_); },    nsp=>1 };
+   @command{"\@reload"} = { fun => sub { return &cmd_reload_code(@_); }     };
+   @command{pose}       = { fun => sub { return &cmd_pose(@_); }            };
+   @command{":"}        = { fun => sub { return &cmd_pose(@_); },    nsp=>1 };
+   @command{";"}        = { fun => sub { return &cmd_pose(@_,1); },  nsp=>1 };
+   @command{"emote"}    = { fun => sub { return &cmd_pose(@_,1); },  nsp=>1 };
+   @command{"\\"}       = { fun => sub { return &cmd_slash(@_,1); }, nsp=>1 };
+   @command{who}        = { fun => sub { return &cmd_who(@_); }             };
+   @command{whisper}    = { fun => sub { return &cmd_whisper(@_); }         };
+   @command{w}          = { fun => sub { return &cmd_whisper(@_); }         };
+   @command{doing}      = { fun => sub { return &cmd_DOING(@_); }           };
+   @command{"\@doing"}  = { fun => sub { return &cmd_doing(@_); }           };
+   @command{"\@poll"}   = { fun => sub { return &cmd_doing(@_[0],@_[1],@_[2],
+                                                   { header=>1}); }};
+   @command{help}       = { fun => sub { return &cmd_help(@_); }            };
+   @command{"\@dig"}    = { fun => sub { return &cmd_dig(@_); }             };
+   @command{"\@idesc"}  = { fun => sub { return &cmd_generic_set(@_); }     };
+   @command{"\@parent"}  ={ fun => sub { return &cmd_parent(@_); }          };
+   @command{"look"}     = { fun => sub { return &cmd_look(@_); }            };
+   @command{"l"}        = { fun => sub { return &cmd_look(@_); }            };
+   @command{quit}       = { fun => sub { return cmd_quit(@_); }             };
+   @command{"\@trigger"}= { fun => sub { return cmd_trigger(@_); }          };
+   @command{"\@commit"} = { fun => sub { return cmd_commit(@_); }           };
+   @command{"\@set"}    = { fun => sub { return cmd_set(@_); }              };
+   @command{"\@cls"}    = { fun => sub { return cmd_clear(@_); }            };
+   @command{"\@create"} = { fun => sub { return cmd_create(@_); }           };
+   @command{"print"}    = { fun => sub { return cmd_print(@_); }            };
+   @command{"go"}       = { fun => sub { return cmd_go(@_); }               };
+   @command{"home"}     = { fun => sub { return cmd_go($_[0],$_[1],"home");} };
+   @command{"examine"}  = { fun => sub { return cmd_ex(@_); }               };
+   @command{"ex"}       = { fun => sub { return cmd_ex(@_); }               };
+   @command{"e"}        = { fun => sub { return cmd_ex(@_); }               };
+   @command{"\@last"}   = { fun => sub { return cmd_last(@_); }             };
+   @command{page}       = { fun => sub { cmd_page(@_); }                    };
+   @command{p}          = { fun => sub { cmd_page(@_); }                    };
+   @command{take}       = { fun => sub { cmd_take(@_); }                    };
+   @command{get}        = { fun => sub { cmd_take(@_); }                    };
+   @command{drop}       = { fun => sub { cmd_drop(@_); }                    };
+   @command{"\@force"}  = { fun => sub { cmd_force(@_); }                   };
+   @command{inventory}  = { fun => sub { cmd_inventory(@_); }               };
+   @command{i}          = { fun => sub { cmd_inventory(@_); }               };
+   @command{enter}      = { fun => sub { cmd_enter(@_); }                   };
+   @command{leave}      = { fun => sub { cmd_leave(@_); }                   };
+   @command{"\@name"}   = { fun => sub { cmd_name(@_); }                    };
+   @command{"\@moniker"}= { fun => sub { cmd_name(@_); }                    };
+   @command{"\@describe"}={ fun => sub { cmd_generic_set(@_); }             };
+   @command{"\@pemit"}  = { fun => sub { cmd_pemit(@_); }                   };
+   @command{"\@emit"}   = { fun => sub { cmd_emit(@_); }                    };
+   @command{"think"}    = { fun => sub { cmd_think(@_); }                   };
+   @command{"version"}  = { fun => sub { cmd_version(@_); }                 };
+   @command{"\@version"}= { fun => sub { cmd_version(@_); }                 };
+   @command{"\@link"}   = { fun => sub { cmd_link(@_); }                    };
+   @command{"\@teleport"}={ fun => sub { cmd_teleport(@_); }                };
+   @command{"\@tel"}    = { fun => sub { cmd_teleport(@_); }                };
+   @command{"\@open"}   = { fun => sub { cmd_open(@_); }                    };
+   @command{"\@uptime"} = { fun => sub { cmd_uptime(@_); }                  };
+   @command{"\@destroy"}= { fun => sub { cmd_destroy(@_); }                 };
+   @command{"\@wipe"}   = { fun => sub { cmd_wipe(@_); }                    };
+   @command{"\@toad"}   = { fun => sub { cmd_toad(@_); }                    };
+   @command{"\@sleep"}  = { fun => sub { cmd_sleep(@_); }                   };
+   @command{"\@wait"}   = { fun => sub { cmd_wait(@_); }                    };
+   @command{"\@sweep"}  = { fun => sub { cmd_sweep(@_); }                   };
+   @command{"\@list"}   = { fun => sub { cmd_list(@_); }                    };
+   @command{"\@mail"}   = { fun => sub { cmd_mail(@_); }                    };
+   @command{"score"}    = { fun => sub { cmd_score(@_); }                   };
+   @command{"\@recall"} = { fun => sub { cmd_recall(@_); }                  };
+   @command{"\@telnet"} = { fun => sub { cmd_telnet(@_); }                  };
+   @command{"\@close"}  = { fun => sub { cmd_close(@_); }                   };
+   @command{"\@reset"}  = { fun => sub { cmd_reset(@_); }                   };
+   @command{"\@send"}   = { fun => sub { cmd_send(@_); }                    };
+   @command{"\@password"}={ fun => sub { cmd_password(@_); }                };
    @command{"\@newpassword"}={ fun => sub { cmd_newpassword(@_); }          };
-   @command{"\@switch"}     ={ fun => sub { cmd_switch(@_); }               };
-   @command{"\@select"}     ={ fun => sub { cmd_switch(@_); }               };
-   @command{"\@ps"}         ={ fun => sub { cmd_ps(@_); }                   };
-   @command{"\@kill"}       ={ fun => sub { cmd_killpid(@_); }              };
-   @command{"\@var"}        ={ fun => sub { cmd_var(@_); }                  };
-   @command{"\@dolist"}     ={ fun => sub { cmd_dolist(@_); }               };
-   @command{"\@notify"}     ={ fun => sub { cmd_notify(@_); }               };
-   @command{"\@drain"}      ={ fun => sub { cmd_drain(@_); }                };
-   @command{"\@while"}      ={ fun => sub { cmd_while(@_); }                };
-   @command{"\@crash"}      ={ fun => sub { cmd_crash(@_); }                };
-   @command{"\@\@"}         ={ fun => sub { return;}                        };
-   @command{"\@lock"}       ={ fun => sub { cmd_lock(@_);}                  };
-   @command{"\@boot"}       ={ fun => sub { cmd_boot(@_);}                  };
-   @command{"\@halt"}       ={ fun => sub { cmd_halt(@_);}                  };
-   @command{"\@sex"}        ={ fun => sub { cmd_generic_set(@_);}           };
-   @command{"\@apay"}       ={ fun => sub { cmd_generic_set(@_);}           };
-   @command{"\@opay"}       ={ fun => sub { cmd_generic_set(@_);}           };
-   @command{"\@pay"}        ={ fun => sub { cmd_generic_set(@_);}           };
-   @command{"give"}         ={ fun => sub { cmd_give(@_);}                  };
-   @command{"\@squish"}     ={ fun => sub { cmd_squish(@_);}                };
-   @command{"\@split"}      ={ fun => sub { cmd_split(@_); }                };
-   @command{"\@websocket"}  ={ fun => sub { cmd_websocket(@_); }            };
-   @command{"\@find"}       ={ fun => sub { cmd_find(@_); }                 };
-   @command{"\@bad"}        ={ fun => sub { cmd_bad(@_); }                  };
-   @command{"\@dbread"}     ={ fun => sub { fun_dbread(@_); }               };
-   @command{"\@dump"}       ={ fun => sub { cmd_dump(@_); }                 };
-   @command{"\@import"}     ={ fun => sub { cmd_import(@_); }               };
-   @command{"\@stat"}       ={ fun => sub { cmd_stat(@_); }                 };
-   @command{"\@cost"}       ={ fun => sub { cmd_generic_set(@_); }          };
-   @command{"\@quota"}      ={ fun => sub { cmd_quota(@_); }                };
-   @command{"\@player"}     ={ fun => sub { cmd_player(@_); }               };
-   @command{"\@big"}        ={ fun => sub { cmd_big(@_); }                  };
-   @command{"huh"}          ={ fun => sub { cmd_huh(@_); }                  };
-   @command{"\@capture"}    ={ fun => sub { cmd_capture(@_); }              };
-   @command{"\@\@"}         ={ fun => sub { return 1; }                     };
-   @command{"\@shutdown"}   ={ fun => sub { cmd_shutdown(@_); }             };
+   @command{"\@switch"}  ={ fun => sub { cmd_switch(@_); }                  };
+   @command{"\@select"}  ={ fun => sub { cmd_switch(@_); }                  };
+   @command{"\@ps"}      ={ fun => sub { cmd_ps(@_); }                      };
+   @command{"\@kill"}    ={ fun => sub { cmd_killpid(@_); }                 };
+   @command{"\@var"}     ={ fun => sub { cmd_var(@_); }                     };
+   @command{"\@dolist"}  ={ fun => sub { cmd_dolist(@_); }                  };
+   @command{"\@notify"}  ={ fun => sub { cmd_notify(@_); }                  };
+   @command{"\@drain"}   ={ fun => sub { cmd_drain(@_); }                   };
+   @command{"\@while"}   ={ fun => sub { cmd_while(@_); }                   };
+   @command{"\@crash"}   ={ fun => sub { cmd_crash(@_); }                   };
+   @command{"\@\@"}     = { fun => sub { return;}                           };
+   @command{"\@lock"}   = { fun => sub { cmd_lock(@_);}                     };
+   @command{"\@boot"}   = { fun => sub { cmd_boot(@_);}                     };
+   @command{"\@halt"}   = { fun => sub { cmd_halt(@_);}                     };
+   @command{"\@sex"}    = { fun => sub { cmd_generic_set(@_);}              };
+   @command{"\@apay"}   = { fun => sub { cmd_generic_set(@_);}              };
+   @command{"\@opay"}   = { fun => sub { cmd_generic_set(@_);}              };
+   @command{"\@pay"}    = { fun => sub { cmd_generic_set(@_);}              };
+   @command{"\@read"}   = { fun => sub { cmd_read(@_);}                     };
+   @command{"\@compile"}= { fun => sub { cmd_compile(@_);}                  };
+   @command{"\@clean"}=   { fun => sub { cmd_clean(@_);}                    };
+   @command{"give"}=      { fun => sub { cmd_give(@_);}                     };
+   @command{"\@squish"} = { fun => sub { cmd_squish(@_);}                   };
+   @command{"\@split"}  = { fun => sub { cmd_split(@_); }                   };
+   @command{"\@websocket"}={fun => sub { cmd_websocket(@_); }               };
+   @command{"\@find"}   = { fun => sub { cmd_find(@_); }                    };
+   @command{"\@bad"}    = { fun => sub { cmd_bad(@_); }                     };
+   @command{"\@sqldump"}= { fun => sub { db_sql_dump(@_); }                 };
+   @command{"\@dbread"} = { fun => sub { fun_dbread(@_); }                  };
+   @command{"\@dump"}   = { fun => sub { cmd_dump(@_); }                    };
+   @command{"\@import"} = { fun => sub { cmd_import(@_); }                  };
+   @command{"\@stat"}   = { fun => sub { cmd_stat(@_); }                    };
+   @command{"\@cost"}   = { fun => sub { cmd_generic_set(@_); }             };
+   @command{"\@quota"}  = { fun => sub { cmd_quota(@_); }                   };
+   @command{"\@player"} = { fun => sub { cmd_player(@_); }                  };
+   @command{"\@big"}    = { fun => sub { cmd_big(@_); }                     };
+   @command{"huh"}      = { fun => sub { cmd_huh(@_); }                     };
+   @command{"\@capture"}= { fun => sub { cmd_capture(@_); }                 };
+   @command{"\@\@"}     = { fun => sub { return 1; }                        };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -722,6 +949,16 @@ sub initialize_commands
  
 
 # ------------------------------------------------------------------------#
+sub atr_first
+{
+   my $txt = shift;
+
+   if($txt  =~ /^([^ \(\)\[\]\{\}\*]+)/) {
+      return $1;
+   } else {
+      return undef;
+   }
+}
 
 #
 # get_mail_idx
@@ -759,26 +996,6 @@ sub get_mail
    } else {
       return undef;
    }
-}
-
-sub cmd_shutdown
-{
-   my ($self,$prog) = (obj(shift),shift);
-
-   hasflag($self,"GOD") || hasflag($self) ||
-      return err("Permission denied.");
-
-   for my $key (keys %connected) {
-      my $hash = @connected{$key};
-      necho(self   => $self,
-            prog   => $prog,
-            target => [ $hash, "%s has been shutdown by %s.",
-                        conf("mudname"),obj_name($self,$self,1) ]
-      );
-      cmd_boot($self,$prog,"#" . $$hash{obj_id});
-   }
-   @info{run} = 0;                           # signal shutdown
-   @info{shutdown_by} = obj_name($self,$self,1);
 }
 
 sub cmd_slash
@@ -874,7 +1091,9 @@ sub cmd_big
    my ($self,$prog) = @_;
    my (@out, $start);
 
-   if(defined $$prog{nomushrun}) {
+   if(mysqldb) {
+      return err($self,$prog,"This command is disabled.");
+   } elsif(defined $$prog{nomushrun}) {
       return err($self,$prog,"This command is not run() safe.");
    }
 
@@ -1051,24 +1270,45 @@ sub gather_stats
       $owner = owner_id($target);
    }
 
-   if($type == 2) {
-      $$hash{OBJECT} = $#db + 1;
-   } else {
-      for my $i (0 .. $#db) {
-         if(!valid_dbref($i)) {
-            $$hash{GARBAGE}++;
-         } elsif($txt eq "all" || owner($i) == $owner) {
-            if(hasflag($i,"PLAYER")) {
-               $$hash{PLAYER}++;
-            } elsif(hasflag($i,"OBJECT")) {
-               $$hash{OBJECT}++;
-            } elsif(hasflag($i,"EXIT")) {
-               printf("HERE 3\n") if($i == 1);
-               $$hash{EXIT}++;
-            } elsif(hasflag($i,"ROOM")) {
-               $$hash{ROOM}++;
+   if(memorydb) {
+      if($type == 2) {
+         $$hash{OBJECT} = $#db + 1;
+      } else {
+         for my $i (0 .. $#db) {
+            if(!valid_dbref($i)) {
+               $$hash{GARBAGE}++;
+            } elsif($txt eq "all" || owner($i) == $owner) {
+               if(hasflag($i,"PLAYER")) {
+                  $$hash{PLAYER}++;
+               } elsif(hasflag($i,"OBJECT")) {
+                  $$hash{OBJECT}++;
+               } elsif(hasflag($i,"EXIT")) {
+                  printf("HERE 3\n") if($i == 1);
+                  $$hash{EXIT}++;
+               } elsif(hasflag($i,"ROOM")) {
+                  $$hash{ROOM}++;
+               }
             }
          }
+      }
+   } elsif($type == 2) {
+      $$hash{OBJECT} = one_val("select count(*) value from object");
+   } else {
+      for my $data (@{sql("select fde_name, count(*) count " .
+                          "  from object obj, flag flg, flag_definition fde " .
+                          " where obj.obj_id = flg.obj_id " .
+                          "   and flg.fde_flag_id = fde.fde_flag_id " .
+                          "   and (obj.obj_owner = ? or 'all' = ?) ".
+                          "   and flg.fde_flag_id = fde.fde_flag_id " .
+                          "   and fde_name in ('PLAYER', " .
+                          "                    'OBJECT', " .
+                          "                    'ROOM', " .
+                          "                    'EXIT')" .
+                          " group by fde_name",
+                          $owner,
+                          $txt
+         )}) {
+         $$hash{$$data{fde_name}} = $$data{count};
       }
    }
 
@@ -1226,6 +1466,76 @@ sub cmd_mail
    }
 }
 
+sub cmd_dbread
+{
+   my ($self,$prog,$txt) = @_;
+
+   if(!hasflag($self,"WIZARD")) {
+      return err($self,$prog,"Permission denied.");
+   } else {
+      delete @db[0 .. $#db];
+      my $file = newest_full(@info{"conf.mudname"} . ".FULL.DB");
+      db_read(undef,undef,$file);
+   }
+}
+
+#
+# cmd_compile
+#   This doesn't actually compile but generates the regexps that are
+#   required by the user's code. Currently regexps are not supported inside
+#   the mush, only globs... so they need to be converted.
+#
+sub cmd_compile
+{
+   my ($self,$prog,$txt) = @_;
+   my $first;
+
+   if(!hasflag($self,"WIZARD")) {
+      return err($self,$prog,"Permission denied.");
+   } elsif(memorydb) {
+      return err($self,$prog,"This command is not implimented for MemoryDB");
+   }
+
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ "Starting compiling of regexps from globs." ]
+        );
+   for my $hash (@{sql("select atr_id, atr_pattern " .
+                       "  from attribute " .
+                       " where atr_pattern_type != 0")}) {
+   sql("update attribute ".
+       "   set atr_regexp = ?,".
+       "       atr_first = ? ".
+       " where atr_id = ? ",
+       glob2re($$hash{atr_pattern}),
+       atr_first($$hash{atr_pattern}),
+       $$hash{atr_id});
+
+      if(@info{rows} != 1 ) {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "Could not compile %s", $$hash{atr_id} ]
+              );
+      }
+   }
+   my_commit;
+
+   necho(self   => $self,
+      prog   => $prog,
+      source => [ "Finished compiling of regexps from globs." ]
+     );
+}
+
+sub cmd_backupmode
+{
+   my ($self,$prog,$txt) = @_;
+   @info{backup_mode} = 1;
+   necho(self   => $self,
+      prog   => $prog,
+      source => [ "Backup mode enabled." ]
+     );
+}
+
 #
 # cmd_while
 #    Loop while the expression is true
@@ -1304,7 +1614,9 @@ sub cmd_bad
    my ($self,$prog) = @_;
    my (@out, $start);
 
-   if(defined $$prog{nomushrun}) {
+   if(mysqldb) {
+      return err($self,$prog,"This command is disabled.");
+   } elsif(defined $$prog{nomushrun}) {
       return err($self,$prog,"This command is not run() safe.");
    }
 
@@ -1353,7 +1665,8 @@ sub cmd_bad
             if(hasflag($$cmd{bad_pos},"PLAYER") && 
                money($$cmd{bad_pos}) eq undef) {
                push(@out,"#" . $$cmd{bad_pos} ." no money");
-               db_set($$cmd{bad_pos},"obj_money",conf("starting_money"));
+               db_set($$cmd{bad_pos},"obj_money",
+                  @info{"conf.starting_money"});
              }
 
             if(hasflag($$cmd{bad_pos},"ROOM")) {
@@ -1446,47 +1759,70 @@ sub cmd_find
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission denied.");
 
-   if(defined $$prog{nomushrun}) {
-      out($prog,"#-1 \@find can not be used in the run() function");
-      return;
-   }
-
-   my $cmd = $$prog{cmd_last};
-
-   if(!defined $$cmd{find_pos}) {               # initialize "loop"
-      $$cmd{find_pos} = 0;
-      $$cmd{find_pat} = glob2re("*$txt*");
-      $$cmd{find_owner} = owner_id($self);
-   }
-
-   for($start=$$cmd{find_pos};                   # loop for 100 objects
-          $$cmd{find_pos} < $#db &&
-          $$cmd{find_pos} - $start < 100;
-          $$cmd{find_pos}++) {
-      if(valid_dbref($$cmd{find_pos}) &&             # does object match?
-         controls($$cmd{find_owner},$$cmd{find_pos}) &&
-         name($$cmd{find_pos},1) =~ /$$cmd{find_pat}/i) {
-         push(@out,obj_name($self,$$cmd{find_pos}));
+   if(memorydb) {
+      if(defined $$prog{nomushrun}) {
+         out($prog,"#-1 \@find can not be used in the run() function");
+         return;
       }
-   }
 
-   if($$cmd{find_pos} >= $#db) {                       # search is done
-      push(@out,"***End of List***");
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ join("\n",@out) ]
-        );
-      delete $$cmd{find_pos};                                 # clean up
-      delete $$cmd{find_pat};
-      delete $$cmd{find_owner};
-   } else {
-      if($#out > -1) {
+      my $cmd = $$prog{cmd_last};
+
+      if(!defined $$cmd{find_pos}) {               # initialize "loop"
+         $$cmd{find_pos} = 0;
+         $$cmd{find_pat} = glob2re("*$txt*");
+         $$cmd{find_owner} = owner_id($self);
+      }
+
+      for($start=$$cmd{find_pos};                   # loop for 100 objects
+             $$cmd{find_pos} < $#db &&
+             $$cmd{find_pos} - $start < 100;
+             $$cmd{find_pos}++) {
+         if(valid_dbref($$cmd{find_pos}) &&             # does object match?
+            controls($$cmd{find_owner},$$cmd{find_pos}) &&
+            name($$cmd{find_pos},1) =~ /$$cmd{find_pat}/i) {
+            push(@out,obj_name($self,$$cmd{find_pos}));
+         }
+      }
+
+      if($$cmd{find_pos} >= $#db) {                       # search is done
+         push(@out,"***End of List***");
          necho(self   => $self,
                prog   => $prog,
                source => [ join("\n",@out) ]
            );
+         delete $$cmd{find_pos};                                 # clean up
+         delete $$cmd{find_pat};
+         delete $$cmd{find_owner};
+      } else {
+         if($#out > -1) {
+            necho(self   => $self,
+                  prog   => $prog,
+                  source => [ join("\n",@out) ]
+              );
+         }
+         return "RUNNING";                                     # more to do
       }
-      return "RUNNING";                                     # more to do
+   } else {
+      necho(self   => $self,                              # search database
+            prog   => $prog,
+            source => [ table("select concat(obj_name, ".
+                              "              '(#', ".
+                              "              o.obj_id, ".
+                              "              fde_letter, ".
+                              "              ')' ".
+                              "             ) object  ".
+                              "  from object o,  ".
+                              "       flag f,  ".
+                              "       flag_definition fd  ".
+                              " where o.obj_id = f.obj_id  ".
+                              "   and f.fde_flag_id = fd.fde_flag_id  ".
+                              "   and o.obj_owner = ?  ".
+                              "   and CAST(fde_letter as binary) in " .
+                              "       ('o','R','e','P')",
+                              owner_id($self)
+                             )
+                      ]
+           );
    }
 }
 
@@ -1598,8 +1934,8 @@ sub cmd_give
                 prog   => $prog,
                 source => [ "You get %s %s in change.",
                             trim($amount) - $cost, ($amount - $cost == 1) ? 
-                               conf("money_name_singular") :
-                               conf("money_name_plural") ]
+                               @info{"conf.money_name_singular"} :
+                               @info{"conf.money_name_plural"} ]
                );
       } elsif($amount < $cost) {                           # not enough
          return err($self,$prog,"Feeling poor today?");
@@ -1621,14 +1957,14 @@ sub cmd_give
          prog   => $prog,
          source => [ "You give %s %s to %s.",
                      trim($amount),
-                     ($amount== 1) ? conf("money_name_singular") :
-                                     conf("money_name_plural"),
+                     ($amount== 1) ? @info{"conf.money_name_singular"} :
+                                     @info{"conf.money_name_plural"},
                      name($target) ],
          target => [ $target, "%s gives you %s %s.",
                      name($self),
                      trim($amount),
-                     ($amount == 1) ? conf("money_name_singular") :
-                                      conf("money_name_plural") ]
+                     ($amount == 1) ? @info{"conf.money_name_singular"} :
+                                      @info{"conf.money_name_plural"} ]
         );
 
 }
@@ -1793,8 +2129,6 @@ sub cmd_huh
 {
    my ($self,$prog,$txt) = @_;
 
-   printf("HUH: '%s' -> '%s'\n",@{$$prog{cmd}}{cmd},$txt);
-   printf("%s\n",code("long"));
    if(hasflag($self,"VERBOSE")) {
       necho(self   => owner($self),
             prog   => $prog,
@@ -1817,9 +2151,9 @@ sub cmd_offline_huh
 { 
    my $sock = $$user{sock};
    if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
-      ws_echo($sock,conf("login"));
+      ws_echo($sock,@info{"conf.login"});
    } else {
-      printf($sock "%s\r\n",conf("login"));
+      printf($sock "%s\r\n",@info{"conf.login"});
    }
 }
 
@@ -1933,6 +2267,22 @@ BEGIN {
    } else {
       require Errno;
       import  Errno qw(EWOULDBLOCK EINPROGRESS);
+   }
+}
+
+sub hecho
+{
+   my ($fmt,@args) = @_;
+   my $sock = $$user{sock};
+   my $txt = sprintf("$fmt",@args);
+
+   $txt =~ s/\r\n/\n/g;
+   $txt =~ s/\n/\r\n/g;
+
+   if($txt =~ /\n$/) {
+      printf($sock "%s",$txt);
+   } else {
+      printf($sock "%s\r\n",$txt);
    }
 }
 
@@ -2294,6 +2644,8 @@ sub cmd_split
 #
 sub find_free_dbrefs
 {
+   return if mysqldb;
+
    delete @free[0 .. $#free];
 
    for my $i (0 .. $#db) {
@@ -2324,11 +2676,13 @@ sub cmd_dump
 {
    my ($self,$prog,$type) = @_;
    my ($file,$start);
-
+ 
    if(in_run_function($prog)) {
       return out($prog,"#-1 \@DUMP can not be called from RUN function");
    } elsif(!hasflag($self,"WIZARD") && !hasflag($self,"GOD")) {
       return err($self,$prog,"Permission denied.");
+   } elsif(mysqldb) {
+      return err($self,$prog,"Mysql does not need to be \@dumped");
    }
 
    $type = "normal" if($type eq undef);
@@ -2348,7 +2702,7 @@ sub cmd_dump
       $mon++;
       $yr -= 100;
       my $fn = sprintf("dumps/%s.FULL.%02d%02d%02d_%02d%02d%02d.tdb",
-                       conf("mudname"),
+                       @info{"conf.mudname"},
                        $yr,$mon,$day,$hour,$min,$sec);
 
       open($file,"> $fn") ||
@@ -2359,6 +2713,7 @@ sub cmd_dump
 
       $$cmd{dump_file} = $file;
       @info{backup_mode} = $$prog{pid};
+      @info{db_last_dump} = time();
       if($type ne "CRASH" && $user ne undef) {
          echo_flag($user,
                    prog($user,$user),
@@ -2376,7 +2731,7 @@ sub cmd_dump
    # write out the database in 50 object segments                          #
    #-----------------------------------------------------------------------#
    while($$cmd{dump_pos} <= $#db && 
-       ($$cmd{dump_pos} - $start <= 50 || $type eq "CRASH" || @info{run} ==0)) {
+       ($$cmd{dump_pos} - $start <= 50 || $type eq "CRASH")) {
        if(valid_dbref($$cmd{dump_pos})) {
           printf($file "%s", db_object($$cmd{dump_pos}));
        }
@@ -2401,7 +2756,6 @@ sub cmd_dump
       }
       delete @delta[0 .. $#delta];                        # empty the delta
       delete @info{backup_mode};                     # turn off backup mode
-      @info{dump_time} = time();
 
       if($type ne "CRASH") {
          echo_flag($user,
@@ -2413,6 +2767,7 @@ sub cmd_dump
                prog   => $prog,
                source => [ "\@dump completed." ],
               );
+#         prune_dumps("dumps",@info{"conf.mudname"} . "\..*\.tdb");
       }
       return;
    } else {
@@ -2652,17 +3007,48 @@ sub cmd_password
                      );
       }
 
-      if(mushhash($1) ne get($self,"obj_password")) {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "Invalid old password." ],
-              );
-      } else {
-         db_set($self,"obj_password",mushhash($2));
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "Password changed." ],
-              );
+      if(memorydb) {
+         if(mushhash($1) ne get($self,"obj_password")) {
+            necho(self   => $self,
+                  prog   => $prog,
+                  source => [ "Invalid old password." ],
+                 );
+         } else {
+            db_set($self,"obj_password",mushhash($2));
+            necho(self   => $self,
+                  prog   => $prog,
+                  source => [ "Password changed." ],
+                 );
+         }
+      } else {                                                      # mysql
+         if(one("select obj_password ".              # verify old password
+                "  from object " .
+                " where obj_id = ? " .
+                "   and obj_password = password(?)",
+                $$self{obj_id},
+                $1
+               )) {
+            sql("update object ".                   # update to new password
+                "   set obj_password = password(?) " . 
+                " where obj_id = ?" ,
+                $2,
+                $$self{obj_id}
+               );
+            if(@info{rows} != 1) {
+               return err($self,$prog,
+                          "Internal error, unable to update password" 
+                         );
+            }
+            necho(self   => $self,
+                  prog   => $prog,
+                  source => [ "Your password has been updated." ],
+                 );
+         } else {                                             # verify failed
+            necho(self   => $self,
+                  prog   => $prog,
+                  source => [ "Invalid old password." ],
+                 );
+         }
       }
    } else {
       necho(self   => $self,
@@ -2761,6 +3147,61 @@ sub cmd_sleep
    return "DONE";
 }
 
+#
+# read_atr_config
+#    Read those values set on #0 into the @info variable so that they
+#    are cached when using mysql.
+#
+sub read_atr_config
+{
+   my ($self,$prog) = @_;
+   my %updated;
+
+   for my $atr (lattr(0)) {
+      if($atr =~ /^conf\./i) {
+         my $value = get(0,$atr);
+         $value = $` if($value =~ /\s*;\s*$/);
+         $value = $1 if($value =~ /^\s*#(\d+)\s*$/);
+
+         if((defined @info{lc($atr)} && @info{lc($atr)} != 0) ||
+            @info{lc($atr)} == -1) {
+            # skip, teenymush.conf file over-rides in db config items
+            # and disabled items can't be re-enabled.
+         } elsif(get(0,$atr) =~ /^\s*#(\d+)\s*$/) {
+            @info{lc($atr)} = $1;
+         } else {
+            @info{lc($atr)} = get(0,$atr);
+         }
+         @updated{lc($atr)} = 1;
+      }
+   }
+
+   for my $key (keys %default) {
+      if(!defined @info{"conf.$key"}) {
+         @info{"conf.$key"} = @default{$key};
+      }
+   }
+
+   if($self eq undef) {
+#      printf("%s\n", wrap("Updated: ",
+#                          "         ",
+#                          join(' ', keys %updated)
+#                        )
+#            );
+   } else {
+      $Text::Wrap::columns=75;
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s",
+                        wrap("Updated: ",
+                             "         ",
+                             join(' ', keys %updated)
+                            )
+                      ]
+        );
+   }
+}
+
 
 sub cmd_read
 {
@@ -2773,6 +3214,13 @@ sub cmd_read
             prog   => $prog,
             source => [ "Permission denied." ],
            );
+   } elsif($txt =~ /^\s*config\s*$/) {                # re-read config file
+      read_config();
+      read_atr_config($self,$prog);
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Done" ],
+           );
    } elsif($txt =~ /^\s*help\s*$/) {                     # import help data
       if(!open($file,"txt/help.txt")) {
          return necho(self   => $self,
@@ -2781,7 +3229,11 @@ sub cmd_read
                      );
       }
 
-      delete @help{keys %help};
+      if(memorydb) {
+         delete @help{keys %help};
+      } else {
+         sql("delete from help");
+      }
 
       while(<$file>) {
          s/\r|\n//g;
@@ -2789,7 +3241,13 @@ sub cmd_read
             if($data ne undef) {
                $count++;
                $data =~ s/\n$//g;
-               @help{$name} = $data;
+
+               if(memorydb) {
+                  @help{$name} = $data;
+               } else {
+                  sql("insert into help(hlp_name,hlp_data) " .
+                      "values(?,?)",$name,$data);
+               }
             }
             $name = $';
             $data = undef;
@@ -2800,9 +3258,16 @@ sub cmd_read
 
       if($data ne undef) {
          $data =~ s/\n$//g;
-         @help{$name} = $data;
+
+         if(memorydb) {
+            @help{$name} = $data;
+         } else {
+            sql("insert into help(hlp_name,hlp_data) " .
+                "values(?,?)",$name,$data);
+         }
          $count++;
       }
+      my_commit if mysqldb;
 
       necho(self   => $self,
             prog   => $prog,
@@ -2838,6 +3303,25 @@ sub get_segment2
     } 
 }
 
+#
+# mush_split
+#    Take a multiple segment string that is deliminted by $delim and
+#    break it apart. Return the result as an array.
+#
+sub mush_split2
+{
+   my ($txt,$delim) = @_;
+   my (@list,$seg);
+
+   $delim = "," if $delim eq undef;
+
+   while($txt) {
+      ($seg,$txt) = (get_segment2($txt,$delim));
+      push(@list,$seg);
+   }
+   return @list;
+}
+
 sub cmd_squish
 {
    my ($self,$prog,$txt) = @_;
@@ -2861,8 +3345,12 @@ sub cmd_squish
       return "#-1 Permission Denied $$self{obj_id} -> $$target{obj_id}";
    }
 
-   my $hash = mget($target,$atr);
-   $$hash{glob} =~ s/:/\\:/g if(defined $$hash{type});
+   if(memorydb) { # escape out ":"
+      my $hash = mget($target,$atr);
+      $$hash{glob} =~ s/:/\\:/g if(defined $$hash{type});
+   } else {
+      # insert code for mysql version
+   }
 
    for my $line (split(/\n/,get($target,$atr))) {
       $line =~ s/^\s+//;
@@ -3016,8 +3504,19 @@ sub cmd_newpassword
 
 #      good_password($2) || return;
 
-      db_set($player,"obj_password",mushhash($2));
-
+      if(memorydb) {
+         db_set($player,"obj_password",mushhash($2));
+      } else {
+         sql("update object ".
+             "   set obj_password = password(?) " . 
+             " where obj_id = ?" ,
+             $2,
+             $$player{obj_id}
+            );
+         if(@info{rows} != 1) {
+            return err($self,$prog,"Internal error, unable to update password");
+         }
+      }
       necho(self   => $self,
             prog   => $prog,
             source => [ "The password for %s has been updated.",name($player) ],
@@ -3093,6 +3592,29 @@ sub cmd_telnet
       }
 
       $readable->add($sock);
+
+      if(mysqldb) {
+          sql("insert into socket " . 
+              "(   obj_id, " .
+              "    sck_start_time, " .
+              "    sck_type, " . 
+              "    sck_socket, " .
+              "    sck_tag, " .
+              "    sck_hostname, " .
+              "    sck_port " .
+              ") values ( ? , now(), ?, ?, ?, ?, ? )",
+                   $$self{obj_id},
+                   2,
+                   $sock,
+                   "NONE",
+                   $1,
+                   $2
+             );
+            if(@info{rows} != 1) {
+               return err($self,$prog,"Unable to insert into socket data");
+            }
+            my_commit;
+      }
       @info{io} = {} if(!defined @info{io});
 
       @info{io}->{$sock} = {};
@@ -3197,6 +3719,42 @@ sub cmd_close
          );
 }
 
+sub cmd_recall
+{
+    my ($self,$prog,$txt) = @_;
+    my ($qualifier,@args);
+
+    if(memorydb) {
+       return err($self,$prog,"\@recall is only supported under mysql");
+    }
+ 
+    if($txt !~ /^\s*$/) {
+       $qualifier = 'and lower(out_text) like ? ';
+       @args[1] = lc('%' . $txt . '%');
+    }
+
+    echo_nolog($self,
+               text("  select concat( " .
+                    "            date_format(" .
+                    "               out_timestamp, ".
+                    "               '[%H:%s %m/%d/%y]  ' " .
+                    "            ), " .
+                    "            text " .
+                    "         ) text ".
+                    "    from (   select out_timestamp, " .
+                    "                    out_text text " .
+                    "               from output " .
+                    "              where out_destination = ? " .
+                    "                $qualifier " .
+                    "           order by out_timestamp desc " .
+                    "           limit 15 " .
+                    "         ) tmp  " .
+                    "order by out_timestamp",
+                    @args
+                   )
+        );
+}
+
 sub cmd_uptime
 {
     my ($self,$prog) = @_;
@@ -3280,7 +3838,7 @@ sub motd
 {
    my ($self,$prog) = @_;
    
-   my $atr = conf("motd");
+   my $atr = @info{"conf.motd"};
    return motd_with_border($self,$prog) if($atr eq undef);
    motd_with_border($self,$prog,evaluate(0,$prog,$atr));
 }
@@ -3293,7 +3851,53 @@ sub cmd_list
       necho(self => $self,
             prog => $prog,
             source => [ "%s", motd($self,$prog) ]
-           );
+     );
+   } elsif($txt =~ /^\s*cache\s*$/i) {
+       if(memorydb) {
+          return necho(self   => $self,
+                       prog   => $prog,
+                       source => [ "MySQL is not enabled. No data is cached." ]
+                      );
+       }
+       
+       my ($size,$atr,$age);
+       for my $x (keys %cache) {
+          if(ref($cache{$x}) eq "HASH") {
+             for my $y (keys %{$cache{$x}}) {
+                if(ref($cache{$x}->{$y}) eq "HASH") {
+                   if(defined $cache{$x}->{$y}->{value} &&
+                      defined $cache{$x}->{$y}->{ts}) {
+                      $size += length($cache{$x}->{$y}->{value});
+                      $age += time() - $cache{$x}->{$y}->{ts};
+                      $atr++;
+                   }
+                } else {
+#                   $size += length($cache{$x}->{$y});
+#                   $atr++;
+                }
+             }
+          } else {
+#             $size += length($cache{$x});
+#             $atr++;
+          }
+       }
+       necho(self   => $self,
+             prog   => $prog,
+             source => [ "Internal Cache Sizes\n\n" ]
+            );
+       necho(self   => $self,
+             prog   => $prog,
+             source => [ "   Objects:     %s composed of %s items",
+                         scalar keys %cache,$atr ]
+            );
+       necho(self   => $self,
+             prog   => $prog,
+             source => [ "   Size:        %s bytes",total_size(\%cache) ]
+            );
+       necho(self   => $self,
+             prog   => $prog,
+             source => [ "   Average Age: %d seconds",$age / $atr]
+            );
    } elsif($txt =~ /^\s*functions\s*$/i) {
        $Text::Wrap::columns=75;
        necho(self   => $self,
@@ -3336,6 +3940,22 @@ sub cmd_list
             );
    } elsif(!hasflag($self,"WIZARD")) {
       return err($self,$prog,"Permission Denied.");
+   } elsif($txt =~ /^\s*site\s*$/i) {
+       necho(self => $self,
+             prog => $prog,
+             source => [ "%s" ,
+                         table("select ste_id Id, " .
+                               "       ste_pattern Pattern, " .
+                               "       vao_value Type,".
+                               "       obj_name Creator, " .
+                               "       ste_created_date Date" .
+                               "  from site, object, valid_option " .
+                               " where ste_created_by = obj_id " .
+                               "   and vao_code = ste_type".
+                               "   and vao_table = 'site'"
+                              )
+                       ]
+            );
    } elsif($txt =~ /^\s*buffers{0,1}\s*$/) {
        my $hash = @info{io};
        necho(self   => $self,
@@ -3343,6 +3963,7 @@ sub cmd_list
              source => [ "%s",print_var($hash) ],
             );
    } elsif($txt =~ /^\s*sockets\s*$/) {
+      if(memorydb) {
          my $out;
          for my $key (keys %connected) {
             my $hash = @connected{$key};
@@ -3352,6 +3973,21 @@ sub cmd_list
                prog   => $prog,
                source => [ "%s",$out ],
               );
+ 
+      } else {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "%s",
+                           ,table("select obj_id, " .
+                                  "       sck_start_time start, " .
+                                  "       sck_hostname host, " .
+                                  "       sck_port port, " .
+                                  "       concat(sck_tag,':',sck_type) tag ".
+                                  "  from socket "
+                                 )
+                         ]
+              );
+      }
    } elsif($txt =~ /^\s*(conf|config|configuration)\s*$/) {
       my $out;
       for my $key (sort grep {/^conf\./} keys %info) {
@@ -3378,6 +4014,56 @@ sub cmd_list
            "        Options: site,functions,commands,sockets"
           );
    }
+}
+
+
+sub cmd_clean
+{
+   my ($self,$prog,$txt) = @_;
+   my $del =0;
+
+   if(!hasflag($self,"WIZARD")) {
+      return err($self,$prog,"Permission Denied.");
+   }
+
+   my $start = total_size(\%cache);
+
+   delete @cache{keys %cache};
+
+   for my $x (keys %cache) {                                       # object
+      if(ref($cache{$x}) eq "HASH") {
+         for my $y (keys %{$cache{$x}}) {                       # attribute
+            if(ref($cache{$x}->{$y}) eq "HASH") {
+               if(defined $cache{$x}->{$y}->{value} &&
+                  defined $cache{$x}->{$y}->{ts}) {
+                  if(time() - $cache{$x}->{$y}->{ts} > 3600) {
+                    delete $cache{$x}->{$y};
+                    $del++;
+                    if($y eq "FLAG_WIZARD") {
+                       remove_flag_cache($x,"FLAG_WIZARD");
+                    }
+                  }
+               } else {
+                  for my $z (keys %{$cache{$x}->{$y}}) {         # atr_flag
+                     if(ref($cache{$x}-{$y}->{$z}) eq "HASH") {
+                        if(defined $cache{$x}->{$y}->{$z}->{value} &&
+                           defined $cache{$x}->{$y}->{$z}->{ts} &&
+                           time() - $cache{$x}->{$y}->{$z}->{ts} > 3600) {
+                           delete $cache{$x}->{$y}->{$z};
+                           $del++;
+                        }
+                     }
+                  }
+               }
+            }
+         }
+      }
+   }
+   necho(self   => $self,
+         prog   => $prog,
+         source  => [ "Cleared %d entries freeing %d bytes.", $del,
+                      ($start - total_size(\%cache)) ],
+        );
 }
 
 sub cmd_destroy
@@ -3721,12 +4407,32 @@ sub cmd_name
          return err($self,$prog,"Names may only be 50 charaters");
       }
 
-      if(hasflag($target,"PLAYER")) {
-         delete @player{lc(name($target,1))};
-         @player{lc($name)} = $$target{obj_id};
+      if(memorydb) {
+         if(hasflag($target,"PLAYER")) {
+            delete @player{lc(name($target,1))};
+            @player{$name} = $$target{obj_id};
+         }
+         db_set($target,"obj_name",$name);
+         db_set($target,"obj_cname",$cname);
+      } else {
+
+         sql("update object " .
+             "   set obj_name = ?, " .
+             "       obj_cname = ? " .
+             " where obj_id = ?",
+             $name,
+             $cname,
+             $$target{obj_id},
+             );
+    
+         set_cache($target,"obj_name");
+
+         if(@info{rows} != 1) {
+            err($self,$prog,"Internal error, name not updated.");
+         } else {
+            my_commit;
+         }
       }
-      db_set($target,"obj_name",$name);
-      db_set($target,"obj_cname",$cname);
 
       if(!defined $$switch{quiet}) {
          necho(self   => $self,
@@ -3937,32 +4643,75 @@ sub cmd_last
    !controls($self,$target) &&
       return err($self,$prog,"Permission denied.");
 
-   my $attr = mget($target,"obj_lastsite");
+   if(memorydb) {
+      my $attr = mget($target,"obj_lastsite");
  
-   if($attr eq undef || !defined $$attr{value} || 
-      ref($$attr{value}) ne "HASH") {
-      return err($self,$prog,"Internal error, unable to continue");
-   }
-   $out .= "Site:                         Connection Start  | " .
-           "Connection End\n";
-   $out .= "----------------------------|-------------------|" .
-           ("-" x 18) . "\n";
+      if($attr eq undef || !defined $$attr{value} || 
+         ref($$attr{value}) ne "HASH") {
+         return err($self,$prog,"Internal error, unable to continue");
+      }
+      $out .= "Site:                         Connection Start  | " .
+              "Connection End\n";
+      $out .= "----------------------------|-------------------|" .
+              ("-" x 18) . "\n";
 
-   for my $key (sort {$b <=> $a} keys %{$$attr{value}}) {
-      last if($count++ > 6);
-      if(@{$$attr{value}}{$key} =~ /^([^,]+)\,([^,]+)\,/) {
-         $out .= sprintf("%-27s | %s | %s\n",short_hn($'),minits($key),
-            minits($1));
+      for my $key (sort {$b <=> $a} keys %{$$attr{value}}) {
+         last if($count++ > 6);
+         if(@{$$attr{value}}{$key} =~ /^([^,]+)\,([^,]+)\,/) {
+            $out .= sprintf("%-27s | %s | %s\n",short_hn($'),minits($key),
+               minits($1));
+         }
+      }
+
+      $out .= "----------------------------|-------------------|" .
+              ("-" x 18) . "\n";
+
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s", $out ],
+           );
+   } else {
+      if(owner($target) eq owner($self) || hasflag($self,"WIZARD")) {
+         $hostname = "skh_hostname Hostname,";      # optionally add hostname
+      }
+
+      # show target's total connections
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s",
+                        table("  select obj_name Name," .
+                              "         $hostname " .
+                              "         skh_start_time End," .
+                              "         skh_end_time Start" .
+                              "    from socket_history skh, " .
+                              "         object obj " .
+                              "   where skh_success = 1" .
+                              "     and skh.obj_id = ? " .
+                              "     and skh.obj_id = obj.obj_id " .
+                              "order by skh_start_time desc " .
+                              "limit 10",
+                              $$target{obj_id}
+                             )
+                      ]
+           );
+    
+      if((my $val=one_val("select count(*) value " .
+                          "  from connect " .
+                          " where obj_id = ? " .
+                          "   and con_type = 1 ",
+                          $$target{obj_id}
+                         ))) {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "Total successful connects: %s\n", $val ],
+              );
+      } else {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "Total successful connects: N/A\n" ],
+              );
       }
    }
-
-   $out .= "----------------------------|-------------------|" .
-           ("-" x 18) . "\n";
-
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "%s", $out ],
-        );
 }
 
 
@@ -4137,6 +4886,23 @@ sub cmd_clear
    }
 }
 
+sub cmd_commit
+{
+   my ($self,$prog) = @_;
+
+   if(!hasflag($self,"WIZARD")) {
+      return err($self,$prog,"Permission Denied");
+   } elsif(memorydb) {
+      return err($self,$prog,"\@commit is only for mysql databases");
+   } else {
+      my_commit;
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "You force a commit to the database" ],
+           );
+   }
+}
+
 sub cmd_quit
 {
    my ($self,$prog) = @_;
@@ -4145,10 +4911,10 @@ sub cmd_quit
       my $sock = $$self{sock};
 
       if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
-         ws_echo($sock,conf("logoff"));
+         ws_echo($sock,@info{"conf.logoff"});
          ws_disconnect(@c{$sock}) if(defined @c{$sock});
       } else {
-         printf($sock "%s",conf("logoff"));
+         printf($sock "%s",@info{"conf.logoff"});
          server_disconnect($sock);
       }
    } else {
@@ -4163,17 +4929,44 @@ sub cmd_help
    $txt = "help" if($txt =~  /^\s*$/);
    my $help;
 
-   # initalize help variable if needed
-   cmd_read($self,$prog,"help",1) if(scalar keys %help == 0);
+   if(memorydb) {
+      # initalize help variable if needed
+      cmd_read($self,$prog,"help",1) if(scalar keys %help == 0);
 
-   if(defined @help{lc(trim($txt))}) {
-      $help = @help{lc(trim($txt))};
-   } elsif(defined @help{lc(trim($txt)). "()"}) {
-      $help = @help{lc(trim($txt)) . "()"};
-   } elsif($txt =~ /\(\s*\)\s*$/ && defined @help{lc(trim($`))}) {
-      $help = @help{lc(trim($`))};
-   } elsif(defined @help{"@" . lc(trim($txt))}) {
-      $help = @help{"@" . lc(trim($txt))};
+      if(defined @help{lc(trim($txt))}) {
+         $help = @help{lc(trim($txt))};
+      } elsif(defined @help{lc(trim($txt)). "()"}) {
+         $help = @help{lc(trim($txt)) . "()"};
+      } elsif($txt =~ /\(\s*\)\s*$/ && defined @help{lc(trim($`))}) {
+         $help = @help{lc(trim($`))};
+      } elsif(defined @help{"@" . lc(trim($txt))}) {
+         $help = @help{"@" . lc(trim($txt))};
+      }
+   } else {
+      $help = one_val("select hlp_data value" .
+                         "  from help " . 
+                         " where hlp_name = ? ",
+                         lc(trim($txt))
+                        );
+   }
+   if($help eq undef) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "No entry for '%s'", trim($txt) ]
+           );
+   } elsif($help =~ /^RUN: \s*(.*)\s*$/i) {
+      mushrun(self   => $self,
+              prog   => $prog,
+              runas  => $self,
+              source => 0,
+              cmd    => $1,
+              child  => 1,
+             );
+   } else {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s", $help  ]
+           );
    }
 }
 
@@ -4185,7 +4978,7 @@ sub cmd_pcreate
    if($$user{site_restriction} == 3) {
       necho(self   => $self,
             prog   => $prog,
-            source => [ "%s", conf("registration") ],
+            source => [ "%s", @info{"conf.registration"} ],
            );
    } elsif($txt =~ /^\s*([^ ]+) ([^ ]+)\s*$/) {
       if(inuse_player_name($1)) {
@@ -4193,7 +4986,7 @@ sub cmd_pcreate
       } else {
          $$user{obj_id} = create_object($self,$prog,$1,$2,"PLAYER");
          $$user{obj_name} = $1;
-         cmd_connect($self,$prog,$txt) if $$user{obj_id} != 0;
+         cmd_connect($self,$prog,$txt);
       }
    } else {
       err($user,$prog,"Invalid create command, try: create <user> <password> [$txt]");
@@ -4226,14 +5019,14 @@ sub cmd_create
       return err($self,$prog,
                  "Object name may not be greater then 50 characters"
                 );
-   } elsif(money($self) < conf("createcost")) {
+   } elsif(money($self) < @info{"conf.createcost"}) {
       return err($self,$prog,"You need at least ".pennies("createcost").".");
    }
 
    my $dbref = create_object($self,$prog,$txt,undef,"OBJECT") ||
       return err($self,$prog,"Unable to create object");
 
-   if(!give_money($self,"-" . conf("createcost"))) {
+   if(!give_money($self,"-" . @info{"conf.createcost"})) {
       return err($self,$prog,"Unable to deduct cost of object.");
    }
 
@@ -4244,6 +5037,8 @@ sub cmd_create
 
    my $cur = get($self,"obj_quota"); 
    db_set($self,"obj_quota",$cur - 1);
+
+   my_commit if mysqldb;
 }
 
 sub cmd_link
@@ -4305,39 +5100,37 @@ sub cmd_dig
    $quota++ if($in ne undef);
    $quota++ if($in ne out);
 
-   if(hasflag($self,"WIZARD") || hasflag($self,"GOD")) {
-      # ignore restrictions
-   } elsif(quota_left($self) < $quota) {
+   if(quota_left($self) < $quota) {
       return err($self,$prog,"You need a quota of $quota or better to " .
                  "complete this \@dig"
                 );
    } elsif($in eq undef && $out eq undef && quota_left($self) < 1) {
       return err($self,$prog,"You are out of QUOTA to create objects");
    } elsif($in ne undef && $out ne undef) {
-      $cost = conf("digcost") + (conf("linkcost") * 2);
+      $cost = @info{"conf.digcost"} + (@info{"conf.linkcost"} * 2);
    } elsif($in ne undef || $out ne undef) {
-      $cost = conf("digcost") + conf("linkcost");
+      $cost = @info{"conf.digcost"} + @info{"conf.linkcost"};
    } elsif($in eq undef && $out eq undef) { 
-      $cost = conf("digcost");
-   } elsif($cost > money($self)) {
+      $cost = @info{"conf.digcost"};
+   }
+
+   if($cost > money($self)) {
       return err($self,$prog,"You need at least " . pennies($cost));
    }
 
-   if(!hasflag($self,"WIZARD") && !hasflag($self,"GOD") &&
-      !give_money($self,"-" . $cost)) {
+   if(!give_money($self,"-" . $cost)) {
       return err($self,$prog,"Internal error, couldn't debit " .
                  pennies($cost));
    }
+
 
    if($in ne undef && find_exit($self,$in)) {
       return err($self,$prog,"Exit '%s' already exists in this location",$in);
    }
 
 
-   if($out ne undef  || $in ne undef) {
-      $loc = loc($self) ||
-         return err($self,$prog,"Unable to determine your location");
-   }
+   $loc = loc($self) ||
+      return err($self,$prog,"Unable to determine your location");
 
    if($out ne undef) {
       if(!(controls($self,$loc) || hasflag($loc,"LINK_OK"))) {
@@ -4385,6 +5178,8 @@ sub cmd_dig
 
    my $cur = get($self,"obj_quota"); 
    db_set($self,"obj_quota",$cur - $quota);
+
+   my_commit if(mysqldb);
 }
 
 sub cmd_open
@@ -4437,6 +5232,8 @@ sub cmd_open
          prog   => $prog,
          source => [ "Exit created as %s(#%sE)",$exit,$dbref ],
         );
+
+   my_commit if(mysqldb);
 }
 
 sub mushhash
@@ -4453,26 +5250,50 @@ sub invalid_player
 {
    my ($self,$name,$pass) = @_;
 
-   if($name =~ /^\s*#(\d+)\s*$/) {
-      if(valid_dbref($1) && hasflag($1,"PLAYER") &&
-         get($1,"obj_password") eq mushhash($pass)) {
-         $$self{obj_id} = $1;
-         return 0;
-      } else {
-         return 1;
-      }
-   } elsif(!defined @player{lc($name)}) {
-      return 1;
-   } elsif(lc($name) eq "guest") {               # any password for guest
-      $$self{obj_id} = @player{lc($name)};
-      return 0;
-   } elsif(!valid_dbref(@player{lc($name)}) ||
-      get(@player{lc($name)},"obj_password") ne mushhash($pass)) {
-      $$self{obj_id} = @player{lc($name)};
-      return 1;
+   if(memorydb()) {
+       if($name =~ /^\s*#(\d+)\s*$/) {
+          if(valid_dbref($1) && hasflag($1,"PLAYER") &&
+             get($1,"obj_password") eq mushhash($pass)) {
+             $$self{obj_id} = $1;
+             return 0;
+          } else {
+             return 1;
+          }
+       } elsif(!defined @player{lc($name)}) {
+          return 1;
+       } elsif(lc($name) eq "guest") {               # any password for guest
+          $$self{obj_id} = @player{lc($name)};
+          return 0;
+       } elsif(!valid_dbref(@player{lc($name)}) ||
+          get(@player{lc($name)},"obj_password") ne mushhash($pass)) {
+          $$self{obj_id} = @player{lc($name)};
+          return 1;
+       } else {
+          $$self{obj_id} = @player{lc($name)};
+          return 0;
+       }
    } else {
-      $$self{obj_id} = @player{lc($name)};
-      return 0;
+       my $hash = one("select obj.obj_id, ".
+                      "       obj_password " .
+                      "  from object obj, ".
+                      "       flag flg, ".
+                      "       flag_definition fde ".
+                      " where lower(obj_name) = lower(?) " .
+                      "   and obj.obj_id = flg.obj_id " .
+                      "   and flg.fde_flag_id = fde.fde_flag_id " .
+                      "   and fde.fde_name = 'PLAYER' ",
+                      $name
+                   );
+
+       if(lc($name) eq "guest" && defined $$hash{obj_id}) { # don't worry 
+          $$self{obj_id} = $$hash{obj_id};                  # about guest's
+          return 0;                                         # password
+       } elsif(mushhash($pass) eq $$hash{obj_password}) {
+          $$self{obj_id} = $$hash{obj_id};
+          return 0;
+       } else {
+          return 1;
+       }
    }
 }
 
@@ -4498,11 +5319,9 @@ sub cmd_connect
 
       if(invalid_player($self,$username,$pass)) {
          if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
-            ws_echo($sock,"Either that player does not exist, or has a " .
-                    "different password.\n");
+            ws_echo($sock,"Either that player does not exist, or has a different password.\n");
          } else {
-            printf($sock "Either that player does not exist, or has a " .
-                   "different password.\n");
+            printf($sock "Either that player does not exist, or has a different password.\n");
          }
          return;
       }
@@ -4520,12 +5339,48 @@ sub cmd_connect
       @{@connected_user{$$user{obj_id}}}{$$user{sock}} = $$user{sock};
 
       # --- log connnect ----------------------------------------------------#
-      @{@connected{$sock}}{connect} = time();
-      db_set_hash($$user{obj_id},
-                  "obj_lastsite",
-                  time(),
-                  time() . ",1,$$user{hostname}"
-                 );
+      if(memorydb) {
+         @{@connected{$sock}}{connect} = time();
+         db_set_hash($$user{obj_id},
+                     "obj_lastsite",
+                     time(),
+                     time() . ",1,$$user{hostname}"
+                    );
+      } else {
+         sql( "insert into socket " .
+             "( " . 
+             "    obj_id, " . 
+             "    sck_start_time, " .
+             "    sck_hostname, " .
+             "    sck_socket, " .
+             "    sck_type " . 
+             ") values ( ?, now(), ?, ?, ? ) ",
+                  $$user{obj_id},
+                  $$user{hostname},
+                  $$user{sock},
+                  1
+            );
+   
+         # put the historical request in right away, no need to wait.
+         sql("insert into socket_history ".
+             "( obj_id, " .
+             "  sck_id, " .
+             "  skh_hostname, " .
+             "  skh_start_time, " .
+             "  skh_success, " .
+             "  skh_type ".
+             ") values ( " .
+             "  ?, ?, ?, now(), 1, ? ".
+             ")",
+             $$user{obj_id},
+             curval(),
+             $$user{hostname},
+             1
+            );
+   
+         my_commit;
+      }
+
       # --- Provide users visual feedback / MOTD --------------------------#
 
       necho(self   => $user,                 # show message of the day file
@@ -4535,9 +5390,9 @@ sub cmd_connect
 
       cmd_mail($user,prog($user,$user),"short");
 
-      if(defined conf("paycheck") && conf("paycheck") > 0) {
+      if(defined @info{"conf.paycheck"} && @info{"conf.paycheck"} > 0) {
          if(ts_date(lasttime($user)) ne ts_date()) {
-            give_money($user,conf("paycheck"));
+            give_money($user,@info{"conf.paycheck"});
          }
       }
 
@@ -4564,8 +5419,8 @@ sub cmd_connect
 
       # --- Handle @ACONNECTs on masteroom and players-----------------------#
 
-      if(conf("master") ne undef) {
-         for my $obj (lcon(conf("master")),$player) {
+      if(@info{"conf.master"} ne undef) {
+         for my $obj (lcon(@info{"conf.master"}),$player) {
             if(($atr = get($obj,"ACONNECT")) && $atr ne undef){
                mushrun(self    => $obj,                 # handle aconnect
                        runas   => $obj,
@@ -4612,7 +5467,7 @@ sub cmd_doing
                        source => [ "Permission denied." ]
                       );
       }
-      @info{"doing_header"} = $txt;
+      delete @info{"conf.doing_header"};
       return necho(self   => $self,
                    prog   => $prog,
                    source => [ "Removed." ]
@@ -4624,7 +5479,7 @@ sub cmd_doing
                        source => [ "Permission denied." ]
                       );
       }
-      @info{"doing_header"} = $txt;
+      @info{"conf.doing_header"} = $txt;
       return necho(self   => $self,
                    prog   => $prog,
                    source => [ "Set." ]
@@ -4671,8 +5526,8 @@ sub reconstitute
 
    if($type eq 0) {
       $type = undef;
-   } elsif($type eq 1) {                    # memorydb / mysql don't agree on
-      $type = "\$";                              # how the type is defined
+   } elsif($type eq 1) {                       # memorydb / mysql don't agree on
+      $type = "\$";                               # how the type is defined
    } elsif($type eq 2) {
       $type = "^";
    } elsif($type eq 3) {
@@ -4750,25 +5605,62 @@ sub list_attr
 
    $pat = glob2re($pattern) if($pattern ne undef);
 
-   for my $name (lattr($obj)) {
-      my $short = $name;
-      $short =~ s/^obj_//;
-      if(viewable($obj,$name,$pat) && ($pat eq undef || $short =~ /$pat/i)) {
-         my $attr = mget($obj,$name);
+   if(memorydb) {
+      for my $name (lattr($obj)) {
+         my $short = $name;
+         $short =~ s/^obj_//;
+         if(viewable($obj,$name,$pat) && ($pat eq undef || $short =~ /$pat/i)) {
+            my $attr = mget($obj,$name);
 
-         if($name eq "obj_lastsite") {
-            push(@out,reconstitute($short,"","",short_hn(lastsite($obj))));
-         } elsif($name eq "obj_created_by") {
-            push(@out,reconstitute("first","","",short_hn($$attr{value})));
-         } else {
-            push(@out,reconstitute($short,
-                                   $$attr{type},
-                                   $$attr{glob},
-                                   $$attr{value},
-                                   list_attr_flags($attr),
+            if($name eq "obj_lastsite") {
+               push(@out,reconstitute($short,"","",short_hn(lastsite($obj))));
+            } elsif($name eq "obj_created_by") {
+               push(@out,reconstitute("first","","",short_hn($$attr{value})));
+            } else {
+               push(@out,reconstitute($short,
+                                      $$attr{type},
+                                      $$attr{glob},
+                                      $$attr{value},
+                                      list_attr_flags($attr),
+                                      $switch
+                                     )
+                );
+            }
+         }
+      }
+   } else {
+      for my $hash (@{sql(
+          "   select atr_name, " .
+          "          atr_value, " .
+          "          atr_pattern, " .
+          "          atr_pattern_type, ".
+          "          group_concat(distinct fde_letter order by fde_order " .
+          "             separator '') atr_flag " .
+          "     from attribute atr left join ( " .
+          "             select atr_id, fde_letter, fde_order " .
+          "               from flag flg, flag_definition fde " .
+          "              where flg.fde_flag_id = fde.fde_flag_id " .
+          "                and fde_type = 2 " .
+          "           ) flg on (atr.atr_id = flg.atr_id) " .
+          "    where atr.obj_id = ? " .
+          "      and atr_name not in ('DESCRIPTION', " .
+          "                           'LOCK_DEFAULT', " . 
+          "                           'LAST_WHISPER', " .
+          "                           'LAST_PAGE') ".
+          " group by atr.atr_id, atr_name " .
+          " order by atr.atr_name",
+          $$obj{obj_id},
+         )}) { 
+
+         if($pat eq undef || $$hash{atr_name} =~ /$pat/) {
+            push(@out,reconstitute($$hash{atr_name},
+                                   $$hash{atr_pattern_type},
+                                   $$hash{atr_pattern},
+                                   $$hash{atr_value},
+                                   $$hash{atr_flag},
                                    $switch
                                   )
-             );
+                );
          }
       }
    }
@@ -4853,7 +5745,7 @@ sub cmd_ex
                                             ),
                               "*UNLOCKED*"
                              ) .
-              "  " . color("h",ucfirst(conf("money_name_plural"))) .
+              "  " . color("h",ucfirst(@info{"conf.money_name_plural"})) .
               ": ". money($target);
        my $parent = get($target,"obj_parent");
 
@@ -4987,51 +5879,133 @@ sub cmd_look
       $out .= "\nYou see nothing special.";
    }
 
-   $attr = get($target,"CONFORMAT") if($$prog{hint} ne "WEB");
+   if(memorydb) {
+      $attr = get($target,"CONFORMAT") if($$prog{hint} ne "WEB");
 
-   for my $obj (lcon($target)) { 
-      if(!hasflag($obj,"DARK") &&
-         ((hasflag($obj,"PLAYER") && hasflag($obj,"CONNECTED") ||
-         !hasflag($obj,"PLAYER"))) &&
-         $$obj{obj_id} ne $$self{obj_id}) {
+      for my $obj (lcon($target)) { 
+         if(!hasflag($obj,"DARK") &&
+            ((hasflag($obj,"PLAYER") && hasflag($obj,"CONNECTED") ||
+            !hasflag($obj,"PLAYER"))) &&
+            $$obj{obj_id} ne $$self{obj_id}) {
 
-         if(!defined @db[$$obj{obj_id}]) {          # corrupt list, fix
-            db_remove_list($target,"obj_content",$$obj{obj_id});
-         } elsif($attr ne undef) {
-            push(@con,"#" . $$obj{obj_id});
-         } else {
-            $out .= "\n" . color("h","Contents") . ":" if(++$flag == 1);
-            if($$prog{hint} eq "WEB") {
-                 $out .= "\n<a href=/look/$$obj{obj_id}/>" . 
-                         obj_name($self,$obj,undef,1) . "</a>";
+            if(!defined @db[$$obj{obj_id}]) {          # corrupt list, fix
+               db_remove_list($target,"obj_content",$$obj{obj_id});
+            } elsif($attr ne undef) {
+               push(@con,"#" . $$obj{obj_id});
             } else {
-               $out .= "\n" . obj_name($self,$obj);
+               $out .= "\n" . color("h","Contents") . ":" if(++$flag == 1);
+               if($$prog{hint} eq "WEB") {
+                    $out .= "\n<a href=/look/$$obj{obj_id}/>" . 
+                            obj_name($self,$obj,undef,1) . "</a>";
+               } else {
+                  $out .= "\n" . obj_name($self,$obj);
+               }
             }
          }
       }
-   }
 
-   if($attr ne undef) {
-      my $prev = get_digit_variables($prog);              # save %0 .. %9
-      set_digit_variables($self,$prog,"",join(' ',@con)); # update to new
-      $out .= "\n" . evaluate($target,$prog,$attr);
-      set_digit_variables($self,$prog,"",$prev);        # restore %0 .. %9
-   }
-  
-   for my $obj (lexits($target)) { 
-      if($obj ne undef && !hasflag($obj,"DARK")) {
-         if($$prog{hint} eq "WEB") {
-             push(@exit,
-                  "<a href=/look/" . dest($obj) . ">" . 
-                  first(name($obj)) .
-                  "</a>"
-                 );
-         } else {
-            push(@exit,first(name($obj)));
+      if($attr ne undef) {
+         my $prev = get_digit_variables($prog);              # save %0 .. %9
+         set_digit_variables($self,$prog,"",join(' ',@con)); # update to new
+         $out .= "\n" . evaluate($target,$prog,$attr);
+         set_digit_variables($self,$prog,"",$prev);        # restore %0 .. %9
+      }
+     
+      for my $obj (lexits($target)) { 
+         if($obj ne undef && !hasflag($obj,"DARK")) {
+            if($$prog{hint} eq "WEB") {
+                push(@exit,
+                     "<a href=/look/" . dest($obj) . ">" . 
+                     first(name($obj)) .
+                     "</a>"
+                    );
+            } else {
+               push(@exit,first(name($obj)));
+            }
          }
       }
-   }
+   } elsif(!hasflag($target,"ROOM") ||
+      (hasflag($target,"ROOM") && !hasflag($target,"DARK"))) {
+      for my $hash (@{sql(
+          "select   group_concat(distinct fde_letter " .
+          "                      order by fde_order " .
+          "                      separator '') flags, " .
+          "         obj.obj_id," .
+          "         min(obj.obj_name) obj_name, " .
+          "         min(obj.obj_cname) obj_cname, " .
+          "         min(" .
+          "             case " .
+          "                when fde_name in ('EXIT','OBJECT','PLAYER') then " .
+          "                   fde_name  " .
+          "             END " .
+          "            ) obj_type, " .
+          "         case  " .
+          "            when min(sck.sck_socket) is null then " .
+          "               'N' " .
+          "            else " .
+          "               'Y' " .
+          "         END online," .
+          "         min(obj.obj_owner) obj_owner,".
+          "         min(con.con_dest_id) con_dest_id ".
+          "    from content con, " .
+          "         (  select fde.fde_order, obj_id, fde_letter, fde_name " .
+          "              from flag flg, flag_definition fde " .
+          "             where fde.fde_flag_id = flg.fde_flag_id " .
+          "               and flg.atr_id is null " .
+          "               and fde_type = 1 " .
+          "             union all " .
+          "            select 999 fde_order, obj_id, 'c' fde_letter, " .
+          "                   'CONNECTED' fde_name ".
+          "              from socket sck " .
+          "         ) flg, " .
+          "         object obj left join (socket sck) " .
+          "            on ( obj.obj_id = sck.obj_id)  " .
+          "   where con.obj_id = obj.obj_id " .
+          "     and flg.obj_id = con.obj_id " .
+          "     and con.con_source_id = ? ".
+          "     and con.obj_id != ? " .
+          "group by con.obj_id, con_created_date " .
+          "order by con_created_date desc",
+          $$target{obj_id},
+          $$self{obj_id}
+         )}) {
+   
+          # skip non-connected players
+          next if($$hash{obj_type} eq "PLAYER" && $$hash{online} eq "N");
 
+          if($$hash{obj_cname} ne undef) {
+             $$hash{obj_name} = $$hash{obj_cname};
+          }
+   
+          if($$hash{obj_type} eq "EXIT") {                   # store exits for
+             if($$hash{flag} !~ /D/) {                                 # later
+                if($$prog{hint} eq "WEB") {
+                   push(@exit,
+                        "<a href=/look/$$hash{con_dest_id}>" . 
+                        first($$hash{obj_name}) .
+                        "</a>"
+                       );
+                } else {
+                   push(@exit,first($$hash{obj_name}));
+                }
+             }
+          } elsif($$hash{obj_type} =~ /^(PLAYER|OBJECT)$/ && 
+                 $$hash{flags} !~ /D/){
+             $out .= "\n" . color("h","Contents") . ":" if(++$flag == 1);
+
+             if($$hash{obj_owner} == $owner || $perm) {
+                 $name = "$$hash{obj_name}(#$$hash{obj_id}$$hash{flags})";
+             } else {
+                 $name = "$$hash{obj_name}";
+             }
+             if($$prog{hint} eq "WEB") {
+                 $out .= "\n<a href=/look/$$hash{obj_id}/>$name</a>";
+             } else {
+                 $out .= "\n" . $name;
+             }
+          }
+      }
+   }
    $out .= "\n" . color("h","Exits") . ":\n" . 
             join("  ",@exit) if($#exit >= 0);  # add any exits
 
@@ -5268,7 +6242,8 @@ sub get_source_checksums
     my (%data, $file,$pos);
     my $ln = 0;
 
-    open($file,$0) || die("Unable to read $0");
+    open($file,"teenymush.pl") ||
+       die("Unable to read teenymush.pl");
     
     for my $line (<$file>) {
        $ln++;
@@ -5372,7 +6347,7 @@ sub cmd_reload_code
 
    if(!hasflag($self,"GOD")) {
       return err($self,$prog,"Permission denied.");
-   } elsif(@info{"md5"} == -1) {
+   } elsif(@info{"conf.md5"} == -1) {
       return err($self,$prog,"#-1 DISABLED");
    }
 
@@ -5413,7 +6388,7 @@ sub short_hn
    my ($val,$name) = (0,undef);
    my $data;
 
-   if(conf("hostmask") =~ /^\s*(color|mask|colormask)\s*$/) {
+   if(@info{"conf.hostmask"} =~ /^\s*(color|mask|colormask)\s*$/) {
       if($addr =~ /^\s*(\d+)\.(\d+)\.(\d+)\.(\d+)\s*$/) {
          $addr = "$1.$2.*.*";
       } elsif($addr =~ /[A-Za-z]/ && $addr  =~ /\.([^\.]+)\.([^\.]+)$/) {
@@ -5422,7 +6397,7 @@ sub short_hn
          $addr = "*" . substr($addr,length($addr) * .3);
       }
 
-      return $addr if conf("hostmask") eq "mask";
+      return $addr if @info{"conf.hostmask"} eq "mask";
    
       for my $i (split(//,$addr)) {
          $val += ord($i);
@@ -5452,7 +6427,7 @@ sub short_hn
          $name = @$data[$#$data % $val];
       }
 
-      if(conf("hostmask") eq "colormask") {
+      if(@info{"conf.hostmask"} eq "colormask") {
          return "\e[38;5;@ansi_name{$name}m$addr\e[0m";
       } elsif($name =~ /\d+$/) {
          return "\e[38;5;@ansi_name{$name}m$`\e[0m";
@@ -5529,8 +6504,8 @@ sub who
                       "Idle",$max,"Loc","Port","Hostname");
    } else {
       $out .= sprintf("%-15s%10s%5s  %s\r\n","Player Name","On For","Idle",
-                      defined @info{"doing_header"} ? 
-                      @info{"doing_header"} : "\@doing"
+                      defined @info{"conf.doing_header"} ? 
+                      @info{"conf.doing_header"} : "\@doing"
                      );
    }
 
@@ -5619,6 +6594,106 @@ sub cmd_sweep
 }
 
 
+# #!/usr/bin/perl
+# 
+# tm_cache.pl
+#    Routines which directly impliment/modify the cache. All functions
+#    need to keep track of when they were last modified to drtermine if
+#    the data is old and can be removed.
+#
+
+use strict;
+
+#
+# incache
+#    Determine in the specified item is in the cache or not
+#
+sub incache
+{
+   my ($obj,$item) = (obj(shift),trim(uc(shift)));
+
+   return undef if(!defined $cache{$$obj{obj_id}});
+   return (defined $cache{$$obj{obj_id}}->{$item}->{value}) ? 1 : 0;
+}
+
+#
+# set_cache
+#    Store the value in the cache for later use
+#
+sub set_cache
+{
+   my ($obj,$item,$val) = (obj(shift),trim(uc(shift)),shift);
+
+   if($val eq undef) {
+      delete $cache{$$obj{obj_id}}->{$item} if(defined $cache{$$obj{obj_id}});
+   } else {
+      $cache{$$obj{obj_id}}->{$item}->{ts} = time();
+      $cache{$$obj{obj_id}}->{$item}->{value} = $val;
+   }
+}
+
+#
+# cache
+#    Return the cached value
+#
+sub cache
+{
+   my ($obj,$item) = (obj(shift),trim(uc(shift)));
+
+   $cache{$$obj{obj_id}}->{$item}->{ts} = time();
+   return $cache{$$obj{obj_id}}->{$item}->{value};
+}
+
+#
+# incache_atrflag
+#    Determine if an atr flag is in the cache or not. This has an additional
+#    level, so it can't be handled by the standard cache functions.
+#
+sub incache_atrflag
+{
+   my ($obj,$atr,$flag) = (obj(shift),trim(uc(shift)),shift);
+
+   return undef if(!defined $cache{$$obj{obj_id}});
+   return (defined $cache{$$obj{obj_id}}->{$atr}->{$flag}->{value}) ? 1 : 0;
+}
+
+sub set_cache_atrflag
+{
+   my ($obj,$atr,$flag,$val)=(obj(shift),trim(uc(shift)),shift,shift);
+
+   if($val eq undef) {
+      delete $cache{$$obj{obj_id}}->{$atr}->{$flag};
+   } else {
+      $cache{$$obj{obj_id}}->{$atr}->{$flag}->{ts} = time();
+      $cache{$$obj{obj_id}}->{$atr}->{$flag}->{value} = $val;
+   }
+}
+
+sub remove_flag_cache
+{
+   my ($object, $flag) = (obj(shift),uc(shift));
+
+   set_cache($object,"FLAG_$flag");
+   set_cache($object,"FLAG_LIST_0");
+   set_cache($object,"FLAG_LIST_1");
+
+   if($flag eq "WIZARD") {
+      my $owner = owner($object);
+      for my $obj (keys %{$cache{$owner}->{FLAG_DEPENDANCY}}) {
+         delete @cache{$obj};
+      }
+      delete $cache{$$object{obj_id}}->{FLAG_DEPENDANCY};
+   }
+}
+
+sub cache_atrflag
+{
+   my ($obj,$atr,$flag) = (obj(shift),trim(uc(shift)),trim(uc(shift)));
+
+   $cache{$$obj{obj_id}}->{$atr}->{$flag}->{ts} = time();
+   return $cache{$$obj{obj_id}}->{$atr}->{$flag}->{value}
+}
+
 
 sub atr_case
 {
@@ -5631,16 +6706,34 @@ sub atr_hasflag
 
    if(ref($obj) ne "HASH" || !defined $$obj{obj_id} || !valid_dbref($obj)) {
      return undef;
-   } 
-
-   my $attr = mget($obj,$atr);
-   if($attr eq undef || 
-      !defined $$attr{flag} || 
-      !defined $$attr{flag}->{lc($flag)}) {
-      return 0;
-   } else {
-      return 1;
+   } elsif(memorydb) {
+      my $attr = mget($obj,$atr);
+      if($attr eq undef || 
+         !defined $$attr{flag} || 
+         !defined $$attr{flag}->{lc($flag)}) {
+         return 0;
+      } else {
+         return 1;
+      }
+   } elsif(!incache_atrflag($obj,$atr,uc($flag))) {
+      my $val = one_val("select count(*) value " .
+                        "  from attribute atr, " .
+                        "       flag flg, " .
+                        "       flag_definition fde " .
+                        " where atr.obj_id = flg.obj_id ".
+                        "   and fde.fde_flag_id = flg.fde_flag_id ".
+                        "   and fde_name = ? ".
+                        "   and fde_type = 2 ".
+                        "   and atr_name = ? " .
+                        "   and atr.atr_id = flg.atr_id " .
+                        "   and atr.obj_id = ? ",
+                        uc($flag),
+                        $atr,
+                        $$obj{obj_id}
+                       );
+      set_cache_atrflag($obj,$atr,$flag,$val);
    }
+   return cache_atrflag($obj,$atr,$flag);
 }
 
 sub latr_regexp
@@ -5648,23 +6741,44 @@ sub latr_regexp
    my ($obj,$type) = (obj(shift),shift);
    my @result;
 
-   return undef if !valid_dbref($obj);
-   for my $name ( lattr($obj) ) {
-      my $attr = mget($obj,$name);
-      if(defined $$attr{type} && defined $$attr{regexp}) {
-         if(($type == 1 && $$attr{type} eq "\$")  ||
-            ($type == 2 && $$attr{type} eq "^")  ||
-            ($type == 3 && $$attr{type} eq "!")) { 
-            push(@result,{ atr_regexp => $$attr{regexp},
-                           atr_value  => $$attr{value},
-                           atr_name   => $name,
-                           atr_owner  => $$obj{obj_id}
-                         }
-                );
+   if(memorydb) {
+      return undef if !valid_dbref($obj);
+      for my $name ( lattr($obj) ) {
+         my $attr = mget($obj,$name);
+         if(defined $$attr{type} && defined $$attr{regexp}) {
+            if(($type == 1 && $$attr{type} eq "\$")  ||
+               ($type == 2 && $$attr{type} eq "^")  ||
+               ($type == 3 && $$attr{type} eq "!")) { 
+               push(@result,{ atr_regexp => $$attr{regexp},
+                              atr_value  => $$attr{value},
+                              atr_name   => $name,
+                              atr_owner  => $$obj{obj_id}
+                            }
+                   );
+            }
          }
       }
+      return @result;
+   } elsif(!incache($obj,"latr_regexp_$type")) {
+      for my $atr (@{sql("select atr_name, atr_regexp, atr_value ".
+                         "  from attribute atr ".
+                         " where obj_id = ? ".
+                         "   and atr_regexp is not null ".
+                         "   and atr_pattern_type = $type ",
+                         $$obj{obj_id}
+                        )
+                   }) { 
+         push(@result, { atr_regexp => $$atr{atr_regexp},
+                         atr_value  => $$atr{atr_value},
+                         atr_name   => $$atr{atr_name},
+                         atr_owner  => $$obj{obj_id}
+                       }
+             );
+      }
+      set_cache($obj,"latr_regexp_$type",\@result);
    }
-   return @result;
+
+   return @{cache($obj,"latr_regexp_$type")};
 }
 
 
@@ -5673,16 +6787,35 @@ sub lcon
    my $object = obj_nocheck(shift);
    my @result;
 
-   my $attr = mget($object,"obj_content");
+   if(memorydb) {
+      my $attr = mget($object,"obj_content");
 
-   if($attr eq undef) {
-      return @result;
-   } else {
-      for my $id ( keys %{$$attr{value}} ) {
-         push(@result,obj($id));
+      if($attr eq undef) {
+         return @result;
+      } else {
+         for my $id ( keys %{$$attr{value}} ) {
+            push(@result,obj($id));
+         }
+         return @result;
       }
-      return @result;
+   } elsif(!incache($object,"lcon")) {
+       my @list;
+       for my $obj (@{sql(
+                          "select con.obj_id " .
+                          "  from content con, " .
+                          "       flag flg, ".
+                          "       flag_definition fde " .
+                          " where con.obj_id = flg.obj_id " .
+                          "   and flg.fde_flag_id = fde.fde_flag_id ".
+                          "   and fde.fde_name in ('PLAYER','OBJECT') ".
+                          "   and con_source_id = ? ",
+                          $$object{obj_id},
+                    )}) {
+          push(@list,{ obj_id => $$obj{obj_id}});
+       } 
+       set_cache($object,"lcon",\@list);
    }
+   return @{ cache($object,"lcon") };
 }
 
 sub lexits
@@ -5690,16 +6823,34 @@ sub lexits
    my $object = obj_nocheck(shift);
    my @result;
 
-   my $attr = mget($object,"obj_exits");
+   if(memorydb) {
+      my $attr = mget($object,"obj_exits");
 
-   if($attr eq undef) {
-      return @result;
-   } else {
-      for my $id ( keys %{$$attr{value}} ) {
-         push(@result,obj($id));
+      if($attr eq undef) {
+         return @result;
+      } else {
+         for my $id ( keys %{$$attr{value}} ) {
+            push(@result,obj($id));
+         }
+         return @result;
       }
-      return @result;
+   } elsif(!incache($object,"lexits")) {
+       my @list;
+       for my $obj (@{sql("select con.obj_id " .
+                          "  from content con, " .
+                          "       flag flg, ".
+                          "       flag_definition fde " .
+                          " where con.obj_id = flg.obj_id " .
+                          "   and flg.fde_flag_id = fde.fde_flag_id ".
+                          "   and fde.fde_name = 'EXIT' ".
+                          "   and con_source_id = ? ",
+                          $$object{obj_id},
+                    )}) { 
+          push(@list,obj($$obj{obj_id}));
+      }
+       set_cache($object,"lexits",\@list);
    }
+   return @{ cache($object,"lexits") };
 }
 
 
@@ -5709,9 +6860,31 @@ sub money
 
    my $owner = owner($target);
 
-   return 0 if($owner eq undef);
+   if($owner eq undef) {
+      return 0;
+   } elsif(memorydb) {
+      return get($owner,"obj_money");
+   } elsif(!incache($owner,"obj_money")) {
+      my $money = one_val("select obj_money value ".
+                          "  from object ".
+                          " where obj_id = ? ",
+                          $$owner{obj_id}
+                         );
+      $money = 0 if $money eq undef;
+      set_cache($owner,"obj_money",$money);
+   }
 
-   return get($owner,"obj_money");
+   if($flag) {
+      if(cache($owner,"obj_money") == 1) {
+         return "1 " . @info{"conf.money_name_singular"};
+      } else {
+         return cache($owner,"obj_money") .
+                " " .
+                @info{"conf.money_name_plural"};
+      }  
+   } else {
+      return cache($owner,"obj_money");
+   }
 }
 
 #
@@ -5723,13 +6896,35 @@ sub name
 {
    my ($target,$flag) = (obj(shift),shift);
 
-   if($flag) {
-      return get($target,"obj_name");
-   } elsif(get($target,"obj_cname") ne undef) {
-      return get($target,"obj_cname");
-   } else {
-      return get($target,"obj_name");
+   if(memorydb) {
+      if($flag) {
+         return get($target,"obj_name");
+      } elsif(get($target,"obj_cname") ne undef) {
+         return get($target,"obj_cname");
+      } else {
+         return get($target,"obj_name");
+      }
+   } elsif(!incache($target,"obj_name")) {
+      my $hash = one("select obj_name, obj_cname ".
+                     "  from object ".
+                     " where obj_id = ? ",
+                     $$target{obj_id}
+                    );
+
+      if($flag && $$hash{obj_name} eq undef) {
+         return "[<UNKNOWN>]";
+      } elsif($flag && $$hash{obj_name} ne undef) {
+         return $$hash{obj_name};
+      } elsif($$hash{obj_cname} eq undef &&
+         $$hash{obj_name} eq undef) {
+         return "[<UNKNOWN>]";
+      } elsif($$hash{obj_cname} eq undef) {
+         set_cache($target,"obj_name",$$hash{obj_name});
+      } else {
+         set_cache($target,"obj_name",$$hash{obj_cname});
+      }
    }
+   return cache($target,"obj_name");
 }
 
 
@@ -5739,23 +6934,49 @@ sub flag_list
    my (@list,$array,$connected);
    $flag = 0 if !$flag;
 
-   my $attr = mget($obj,"obj_flag");
+   if(memorydb) {
+      my $attr = mget($obj,"obj_flag");
 
-   if($attr eq undef) {
-      return undef;
-   } else {
-      my $hash = $$attr{value};
+      if($attr eq undef) {
+         return undef;
+      } else {
+         my $hash = $$attr{value};
 
-      # connected really isn't a flag, but should be
-      for my $key (sort {@flag{uc($a)}->{ord} <=> @flag{uc($b)}->{ord}} 
-                   keys %$hash) {
-         push(@list,$flag ? uc($key) : flag_letter($key));
+         # connected really isn't a flag, but should be
+         for my $key (sort {@flag{uc($a)}->{ord} <=> @flag{uc($b)}->{ord}} 
+                      keys %$hash) {
+            push(@list,$flag ? uc($key) : flag_letter($key));
+         }
+         if(defined $$hash{player} && defined @connected_user{$$obj{obj_id}}) {
+            push(@list,$flag ? "CONNECTED" : 'c');
+         }
+         return join($flag ? ' ' : '',@list);
       }
-      if(defined $$hash{player} && defined @connected_user{$$obj{obj_id}}) {
-         push(@list,$flag ? "CONNECTED" : 'c');
+   } elsif(!incache($obj,"FLAG_LIST_$flag")) {
+      my (@list,$array);
+      for my $hash (@{sql("select * from ( " .
+                              "select fde_name, fde_letter, fde_order" .
+                              "  from flag flg, flag_definition fde " .
+                              " where flg.fde_flag_id = fde.fde_flag_id " .
+                              "   and obj_id = ? " .
+                              "   and flg.atr_id is null " .
+                              "   and fde_type = 1 " .
+                              " union all " .
+                              "select distinct 'CONNECTED' fde_name, " .
+                              "       'c' fde_letter, " .
+                              "       999 fde_order " .
+                              "  from socket sck " .
+                              " where obj_id = ?) foo " .
+                               "order by fde_order",
+                              $$obj{obj_id},
+                              $$obj{obj_id}
+                             )}) {
+         push(@list,$$hash{$flag ? "fde_name" : "fde_letter"});
       }
-      return join($flag ? ' ' : '',@list);
+
+      set_cache($obj,"FLAG_LIST_$flag",join($flag ? " " : "",@list));
    }
+   return cache($obj,"FLAG_LIST_$flag");
 }
 
 #
@@ -5768,13 +6989,30 @@ sub owner
    my $obj = obj(shift);
    my $owner;
 
-   if(!valid_dbref($obj)) {
-      return undef;
-   } elsif(hasflag($obj,"PLAYER")) {
-      return $obj;
+   if(memorydb()) {
+      if(!valid_dbref($obj)) {
+         return undef;
+      } elsif(hasflag($obj,"PLAYER")) {
+         return $obj;
+      } else {
+         my $owner = get($obj,"obj_owner");
+         return obj($owner);
+      }
    } else {
-      my $owner = get($obj,"obj_owner");
-      return obj($owner);
+      if(!incache($$obj{obj_id},"OWNER")) {
+         $owner = one_val("select obj_owner value" .
+                          "  from object" .
+                          " where obj_id = ?",
+                          $$obj{obj_id}
+                         );
+   
+         if($owner ne undef) {
+            set_cache($$obj{obj_id},"OWNER",$owner);
+         } else {
+            return undef;
+         }
+      }
+      return obj(cache($$obj{obj_id},"OWNER"));
    }
 }
 
@@ -5791,74 +7029,173 @@ sub hasflag
       return (defined @connected_user{$$target{obj_id}}) ? 1 : 0;
    } elsif(!valid_dbref($target)) {
       return 0;
-   }
+   } elsif(memorydb) {
+      $target = owner($target) if($name eq "WIZARD" || $name eq "GOD");
 
-   $target = owner($target) if($name eq "WIZARD" || $name eq "GOD");
+      my $attr = mget($target,"obj_flag");
 
-   my $attr = mget($target,"obj_flag");
-
-   if(!defined $$attr{value}) {                        # no flags at all
-      return 0;
-   }
-
-   my $flag = $$attr{value};
-
-   if($name eq "WIZARD") {
-      if(defined $$flag{wizard}||defined $$flag{god}) {
-         return 1;
-      } else {
+      if(!defined $$attr{value}) {                        # no flags at all
          return 0;
       }
-   } elsif(!defined $$flag{lc($name)}) {
-      return 0;
-   } else {
-      return 1;
+
+      my $flag = $$attr{value};
+
+      if($name eq "WIZARD") {
+         if(defined $$flag{wizard}||defined $$flag{god}) {
+            return 1;
+         } else {
+            return 0;
+         }
+      } elsif(!defined $$flag{lc($name)}) {
+         return 0;
+      } else {
+         return 1;
+      }
+   } elsif(!incache($target,"FLAG_$name")) {
+      if($name eq "WIZARD") {
+         my $owner = owner_id($target);
+         $val = one_val("select if(count(*) > 0,1,0) value " .  
+                            "  from flag flg, flag_definition fde " .  
+                            " where flg.fde_flag_id = fde.fde_flag_id " .
+                            "   and atr_id is null ".
+                            "   and fde_type = 1 " .
+                            "   and obj_id = ? " .
+                            "   and (fde_name = ? or fde_name = 'GOD')",
+                            $owner,
+                            $name);
+         # let owner cache object know its value was used for this object
+         $cache{$owner}->{FLAG_DEPENDANCY}->{$$target{obj_id}} = 1;
+      } else {
+         $val = one_val("select if(count(*) > 0,1,0) value " .
+                            "  from flag flg, flag_definition fde " .
+                            " where flg.fde_flag_id = fde.fde_flag_id " .
+                            "   and atr_id is null ".
+                            "   and fde_type = 1 " .
+                            "   and obj_id = ? " .
+                            "   and fde_name = ? ",
+                            $$target{obj_id},
+                            $name);
+      }
+      set_cache($target,"FLAG_$name",$val);
    }
+   return cache($target,"FLAG_$name");
 }
 
 sub dest
 {
     my $obj = obj(shift);
 
-   return get($obj,"obj_destination");
+   if(memorydb) {
+      return get($obj,"obj_destination");
+   } elsif(!incache($obj,"con_dest_id")) {
+      my $val = one_val("select con_dest_id value ".
+                        "  from content ".
+                        " where obj_id = ?",
+                        $$obj{obj_id}
+                       );
+      return undef if $val eq undef;
+      set_cache($obj,"con_dest_id",$val);
+   }
+   return cache($obj,"con_dest_id");
 }
 
 sub home
 {
    my $obj = obj(shift);
 
-   my $home = get($obj,"obj_home");
+   if(memorydb) {
+      my $home = get($obj,"obj_home");
  
-   if(valid_dbref($home)) {                           # use object's home
-      return $home;
-   } elsif(valid_dbref(conf("starting_room")) &&
-           hasflag(conf("starting_room"),"ROOM")) {
-                                                      # use starting_room
-      db_set($obj,"obj_home",conf("starting_room"));
-      return conf("starting_room");
-   } else {                             # default to first availible room
-      my $first = first_room();
-      db_set($obj,"obj_home",$first);
-      return $first;
+      if(valid_dbref($home)) {                           # use object's home
+         return $home;
+      } elsif(valid_dbref(@info{"conf.starting_room"}) &&
+              hasflag(@info{"conf.starting_room"},"ROOM")) {
+                                                         # use starting_room
+         db_set($obj,"obj_home",@info{"conf.starting_room"});
+         return @info{"conf.starting_room"};
+      } else {                             # default to first availible room
+         my $first = first_room();
+         db_set($obj,"obj_home",$first);
+         return $first;
+      }
+   } elsif(!incache($obj,"home")) {
+      my $val = one_val("select obj_home value".
+                        "  from object " .
+                        " where obj_id = ?",
+                        $$obj{obj_id}
+                       );
+      if($val eq undef) {
+         if(defined @info{"conf.starting_room"}) {
+            return @info{"conf.starting_room"};
+         } else {                          # default to first room created
+            $val = one_val("  select obj.obj_id value " .
+                           "    from object obj, " .
+                           "         flag flg, " .
+                           "         flag_definition fde ".
+                           "   where obj.obj_id = flg.obj_id " .
+                           "     and flg.fde_flag_id = fde.fde_flag_id ".
+                           "     and fde.fde_name = 'ROOM' " .
+                           "order by obj.obj_id limit 1"
+                          );
+         }
+      }
+      set_cache($obj,"home",$val);
    }
+   return cache($obj,"home");
 }
 
 sub loc_obj
 {
    my $obj = obj(shift);
 
-   my $loc = get($obj,"obj_location");
-   return ($loc eq undef) ? undef : obj($loc);
+   if(memorydb) {
+      my $loc = get($obj,"obj_location");
+      return ($loc eq undef) ? undef : obj($loc);
+   } elsif(!incache($obj,"con_source_id")) {
+      my $val = one_val("select con_source_id value " .
+                        "  from content " .
+                        " where obj_id = ?",
+                        $$obj{obj_id}
+                       );
+      set_cache($obj,"con_source_id",$val);
+   }
+
+   if(cache($obj,"con_source_id") eq undef) {
+      return undef;
+   } else {
+      return { obj_id => cache($obj,"con_source_id") };
+   }
 }
 
 sub lattr
 {
    my $obj = obj(shift);
 
-   return () if(!valid_dbref($obj));
-   my $hash = dbref($obj);
-   return ($hash eq undef) ? undef : (sort keys %$hash);
+   if(mysqldb) {
+      my @result;
+      for my $atr (@{sql("select atr_name ".
+                         "  from attribute ".
+                         " where obj_id = ? ",
+                         $$obj{obj_id})}) {
+         push(@result,$$atr{atr_name});
+      }
+      return @result;
+   } elsif(memorydb) {
+      return () if(!valid_dbref($obj));
+      my $hash = dbref($obj);
+      return ($hash eq undef) ? undef : (sort keys %$hash);
+   } else {
+      return ();
+   }
 }
+# #!/usr/bin/perl
+#
+# tm_ansi.pl
+#    Any routines for handling the limited support for ansi characters
+#    within TeenyMUSH.
+#
+use strict;
+use MIME::Base64;
 
 #
 # ansi_debug
@@ -6288,6 +7625,23 @@ sub ansi_wrap
 #printf("%s\n",lord(ansi_string($a,1)));
 #printf("SUB:%s\n",ansi_substr($a,11,1));
 
+# #!/usr/bin/perl
+#
+# tm_db.pl
+#    Code specific to the memory database. The only mysql database code
+#    in here should be specific to conversion from one format to the
+#    other.
+#
+#    flag definitions are loaded here since they're stored inside the
+#    mysql database. They probably should be removed from the database
+#    since we don't need two versions of the same thing.
+
+
+use Compress::Zlib;
+use strict;
+use MIME::Base64;
+use Storable qw(dclone);
+
 # flag definitions
 #    flag name, 1 character flag name, who can set it, if its an 
 #    attribute flag (2), or an object flag (1).
@@ -6345,27 +7699,40 @@ sub hasattr
    # handle if object exists
    $attr = "description" if lc($attr) eq "desc";
 
-   if(defined @info{backup_mode} && @info{backup_mode}) {
-      if(defined @deleted{$$obj{obj_id}}) {             # obj was deleted
-         return undef;
-      } elsif(defined @delta[$$obj{obj_id}]) {   # obj changed during backup
-         $data = @delta[$$obj{obj_id}];
-      } elsif(defined @db[$$obj{obj_id}]) {                # in actual db
+   if(memorydb) {
+      if(defined @info{backup_mode} && @info{backup_mode}) {
+         if(defined @deleted{$$obj{obj_id}}) {             # obj was deleted
+            return undef;
+         } elsif(defined @delta[$$obj{obj_id}]) {   # obj changed during backup
+            $data = @delta[$$obj{obj_id}];
+         } elsif(defined @db[$$obj{obj_id}]) {                # in actual db
+            $data = @db[$$obj{obj_id}];
+         } else {                                        # obj doesn't exist
+            return undef;
+         }
+      } elsif(defined @db[$$obj{obj_id}]) {         # non-backup mode object
          $data = @db[$$obj{obj_id}];
-      } else {                                        # obj doesn't exist
-         return undef;
+      } else {
+         return undef;                                   # obj doesn't exist
       }
-   } elsif(defined @db[$$obj{obj_id}]) {         # non-backup mode object
-      $data = @db[$$obj{obj_id}];
-   } else {
-      return undef;                                   # obj doesn't exist
-   }
    
-   # handle if attribute exits on object
-   if(!defined $$data{lc($attr)}) {           # check if attribute exists
-      return 0;                                                    # nope
-   } else {
-      return 1;
+      # handle if attribute exits on object
+      if(!defined $$data{lc($attr)}) {           # check if attribute exists
+         return 0;                                                    # nope
+      } else {
+         return 1;
+      }
+   } else {                         # emulate how memorydb works in mysql
+      my $hash = one("select count(*) count " .
+                     "  from attribute ".
+                     " where atr_name = ? " .
+                     "   and obj_id = ? ",
+                     lc($attr),
+                     $$obj{obj_id}
+                    ) ||
+         return undef;
+
+      return $$hash{count};
    }
 }
 
@@ -6393,27 +7760,56 @@ sub mget
    # handle if object exists
    $attr = "description" if lc($attr) eq "desc";
 
-   if(defined @info{backup_mode} && @info{backup_mode}) {
-      if(defined @deleted{$$obj{obj_id}}) {             # obj was deleted
-         return undef;
-      } elsif(defined @delta[$$obj{obj_id}]) {   # obj changed during backup
-         $data = @delta[$$obj{obj_id}];
-      } elsif(defined @db[$$obj{obj_id}]) {                # in actual db
+   if(memorydb) {
+      if(defined @info{backup_mode} && @info{backup_mode}) {
+         if(defined @deleted{$$obj{obj_id}}) {             # obj was deleted
+            return undef;
+         } elsif(defined @delta[$$obj{obj_id}]) {   # obj changed during backup
+            $data = @delta[$$obj{obj_id}];
+         } elsif(defined @db[$$obj{obj_id}]) {                # in actual db
+            $data = @db[$$obj{obj_id}];
+         } else {                                        # obj doesn't exist
+            return undef;
+         }
+      } elsif(defined @db[$$obj{obj_id}]) {         # non-backup mode object
          $data = @db[$$obj{obj_id}];
-      } else {                                        # obj doesn't exist
-         return undef;
+      } else {
+         return undef;                                   # obj doesn't exist
       }
-   } elsif(defined @db[$$obj{obj_id}]) {         # non-backup mode object
-      $data = @db[$$obj{obj_id}];
-   } else {
-      return undef;                                   # obj doesn't exist
-   }
+   
+      # handle if attribute exits on object
+      if(!defined $$data{lc($attr)}) {           # check if attribute exists
+         return undef;                                                # nope
+      } else {
+         return $$data{lc($attr)};                                  # exists
+      }
+   } else {                         # emulate how memorydb works in mysql
+      my $hash = one("select atr_name name, " .
+                     "      atr_value value,  " .
+                     "      atr_pattern_type type," .
+                     "      atr_pattern glob, ".
+                     "      atr_regexp regexp" .
+                     "  from attribute ".
+                     " where atr_name = ? " .
+                     "   and obj_id = ? ",
+                     lc($attr),
+                     $$obj{obj_id}
+                    ) ||
+         return undef;
+      delete $$hash{regexp} if $$hash{regex} eq undef;
+      delete $$hash{glob} if $$hash{glob} eq undef;
+      delete $$hash{type} if $$hash{type} eq undef;
 
-   # handle if attribute exits on object
-   if(!defined $$data{lc($attr)}) {           # check if attribute exists
-      return undef;                                                # nope
-   } else {
-      return $$data{lc($attr)};                                  # exists
+      if($$hash{type} eq undef) {
+         delete @$hash{type};
+      } elsif($$hash{type} == 1) {
+         $$hash{type} = "\$";                     # how the type is defined
+      } elsif($$hash{type} == 2) {
+         $$hash{type} = "^";
+      } elsif($$hash{type} == 3) {
+         $$hash{type} = "!";
+      }
+      return $hash;
    }
 }
 
@@ -6847,6 +8243,99 @@ sub db_remove_hash
 }
 
 
+sub db_sql_dump
+{
+   for my $rec (@{sql("select * from object")}) {
+      db_set($$rec{obj_id},"name",$$rec{obj_name});
+      db_set($$rec{obj_id},"cname",$$rec{obj_cname});
+      db_set($$rec{obj_id},"password",$$rec{obj_password});
+      db_set($$rec{obj_id},"owner",$$rec{obj_owner});
+      db_set($$rec{obj_id},"created_date",$$rec{obj_created_date});
+      db_set($$rec{obj_id},"created_by",$$rec{obj_created_by});
+      db_set($$rec{obj_id},"home",$$rec{obj_home});
+      db_set($$rec{obj_id},"quota",$$rec{obj_quota});
+      db_set($$rec{obj_id},"money",$$rec{obj_money});
+   }
+
+   for my $rec (@{sql("select * from attribute")}) {
+      my $value;
+      if($$rec{atr_pattern_type} == 1) {
+         $value = "\$$$rec{atr_pattern}:$$rec{atr_value}";
+      } elsif($$rec{atr_pattern_type} == 2) {
+         $value = "^$$rec{atr_pattern}:$$rec{atr_value}";
+      } elsif($$rec{atr_pattern_type} == 2) {
+         $value = "!$$rec{atr_pattern}:$$rec{atr_value}";
+      } else {
+         $value = $$rec{atr_value};
+      }
+      db_set($$rec{obj_id},$$rec{atr_name},$value);
+   }
+
+   for my $rec (@{sql("select obj_id, " .
+                      "       skh_hostname, ".
+                      "       skh_start_time, ".
+                      "       skh_end_time, ".
+                      "       skh_success ".
+                      "  from socket_history skh, " .
+                      "       object obj " .
+                      " where obj.obj_id = skh.obj_id " .
+                      "       obj_id >= 0"
+               )}) {
+      db_set_hash($$rec{obj_id},
+                  "lastsite",
+                  fuzzy($$rec{skh_start_time}),
+                  fuzzy($$rec{skh_end_time}) .
+                  ",$$rec{skh_success},$$rec{skh_hostname}"
+                 );
+   }
+
+                
+   for my $rec (@{sql("select obj_id, fde_name, fde_type " .
+                      "  from flag flg, flag_definition fde" .
+                      " where flg.fde_flag_id=fde.fde_flag_id" .
+                      "   and fde_type = 1"
+                      )}) {
+      
+      db_set_list($$rec{obj_id},"flag",$$rec{fde_name});
+   }
+
+   for my $rec (@{sql("select atr.obj_id," .
+                         "       atr_name, " .
+                         "       fde_name " .
+                         "  from attribute atr, " .
+                         "       flag flg, " .
+                         "       flag_definition fde " .
+                         " where atr.atr_id = flg.atr_id " .
+                         "   and flg.fde_flag_id = fde.fde_flag_id " .
+                         "   and fde_type = 2"
+                   )}) {
+      db_set_flag($$rec{obj_id},$$rec{atr_name},$$rec{fde_name},1);
+   }
+
+   for my $rec (@{sql("select * from content")}) {
+      db_set($$rec{obj_id},"obj_location",$$rec{con_source_id});
+      if(hasflag($rec,"EXIT")) {
+         db_set_list($$rec{con_source_id},"exits",$$rec{obj_id});
+         if($$rec{con_dest_id} ne undef) {
+            db_set($$rec{obj_id},"obj_destination",$$rec{con_dest_id});
+         }
+      } else {
+         db_set_list($$rec{con_source_id},"obj_content",$$rec{obj_id});
+      }
+   }
+
+   open(FILE,"> json.txt") ||
+      return con("Could not open json.txt for writing");
+
+   printf(FILE "server: %s, dbversion=%s, exported=%s\n",
+      @info{version},@info{dbversion},scalar localtime());
+   
+   for(my $i=0;$i <= $#db;$i++) {
+      printf(FILE "%s",db_object($i));
+   }
+   close(FILE);
+}
+
 #
 # db_object
 #    Export an object from memory to a somewhat readable ascii
@@ -6879,33 +8368,29 @@ sub db_object
    return $out;
 }
 
-#
-# db_process_line
-#   Read one line from the db at a time, storing any vital information
-#   in the state hash table.
-#
 sub db_process_line
 {
    my ($state,$line) = @_;
 
    $line =~ s/\r|\n//g;
    $$state{chars} += length($_);
-   if($$state{obj} eq undef &&  $line =~                            # header
+   if($$state{obj} eq undef &&  $line =~
       /^server: ([^,]+), dbversion=([^,]+), exported=([^,]+), type=/) {
       $$state{ver} = $2;
+      # header
    } elsif($line =~ /^\*\* Dump Completed (.*) \*\*$/) {
-      $$state{complete} = 1;                                  # dump complete
+      $$state{complete} = 1;
    } elsif($$state{obj} eq undef && $line =~ /^obj\[(\d+)]\s*{\s*$/) {
-      $$state{obj} = $1;                                    # start of object
+      $$state{obj} = $1;
    } elsif($$state{obj} ne undef && $line =~ /^\s*([^ \/:]+):([^:]*):M:/) {
-      db_set($$state{obj},$1,db_unsafe($'));                 # MIME attribute
+      db_set($$state{obj},$1,db_unsafe($'));
       db_set_flag($$state{obj},$1,$2,1) if($2 ne undef);
    } elsif($$state{obj} ne undef && $line =~ /^\s*([^ \/:]+):([^:]*):A:/) {
-      db_set($$state{obj},$1,$');                        # standard attribute
+      db_set($$state{obj},$1,$');
       db_set_flag($$state{obj},$1,$2,1) if($2 ne undef);
       $$state{loc} = $' if($1 eq "obj_location");
    } elsif($$state{obj} ne undef && $line =~ /^\s*([^ \/:]+):([^:]*):L:/) {
-      my ($attr,$list) = ($1,$');                            # list attribute
+      my ($attr,$list) = ($1,$');
       for my $item (split(/,/,$list)) {
          db_set_list($$state{obj},$attr,$item);
          if($attr eq "obj_flag" && $item =~ /^\s*(PLAYER|EXIT)\s*$/i) {
@@ -6913,7 +8398,7 @@ sub db_process_line
          }
       }
    } elsif($$state{obj} ne undef && $line =~ /^\s*([^ \/:]+):([^:]*):H:/) {
-      my ($attr,$list) = ($1,$');                           # hash attribute
+      my ($attr,$list) = ($1,$');
       for my $item (split(/;/,$list)) {
          if($item =~ /^([^:]+):A:([^;]+)/) {
             db_set_hash($$state{obj},$attr,$1,$2);
@@ -6921,7 +8406,7 @@ sub db_process_line
             db_set_hash($$state{obj},$attr,$1,db_unsafe($2));
          }
       }
-   } elsif($$state{obj} ne undef && $line =~ /^\s*}\s*$/) {    # end of object
+   } elsif($$state{obj} ne undef && $line =~ /^\s*}\s*$/) {
       if($$state{type} eq "PLAYER") {
          @player{lc(@{@{@db[$$state{obj}]}{obj_name}}{value})} = $$state{obj};
       }
@@ -6930,28 +8415,83 @@ sub db_process_line
       delete @$state{loc};
    } else {
       con("Unable to parse[$$state{obj}]: '%s'\n",$line);
-      die();
    }
 }
 
-$SIG{'INT'} = sub {  con("**** Program Exiting ******\n"); 
-                     cmd_dump(obj(0),{},"CRASH");
-                     @info{crash_dump_complete} = 1;
-                     con("**** Dump Complete Exiting ******\n");
+sub db_read_string
+{
+   my ($data) = @_;
+   my $state = {};
+
+   return if($#db >= 0);                       # don't re-read the database
+
+   for my $line (split(/\n/,$data)) {
+      db_process_line($state,$line);
+   }
+}
+
+sub db_read
+{
+   my ($self,$prog,$name) = @_;
+   my ($state,$file) = {};
+
+   return if($#db >= 0);                        # don't re-read the database
+
+   open($file,"< $name") ||
+      con("Unable to read file '$name'\n");
+
+   con("Opening database file: %s\n",$name);
+
+   while(<$file>) {
+      db_process_line($state,$_);
+   }
+
+   if(!$$state{complete} && arg("forceload")) {
+      con("\n### File %s is not complete, aborting ###\n\n",$name);
+      exit(1);
+   }
+   con("    Database Version %s -- %s bytes read\n",
+          $$state{ver},
+          $$state{chars}
+         );
+   close($file);
+}
+
+$SIG{'INT'} = sub {  if(memorydb) {
+                        con("**** Program Exiting ******\n"); 
+                        cmd_dump(obj(0),{},"CRASH");
+                        @info{crash_dump_complete} = 1;
+                        con("**** Dump Complete Exiting ******\n");
+                     }
                      con("CALLED\n");
                      exit(1);
                   };
 
 END {
-   if(@info{run} == 0) {
-      con("%s shutdown by %s.\n",conf("mudname"),@info{shutdown_by});
-      cmd_dump(obj(0),{});
-   } elsif(!defined @info{crash_dump_complete} && $#db > -1) {
+   if(memorydb && !defined @info{crash_dump_complete} && $#db > -1) {
       con("**** Program EXITING ******\n");
       cmd_dump(obj(0),{},"CRASH");
       con("**** Dump Complete Exiting 2 ******\n");
    }
 }
+
+# object {
+#    attr {
+#       value => 
+#       flag => 
+#       owner => 
+#    }
+# }
+# #!/usr/bin/perl
+#
+# tm_engine.pl
+#    This file contains any functions required to handle the scheduling of
+#    running of mush commands. The hope is to balance the need for socket
+#    IO verses the need to run mush commands.
+#
+
+
+use Time::HiRes "ualarm";
 
 sub single_line
 {
@@ -7043,7 +8583,7 @@ sub mush_command
    $cmd = evaluate($self,$prog,$cmd) if($src ne undef && $src == 0);
    
    if(@info{master_overide} eq "no") {      # search master room first
-      for my $obj (lcon(conf("master"))) {
+      for my $obj (lcon(@info{"conf.master"})) {
          run_obj_commands($self,$prog,$runas,$obj,$cmd) && return 1;
       }
    }
@@ -7065,7 +8605,7 @@ sub mush_command
    }
 
    if(@info{master_overide} ne "no") {             # search master room
-      for my $obj (lcon(conf("master"))) {             # but not twice
+      for my $obj (lcon(@info{"conf.master"})) {             # but not twice
          run_obj_commands($self,$prog,$runas,$obj,$cmd) && return 1;
       }
    }
@@ -7439,10 +8979,8 @@ sub spin
        };
 
 
-      if(!defined @info{dump_time}) {
-         @info{dump_time} = time();
-      } elsif(time()-@info{dump_time} > nvl(conf("dump_interval"),3600)) {
-         @info{dump_time} = time();
+      if(time()-@info{db_last_dump} > @info{"conf.backup_interval"}) {
+         @info{db_last_dump} = time();
          my $self = obj(0);
          mushrun(self   => $self,
                  runas  => $self,
@@ -7707,6 +9245,30 @@ sub spin_run
 }
 
 
+#
+# signal_still_running
+#
+#    This command puts the currently running command back into the
+#    queue of running commands. The assumption is that all commands
+#    will be done after the first run... and therefor are removed
+#    from the queue.. so we have to add it back in.
+#  
+sub signal_still_running
+{
+    my ($prog,$pending) = @_;
+
+    my $cmd = $$prog{cmd_last};
+    $$cmd{pending} = $pending;
+    $$cmd{still_running} = 1;
+
+    unshift(@{$$prog{stack}},$cmd);
+}
+# #!/usr/bin/perl
+#
+# tm_find.pl
+#    Generic routines to find objects from a player's perspective.
+#
+
 sub find_in_list
 {
    my ($thing,@list) = @_;
@@ -7857,13 +9419,50 @@ sub find_player
        }
    }
 
-   if(defined @player{lc($thing)}) {
-      return obj(@player{lc($thing)});
+   if(memorydb) {
+      if(defined @player{lc($thing)}) {
+         return obj(@player{lc($thing)});
+      } else {
+         return find_in_list($thing,values %player);
+      }
+      return obj($partial);
    } else {
-      return find_in_list($thing,values %player);
+      for my $rec (@{sql("select obj.obj_id, obj_name " .
+                         "  from object obj, flag flg, flag_definition fde " .
+                         " where obj.obj_id = flg.obj_id " .
+                         "   and flg.fde_flag_id = fde.fde_flag_id " .
+                         "   and fde.fde_name = 'PLAYER' " .
+                         "   and flg.atr_id is null " .
+                         "   and fde_type = 1 " .
+                         "   and upper(substr(obj_name,1,?)) = ? ",
+                         length($thing),
+                         uc($thing)
+                   )}) {;
+         if(lc($$rec{obj_name}) eq lc($thing)) {
+            return obj($$rec{obj_id});
+         } elsif($partial eq undef) {
+            $partial = $$rec{obj_id};
+         } else {
+            $dup = 1;
+         }
+      }
+      return !$dup ? undef : obj($partial);
    }
-   return obj($partial);
 }
+
+# #!/usr/bin/perl
+#
+# tm_format.pl
+#    This is a mini mush parser similar to what is used in the main part
+#    of TeenyMUSH. The purpose of this parser is to format MUSH code
+#    into something more readable.
+#
+
+use strict;
+use Carp;
+use Text::Wrap;
+$Text::Wrap::huge = 'overflow';
+
 
 #
 # balanced_split
@@ -8316,6 +9915,18 @@ sub pretty
 # 
 # printf("%s\n",pretty(3,$code));
 # printf("%s\n",function_print(3,$code));
+# #!/usr/bin/perl
+#
+# tm_functions.pl
+#    Contains all functions that can be called from within the mush by
+#    users.
+#
+use strict;
+use Carp;
+use Scalar::Util qw(looks_like_number);
+use Math::BigInt;
+use POSIX;
+use Compress::Zlib;
 
 #
 # define which function's arguements should not be evaluated before
@@ -8375,6 +9986,7 @@ sub initialize_functions
    @fun{timezone}  = sub { return &fun_timezone(@_);               };
    @fun{flags}     = sub { return &fun_flags(@_);                  };
    @fun{quota}     = sub { return &fun_quota_left(@_);             };
+   @fun{sql}       = sub { return &fun_sql(@_);                    };
    @fun{input}     = sub { return &fun_input(@_);                  };
    @fun{has_input} = sub { return &fun_has_input(@_);              };
    @fun{strlen}    = sub { return &fun_strlen(@_);                 };
@@ -8447,6 +10059,7 @@ sub initialize_functions
    @fun{inuse}     = sub { return &inuse_player_name(@_);          };
    @fun{web}       = sub { return &fun_web(@_);                    };
    @fun{run}       = sub { return &fun_run(@_);                    };
+   @fun{graph}     = sub { return &fun_graph(@_);                  };
    @fun{lexits}    = sub { return &fun_lexits(@_);                 };
    @fun{lcon}      = sub { return &fun_lcon(@_);                   };
    @fun{home}      = sub { return &fun_home(@_);                   };
@@ -8751,6 +10364,23 @@ sub fun_hasattrp
    return (ref($hash) eq "HASH") ? 1 : 0;
 }
 
+sub fun_eval
+{
+   my($self,$prog) = (obj(shift),shift);
+
+   return undef if(!defined $$prog{mush_function_name});
+   printf("FUNCTION_NAME: '%s'\n",$$prog{mush_function_name});
+   printf("FUNCTION_NAME: '%s'\n",$$prog{mush_function_name});
+   printf("FUNCTION_NAME: '%s'\n",$$prog{mush_function_name});
+
+   my $name = lc($$prog{mush_function_name});
+   my $hash = @info{mush_function};
+
+   return undef if(!defined $$hash{$name});
+
+   return fun_u($self,$prog,$$hash{$name},@_);
+}
+
 sub fun_tohex
 {
    my($self,$prog) = (obj(shift),shift);
@@ -8981,7 +10611,7 @@ sub fun_html_strip
 {
    my ($self,$prog,$txt) = (obj(shift),shift);
 
-   if(@info{"html_restrict"} == -1) {
+   if(@info{"conf.html_restrict"} == -1) {
       return "#-1 Not enabled";
    }
 
@@ -9544,9 +11174,9 @@ sub fun_url
       return set_var($prog,"data","#-1 Unable to parse URL");
    }
 
-   if($secure && @info{"url_https"} == -1) {
+   if($secure && @info{"conf.url_https"} == -1) {
       return set_var($prog,"data","#-1 HTTPS DISABLED");
-   } elsif(!$secure && @info{"url_http"} == -1) {
+   } elsif(!$secure && @info{"conf.url_http"} == -1) {
       return set_var($prog,"data","#-1 HTTP DISABLED");
    } elsif(defined $$prog{socket_id} && $$prog{socket_url} ne $txt && 
       !defined $$prog{socket_closed}) {
@@ -9997,9 +11627,6 @@ sub fun_compress
 {
    my ($self,$prog) = (obj(shift),shift);
 
-   @info{compress} ||
-      return "#-1 function disable due to missing perl module";
-
    hasflag($self,"WIZARD") ||
      return "#-1 FUNCTION (COMPRESS) EXPECTS 1 WIZARD FLAG";
    
@@ -10014,9 +11641,6 @@ sub fun_compress
 sub fun_uncompress
 {
    my ($self,$prog) = (obj(shift),shift);
-
-   @info{compress} ||
-      return "#-1 function disable due to missing perl module";
 
    hasflag($self,"WIZARD") ||
      return "#-1 FUNCTION (COMPRESS) EXPECTS 1 WIZARD FLAG";
@@ -10126,6 +11750,30 @@ sub fun_lrand
    return join("$delim",@result);
 }
 
+
+sub var_backup
+{
+   my ($dst,$src,%new_data) = @_;
+
+   for my $key (keys %new_data) {                              # backup to dst
+      $$dst{$key} = $$src{$key};
+   }
+
+   for my $key (keys %new_data) {
+      $$src{$key} = @new_data{$key};
+   }
+}
+
+sub var_restore
+{
+   my ($dst,$src) = @_;
+
+   for my $key (keys %$src) {
+      $$dst{$key} = $$src{$key};
+   }
+}
+
+
 sub fun_lexits
 {
    my ($self,$prog) = (obj(shift),shift);
@@ -10169,6 +11817,22 @@ sub fun_lcon
       push(@result,"#" . $$obj{obj_id}) if($perm || !hasflag($obj,"DARK"));
    }
    return join(' ',@result);
+}
+
+sub fun_graph
+{
+   my ($self,$prog,$txt,$x,$y) = @_;
+
+   if(mysqldb) {
+      if($txt =~ /^\s*(mush|web)\s*$/i) {
+         return "Specify Connected";
+         return graph_connected(lc($1),$x,$y);
+      } else {
+         return "Specify Connected";
+      }
+   } else {
+      return "Not written for MemoryDB";
+   }
 }
 
 sub range
@@ -10323,6 +11987,50 @@ sub fun_run
    return $output;
 }
 
+sub safe_split_new
+{
+   my ($txt,$delim) = @_;
+   my ($start,$pos,@result) = (0,0);
+   my $orig = $txt;
+
+   if($delim =~ /^\s*\n\s*/m) {
+      $delim = "\n";
+   } else {
+      $delim =~ s/^\s+|\s+$//g;
+ 
+      if($delim eq " " || $delim eq undef) {
+#         $txt =~ s/\s+/ /g;
+#         $txt =~ s/^\s+|\s+$//g;
+         $delim = " ";
+      }
+   }
+
+   my $txt = ansi_init($txt);
+   my $size = ansi_length($txt);
+   my $dsize = ansi_length($delim);
+   my $ch = $$txt{ch};
+
+#   if($delim eq " ") {                                # exclude inital spaces
+#      for(;$$ch[$pos] eq " " && $pos < $size;$pos++){}; # when delim is a space
+#   }
+
+   for(;$pos < $size;$pos++) {
+      if(ansi_substr($txt,$pos,$dsize) eq $delim) {
+#         if($delim eq " ") {
+#            printf("START: '%s' = '%s'\n",$pos,$$ch[$pos]);
+#            for(;$$ch[$pos] eq " " && $pos < $size;$pos++) {};
+#            printf("END:   '%s'\n",$pos);
+#         }
+         push(@result,ansi_substr($txt,$start,$pos-$start));
+         $result[$#result] =~ s/^\s+|\s+$//g if($delim eq " ");
+         $start = $pos + $dsize;
+      }
+   }
+
+   push(@result,ansi_substr($txt,$start,$size)) if($start < $size);
+   return @result;
+}
+
 sub safe_split
 {
    my ($txt,$delim,$flag) = @_;
@@ -10394,7 +12102,7 @@ sub fun_mudname
 {
    my ($self,$prog) = (shift,shift);
 
-   my $name = conf("mudname");
+   my $name = @info{"conf.mudname"};
 
    return ($name eq undef) ? "TeenyMUSH" : $name;
 }
@@ -11722,6 +13430,32 @@ sub fun_strlen
    return ansi_length(evaluate($self,$prog,shift));
 }
 
+sub fun_sql
+{
+   my ($self,$prog,$type) = (shift,shift,shift);
+   my $result;
+
+   if(hasflag($self,"WIZARD") || hasflag($self,"SQL")) {
+      my (@txt) = @_;
+
+      my $sql = join(',',@txt);
+#      $sql =~ s/\_/%/g;
+#      necho(self => $self,
+#            prog => $prog,
+#            source => [ "Sql: '%s'\n",$type],
+#           );
+      if(lc($type) eq "text") {
+         $result = text(evaluate($self,$prog,$sql));
+      } else {
+         $result = table(evaluate($self,$prog,$sql));
+      }
+
+      $result =~ s/\n$//;
+      return $result;
+   } else {
+      return "#-1 Permission Denied";
+   }
+}
 
 #
 # fun_substr
@@ -11954,6 +13688,19 @@ sub fun_cat
    return join(" ",@_);
 }
 
+
+sub mysql_pattern
+{
+   my $txt = shift;
+
+   $txt =~ s/^\s+|\s+$//g;
+   $txt =~ tr/\x80-\xFF//d;
+   $txt =~ s/[\;\%\/\\]//g;
+   $txt =~ s/\*/\%/g;
+   $txt =~ s/_/\\_/g;
+   return $txt;
+}
+
 #
 # fun_lattr
 #    Return a list of attributes on an object or the enactor.
@@ -11979,10 +13726,23 @@ sub fun_lattr
       return err($self,$prog,"#-1 Permission Denied.");
    }
 
-   my $pat = ($atr eq undef) ? undef : glob2re($atr);
+   if(memorydb) {
+      my $pat = ($atr eq undef) ? undef : glob2re($atr);
 
-   for my $attr (grep {!/^obj_/i} lattr($target)) {
-      push(@list,uc($attr)) if($pat eq undef || $attr =~ /$pat/i);
+      for my $attr (grep {!/^obj_/i} lattr($target)) {
+         push(@list,uc($attr)) if($pat eq undef || $attr =~ /$pat/i);
+      }
+   } else {
+      for my $attr (@{sql("  select atr_name " .   # query for attribute names
+                          "    from attribute " .
+                          "   where obj_id = ? " .
+                          "     and atr_name like upper(?) " .
+                          "order by atr_name",
+                          $$target{obj_id},
+                          mysql_pattern($atr)
+                         )}) {
+         push(@list,$$attr{atr_name});
+      }
    }
    return join(' ',@list);
 }
@@ -12139,6 +13899,27 @@ sub fun_citer
 
 
 #
+# escaped
+#    Determine if the current position is escaped or not by
+#    counting backwards to see if the number of slashes are
+#    odd or even.
+#
+sub escaped
+{
+   my ($array,$pos) = @_;
+   my $count = 0;
+   my $p = $pos;
+
+   # count number of escape characters
+   for($pos--;$pos > -1 && $$array[$pos] eq "\\";$pos--) {
+      $count++;
+   }
+
+   # if odd, the current position is escape. If even its not.
+   return ($count % 2 == 0) ? 0 : 1;
+}
+
+#
 # fun_lookup
 #    See if the function exists or not. Return "huh" if only to be
 #    consistent with the command lookup
@@ -12173,7 +13954,7 @@ sub parse_function
 {
    my ($self,$prog,$fun,$txt,$type) = @_;
 
-   if($$prog{function_command}++ > conf("function_invocation_limit")) {
+   if($$prog{function_command}++ > @info{"conf.function_invocation_limit"}) {
       return undef; # "#-1 FUNCTION INVOCATION LIMIT HIT";
    }
    $$prog{function}++;
@@ -12272,6 +14053,75 @@ sub balanced_split
 #   } elsif($type == 3 || $type == 4) {
    } elsif($type == 3) {
       push(@stack,substr($txt,$last)) if($found || $last != $size);
+      return @stack;
+   } else {
+      unshift(@stack,substr($txt,$last));
+      return ($#depth != -1) ? undef : @stack;
+   }
+}
+
+sub balanced_split_old
+{
+   my ($txt,$delim,$type,$debug) = @_;
+   my ($last,$i,@stack,@depth,$ch,$buf) = (0,-1);
+
+   my $size = length($txt);
+   while(++$i < $size) {
+      $ch = substr($txt,$i,1);
+
+      if($ch eq "\\") {
+#         $buf .= substr($txt,++$i,1);
+         $buf .= substr($txt,$i++,2); # CHANGE
+         next;
+      } else {
+         if($ch eq "(" || $ch eq "{") {                  # start of segment
+            $buf .= $ch;
+            push(@depth,{ ch    => $ch,
+                          last  => $last,
+                          i     => $i,
+                          stack => $#stack+1,
+                          buf   => $buf
+                        });
+         } elsif($#depth >= 0) {
+            $buf .= $ch;
+            if($ch eq ")" && @{@depth[$#depth]}{ch} eq "(") {
+               pop(@depth);
+            } elsif($ch eq "}" && @{@depth[$#depth]}{ch} eq "{") {
+               pop(@depth);
+            }
+         } elsif($#depth == -1) {
+            if($ch eq $delim) {    # delim at right depth
+               if($type == 4) {                        # found delim, done
+                  return $buf, substr($txt,$i+1);
+               } else {
+                  push(@stack,$buf);
+                  $last = $i+1;
+                  $buf = undef;
+               }
+            } elsif($type <= 2 && $ch eq ")") {                   # func end
+               push(@stack,$buf);
+               $last = $i+1;
+               $i = $size;
+               $buf = undef;
+               last;                                      # jump out of loop
+            } else {
+               $buf .= $ch;
+            }
+         } else {
+            $buf .= $ch;
+         }
+      }
+      if($i +1 >= $size && $#depth != -1) {   # parse error, start unrolling
+         my $hash = pop(@depth);
+         $i = $$hash{i};
+         delete @stack[$$hash{stack} .. $#stack];
+         $last = $$hash{last};
+         $buf = $$hash{buf};
+      }
+   }
+
+   if($type == 3 || $type == 4) {
+      push(@stack,substr($txt,$last)) if(substr($txt,$last) !~ /^\s*$/);
       return @stack;
    } else {
       unshift(@stack,substr($txt,$last));
@@ -12400,6 +14250,8 @@ sub evaluate
 }
 # #!/usr/bin/perl
 
+#
+# tm_httpd.pl
 #    Handle the incoming data and look for disconnects.
 #
 sub http_io
@@ -12495,7 +14347,7 @@ sub manage_httpd_bans
 
          if(scalar keys %{@info{httpd_invalid_data}->{$key}} == 0) {
             delete @info{httpd_invalid_data}->{$key};        # no current hits
-         } elsif($count >= nvl(conf("httpd_invalid"),3)) {
+         } elsif($count >= @info{"conf.httpd_invalid"}) {
             if(!defined @{@info{httpd_ban}}{$key}) {
                @{@info{httpd_ban}}{$key} = scalar localtime();     # too many
                web("   %s %s\@web *** BANNED **\n",ts(),$key);       # add ban
@@ -12566,7 +14418,7 @@ sub http_reply
    http_out($s,"");
    http_out($s,"%s\n",ansi_remove(evaluate($$prog{user},
                                $prog,
-                               conf("httpd_template")
+                               @info{"conf.httpd_template"}
                               ))
            );
    http_out($s,"<body>\n");
@@ -12684,8 +14536,8 @@ sub http_process_line
       if($msg eq undef) {
          http_error($s,"Malformed Request");
       } else {
-         my $id = conf("webuser");
-         my $self = obj(conf("webuser"));
+         my $id = @info{"conf.webuser"};
+         my $self = obj(@info{"conf.webuser"});
 
          $$data{get} = uri_unescape($$data{get});
          $$data{get} =~ s/\// /g;
@@ -12699,6 +14551,28 @@ sub http_process_line
          $addr = $s->peerhost if($addr =~ /^\s*$/);
          return http_error($s,"Malformed Request or IP") if($addr =~ /^\s*$/);
          @http{$s}->{ip} = $addr;
+
+         if(mysqldb && $$data{get} !~ /^\s*favicon\.ico\s*$/i) {
+            sql("insert into socket_history ".
+                "( obj_id, " .
+                "  skh_hostname, " .
+                "  skh_start_time, " .
+                "  skh_end_time, " .
+                "  skh_success, " .
+                "  skh_detail, " .
+                "  skh_type " .
+                ") values ( " .
+                "  ?, ?, now(), now(), 0, ?, ? ".
+                ")",
+                @info{"conf.webuser"},
+                $addr,
+                substr($$data{get},0,254),
+                2
+               );
+            if(@info{rows} != 1) {
+               con("Unable to add data to socket_history\n");
+            }
+         }
 
          @info{httpd_ban} = {} if(!defined @info{httpd_ban});
          # html/js/css should be a static file, so just return the file
@@ -12745,6 +14619,20 @@ sub http_process_line
       http_error($s,"Malformed Request");
    }
 }
+# #!/usr/bin/perl
+#
+# tm_internal.pl
+#    Various misc functions that are not related to anything in particular.
+#    This is generally code that supports other bits and peices. Maybe this
+#    should be renamed to tm_misc.pl
+#
+
+use strict;
+use IO::Select;
+use IO::Socket;
+use Time::Local;
+use Carp;
+use Fcntl qw( SEEK_END SEEK_SET);
 
 #
 # dump_complete
@@ -12771,54 +14659,101 @@ sub dump_complete
    }
 }
 
-
 #
-# load_db
+# prune_dumps
+#    Delete old backups but still keep enough to resolve any issues that
+#    may accure.
 #
-sub load_db
+#    Current rules are:
+#        Keep last 5 files,
+#        Keep any backups less then 12 hours old
+#        Keep one backup per day for a week
+#        Keep one backup per week for a month
+#        Keep one backup per month for a month
+#
+sub prune_dumps
 {
-   my ($dir, $file, %state);
+   my ($name,$filter) = @_;
+   my ($prev,$last,$dir,%data);
+   my $count = 0;
 
-   if(!-d "dumps") {
-     mkdir("dumps") || die("Unable to create directory 'dumps'.");
+   opendir($dir,$name) ||
+      die("Unable to find directory $dir");
+
+   # sort by filename instead of timestamp
+   for my $file (readdir($dir)) {
+      if($file =~ /$filter/ && $file !~ /\.BAD$/i) {
+         if(!dump_complete("$name/$file")) {
+            move("$name/$file","$name/$file.BAD");     # rename but don't fail
+         } elsif($file =~ /(\d{2})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/) {
+             my $ts = timelocal($6,$5,$4,$3,$2-1,$1);
+             @data{$ts} = { day => $3, fn  => $file };
+         }
+      }
    }
-
-   opendir($dir,"dumps") || die("Unable to find dumps directory");
-
-   my $fn =(sort {(stat("dumps/$a"))[9] <=> (stat("dumps/$b"))[9]}
-             grep {/\.tdb$/}                         # find most current db
-             readdir($dir))[-1];
-
    closedir($dir);
 
-   if($fn eq undef) {
-      con("\nNo database found, loading starter database.\n\n");
-      con("Connect as: god potrzebie\n\n");
-      my $obj = {obj_id => 0};
-      my $prog = prog($obj,$obj,$obj);
-      cmd_pcreate($obj,$prog,"god potrzebie");                 # create god
-      set_flag($obj,$prog,$obj,"GOD",,1);                  # set god wizard
-      cmd_dig($obj,$prog,"The Void");                        # dig the void
-      teleport($obj,$prog,$obj,1);             # teleport god into the void
-      cmd_give($obj,$prog,"#0 = 0");                  # give god some money
-      return;
+   for my $file (sort {$b <=> $a} keys %data) {
+      my $hash = @data{$file};
+      if(# at least the last 5 files
+         $count++ < 5 ||
+
+         #file once per hour for a day
+#         time() - $file <  43200 ||
+
+         # file once per day for a week
+#         (time() - $file > 43200 && time() - $file < 604800 &&
+#          $$hash{day} != $prev) ||
+
+         # file at least once per week for a month
+#         (time() - $file > 604800 && time() - $file < 4687200 &&
+#          $last - $file >= 604800) ||
+
+         # file at least once per month
+#         (time() - $file > 4687200 && $last - $file >= 4687200)
+ 
+          $last - $file >= 604800
+        ) {
+         $last = $file;
+      } else {
+         if(!unlink("$name/$$hash{fn}")) {
+            con("Delete file dumps/$$hash{fn} during cleanup FAILED.");
+         } else {
+		 #            con("# Deleting $$hash{fn} as part of db backup cleanup\n");
+         }
+      }
+      $prev = $$hash{day};
    }
+}
 
-   if(!dump_complete("dumps/$fn")) {
-      die("$fn is incomplete, remove or use --forceload to override");
-   } 
-    
-   open($file,"< dumps/$fn") ||
-      die("Unable to open database 'dumps/$fn'\n");
 
-   con("Opening database file: %s\n",$fn);
 
-   while(<$file>) {
-      db_process_line(\%state,$_);
-   }
-   close($file);
+#
+# newest_full
+#    Search for the newest dump file.
+#
+sub newest_full
+{
+    my (%list, $fh,$dir);
+    my %list;
 
-   con("   Database Version %s -- %s bytes read\n",@state{ver},@state{chars});
+    if(!-d "dumps") {
+      mkdir("dumps") ||
+         die("Unable to create directory 'dumps'.");
+    }
+
+    opendir($dir,"dumps") ||
+       die("Unable to find dumps directory");
+
+    for my $file (readdir($dir)) {
+       if($file =~ /^@info{"conf.mudname"}.FULL\.([\d_]+)\.tdb$/i && 
+          dump_complete("dumps/$file")) {
+          @list{"dumps/$file"} = (stat("dumps/$file"))[9];
+       }
+    }
+    closedir($dir);
+
+    return (sort { @list{$b} <=> @list{$a}}  keys %list)[0];
 }
 
 sub generic_action
@@ -12871,6 +14806,38 @@ sub glob2re
     return "(?msix:\\A$pat\\z)";
 }
 
+#
+# io
+#    This function logs all input and output.
+#
+sub io
+{
+   return if memorydb;
+   my ($self,$type,$data) = @_;
+
+   return if($$self{obj_id} eq undef);
+
+   my $tmp = @info{rows};
+   sql("insert into io" .
+       "(" .
+       "   io_type, ".
+       "   io_data, " .
+       "   io_src_obj_id, ".
+       "   io_src_loc ".
+       ") values ( ".
+       "   ?, " .
+       "   ?, " .
+       "   ?, " .
+       "   ? " .
+       ")",
+       $type,
+       $data,
+       $$self{obj_id},
+       loc($self)
+      );
+   @info{rows} = $tmp;
+   my_commit;
+}
 
 #
 # the mush program has finished, so clean up any telnet connections.
@@ -12935,11 +14902,12 @@ sub err
    my ($self,$prog,$fmt) = (obj(shift),obj(shift),shift);
    my (@args) = @_;
 
-   printf("ERR: '$fmt'\n",@args);
    necho(self => $self,
          prog => $prog,
          source => [ $fmt,@args ],
         );
+
+   my_rollback if mysqldb;
 
    return 0;
 #   return sprintf($fmt,@args);
@@ -12963,15 +14931,15 @@ sub pennies
    if(ref($what) eq "HASH" && defined $$what{obj_id}) {
       $amount = money($what);
    } elsif($what !~ /^\s*\-{0,1}(\d+)\s*$/) {
-      $amount = conf("$what");
+      $amount = @info{"conf.$what"};
    } else {
       $amount = $what;
    }
 
    if($amount == 1) {
-      return $amount . " " . conf("money_name_singular") . ".";
+      return $amount . " " . @info{"conf.money_name_singular"} . ".";
    } else {
-      return $amount . " " . conf("conf.money_name_plural") . ".";
+      return $amount . " " . @info{"conf.money_name_plural"} . ".";
    }
 }
 
@@ -13021,6 +14989,17 @@ sub renumber_code
    return join("\n",@out);
 }
 
+
+sub string_escaped
+{
+   my $txt = shift;
+
+   if($txt =~ /(\\+)$/) {
+      return (length($1) % 2 == 0) ? 0 : 1;
+   } else {
+      return 0;
+   }
+}
 
 #
 # evaluate
@@ -13128,6 +15107,72 @@ sub text
    # $out .= "---[  End  ]---";                                   # add footer
    return $out;
 }
+
+#
+# table
+#    Generic function to resturn the results of a multiple column
+#    query. The results will be put into a nice text-based table
+#    with column the columns sorted similar to the provided sql.
+#
+sub table
+{
+   my ($sql,@args) = @_;
+   my ($out, @data, @line, @header, @keys, %order, %max,$count,@pos);
+
+   if(memorydb) {
+      return "Not supported in MemoryDB";
+   }
+   # determine column order from the original sql
+   if($sql =~ /^\s*select (.+?) from/) {
+      for my $field (split(/\s*,\s*/,$1)) {
+         if($field =~ / ([^ ]+)\s*$/) {
+            @order{lc(trim($1))} = ++$count;
+         } else {
+            @order{lc(trim($field))} = ++$count;
+         }
+      }
+   }
+
+   # determine the max column length for each column, and store the
+   # output of the sql so it doesn't have to be run twice.
+#   echo($user,"%s",$sql);
+   for my $hash (@{sql($sql,@args)}) {
+      push(@data,$hash);                                     # store results
+      for my $key (keys %$hash) {
+         if(length($$hash{$key}) > $max{$key}) {         # determine  if max
+             @max{$key} = length($$hash{$key});
+         }
+                             # make max minium size that of the column name
+         @max{$key} = length($key) if(length($key) > $max{$key});
+      }
+   }
+
+   return "No data found" if($#data == -1);
+
+   for my $i (0 .. $#data) {                        # cycle through each row
+      my $hash = $data[$i];
+      delete @line[0 .. $#line];
+
+      if($#pos == -1) {                            # create sort order once
+         @pos = (sort {@order{lc($a)} <=> @order{lc($b)}} keys %$hash);
+      }
+      for my $key (@pos) {                       # cycle through each column
+         if($i == 0) {
+            push(@header,"-" x $max{$key});        # add first row of header
+            push(@keys,sprintf("%-*s",$max{$key},$key));
+         }
+         push(@line,sprintf("%-*s",$max{$key},$$hash{$key}));   # add column
+      }
+      if($i == 0) {                          # add second/third row of header
+         $out .= join(" | ",@keys) . "\n"; # add 
+         $out .= join("-|-",@header) .  "\n";
+      }
+      $out .= join(" | ",@line) . "\n"; # add pre-generated column to output
+   }
+   $out .= join("- -",@header) . "\n";                          # add footer
+   return $out;
+}
+
 
 #
 # controls
@@ -13343,7 +15388,7 @@ sub filter_chars
 sub logit
 {
    my ($type,$fmt,@args) = @_;
-   my ($msg,$fd,$fn);
+   my ($msg,$fd);
 
    # add newline if needed except when the fmt starts with a escape code
    $fmt .= "\n" if(substr($fmt,0,1) ne chr(27) && $fmt !~ /\n$/); 
@@ -13351,20 +15396,21 @@ sub logit
    $fd = @info{"$type.fd"} if defined @info{"$type\.fd"};   # get existing fd
 
    # do not log requests
-   return if(conf("$type") =~ /^\s*nolog\s*$/i);
+   return if(@info{"conf.$type"} =~ /^\s*nolog\s*$/i);
+
+   # security - filename could be coming from inside the db, don't allow
+   #            bad filenames - overwrite of important files.
+   if(!defined @info{"conf.$type"} || 
+      @info{"conf.$type"} =~ /(\\|\/|..)/ ||      # stay in current dir
+      @info{"conf.$type"} !~ /web.log$/i ) {         # stay named *.web.log
+      @info{"conf.$type"} = @default{$type};
+   }
 
 #   printf("$fmt", @args);
    # open log as needed if not using console
-
-   if($type eq "weblog") {
-      $fn = "teenymush.web.log";
-   } else {
-      $fn = "teenymush.log";
-   }
-
-   if(conf($type) !~ /^\s*console\s*$/i  &&
-      (!-e $fn || !defined @info{"$type\.fd"})) {
-      if(open($fd,">> $fn")) {
+   if(@info{"conf.$type"} !~ /^\s*console\s*$/i  &&
+      (!-e @info{"conf.$type"} || !defined @info{"$type\.fd"})) {
+      if(open($fd,">> " . @info{"conf.$type"})) {
          $fd->autoflush(1);
          @info{"$type\.fd"} = $fd;
       } else {
@@ -13390,6 +15436,47 @@ sub web
 sub con
 {
    logit("conlog",@_);
+}
+
+
+sub log_output
+{
+   my ($src,$dst,$loc,$txt) = (obj(shift),obj(shift),shift,shift);
+
+   return if memorydb;
+   return if($$src{obj_id} eq undef);
+
+   $txt =~ s/([\r\n]+)$//g;
+
+   my $tmp = @info{rows}; # its easy to try to necho() data before testing
+                          # against $$db{rows}, which  will clear $$db{rows}.
+                          # so we'll revert it after the below sql() call.
+
+   sql("insert into io" .                      #store output in output table
+       "(" .
+       "   io_data, " .
+       "   io_type, ".
+       "   io_src_obj_id, ".
+       "   io_src_loc, ".
+       "   io_dst_obj_id, ".
+       "   io_dst_loc ".
+       ") values ( ".
+       "   ?, " .
+       "   ?, " .
+       "   ?, " .
+       "   ?," .
+       "   ?, " .
+       "   ? " .
+       ")",
+       substr($txt,0,63999),
+       2,
+       $$src{obj_id},
+       loc($src),
+       $$dst{obj_id},
+       loc($dst),
+      );
+   @info{rows} = $tmp;
+   my_commit;
 }
 
 
@@ -13579,6 +15666,7 @@ sub necho
                      $msg
                     );
       } else {
+         log_output($self,$target,-1,$msg);
 
          echo_socket($$target{obj_id},
                      @arg{prog},
@@ -13588,6 +15676,34 @@ sub necho
                     );
       }
    }
+}
+
+#
+# echo_no_log
+#    The same as the echo function but without logging anything to the
+#    output table.
+#
+sub echo_nolog
+{
+   my ($target,$fmt,@args) = @_;
+   my $match = 0;
+
+   my $out = sprintf($fmt,@args);
+   $out .= "\n" if($out !~ /\n$/);
+   $out =~ s/\n/\r\n/g if($out !~ /\r/);
+
+#   if(hasflag($target,"PLAYER")) {
+      for my $key (keys %connected) {
+         if($$target{obj_id} eq @{$connected{$key}}{obj_id}) {
+            my $sock = @{$connected{$key}}{sock};
+            if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
+               ws_echo($sock,$out);
+            } else {
+               printf($sock "%s",$out);
+            }
+         }
+      }
+#   }
 }
 
 sub echo_flag
@@ -13612,6 +15728,17 @@ sub echo_flag
          }
       }
    }
+}
+
+sub connected_socket
+{
+   my $target = shift;
+   my @result;
+
+   if(!defined @connected_user{$$target{obj_id}}) {
+      return undef;
+   }
+   return keys %{@connected_user{$$target{obj_id}}};
 }
 
 sub connected_user
@@ -13650,24 +15777,28 @@ sub valid_dbref
    $id = { obj_id => $id } if(ref($id) ne "HASH");
    $$id{obj_id} =~ s/#//g;
 
-   if($$id{obj_id} =~ /^\s*(\d+)\s*$/) {
-      if(!$no_check_bad && bad_object($1)) {
-         return 0;
-      } elsif(defined @info{backup_mode} && @info{backup_mode}) {
-         if(defined @deleted{$1}) {
+   if(memorydb) {
+      if($$id{obj_id} =~ /^\s*(\d+)\s*$/) {
+         if(!$no_check_bad && bad_object($1)) {
             return 0;
-         } elsif(defined @db[$1] || @delta[$1]) {
+         } elsif(defined @info{backup_mode} && @info{backup_mode}) {
+            if(defined @deleted{$1}) {
+               return 0;
+            } elsif(defined @db[$1] || @delta[$1]) {
+               return 1;
+            } else {
+               return 0;
+            }
+         } elsif(defined @db[$1]) {
             return 1;
          } else {
             return 0;
          }
-      } elsif(defined @db[$1]) {
-         return 1;
-      } else {
-         return 0;
       }
+   }  elsif(owner($id) eq undef) {                # owner will return undef on 
+      return 0;                            # non-existant objects & its cached
    } else {
-      return 0;
+      return 1;
    }
 }
 
@@ -13700,20 +15831,114 @@ sub set_flag
 
    if(!is_flag($flag)) {
       return "I don't understand that flag. " . code();
-   }
-   if($flag =~ /^\s*!\s*/) {
-      $remove = 1;
-      $flag = trim($');
-   }
+   } elsif(memorydb) {
+      if($flag =~ /^\s*!\s*/) {
+         $remove = 1;
+         $flag = trim($');
+      }
 
-   if(!$override && !can_set_flag($self,$obj,$flag)) {
-      return "Permission DeNied";
-   } elsif($remove) {                  # remove, don't check if set or not
-      db_remove_list($obj,"obj_flag",$flag);       # to mimic original mush
-      return "Cleared.";
+      if(!$override && !can_set_flag($self,$obj,$flag)) {
+         return "Permission DeNied";
+      } elsif($remove) {                  # remove, don't check if set or not
+         db_remove_list($obj,"obj_flag",$flag);       # to mimic original mush
+         return "Cleared.";
+      } else {
+         db_set_list($obj,"obj_flag",$flag);
+         return "Set.";
+      }
    } else {
-      db_set_list($obj,"obj_flag",$flag);
-      return "Set.";
+       $who = "CREATE_USER" if($flag eq "PLAYER" && $who eq undef);
+       ($flag,$remove) = ($',1) if($flag =~ /^\s*!\s*/);         # remove flag
+   
+       # lookup flag info
+       my $hash = one(
+           "select fde1.fde_flag_id, " .
+           "       fde1.fde_name, " .
+           "       fde2.fde_name fde_permission_name," .
+           "       fde1.fde_permission" .
+           "       from flag_definition fde1," .
+           "            flag_definition fde2 " .
+           " where fde1.fde_permission = fde2.fde_flag_id " .
+           "   and fde1.fde_type = 1 " .
+           "   and fde2.fde_type = 1 " .
+           "   and fde1.fde_name=upper(?)",
+           $flag
+          );
+   
+       if($hash eq undef || !defined $$hash{fde_flag_id} ||
+          $$hash{fde_name} eq "ANYONE") {       # unknown flag?
+          return "#-1 Unknown Flag.";
+       }
+   
+       if(!perm($user,$$hash{fde_name}) && $flag ne "PLAYER") {
+          return "#-1 PERMission Denied.";
+       }
+   
+       if($override || $$hash{fde_permission_name} eq "ANYONE" ||
+          ($$hash{fde_permission} >= 0 &&
+           hasflag($user,$$hash{fde_permission_name})
+          )) {
+   
+          # check if the flag is already set
+          my $count = one_val("select count(*) value from flag ".
+                                  " where obj_id = ? " .
+                                  "   and fde_flag_id = ?" .
+                                  "   and atr_id is null ",
+                                  $$obj{obj_id},
+                                  $$hash{fde_flag_id});
+   
+          # add flag to the object/user
+          if($count > 0 && $remove) {
+             sql("delete from flag " .
+                     " where obj_id = ? " .
+                     "   and fde_flag_id = ?",
+                     $$obj{obj_id},
+                     $$hash{fde_flag_id});
+   
+             remove_flag_cache($obj,$flag);
+   
+             my_commit;
+             if($flag =~ /^\s*(PUPPET|LISTENER)\s*$/i) {
+                necho(self => $self,
+                      prog => $prog,
+                      all_room => [$obj,"%s is no longer listening.",
+                         $$obj{obj_name} ]
+                     );
+             }
+             return "Flag Removed.";
+          } elsif($remove) {
+             return "Flag not set.";
+          } elsif($count > 0) {
+             return "Already Set.";
+          } else {
+             if($flag =~ /^\s*(PUPPET|LISTENER)\s*$/i) {
+                necho(self => $self,
+                      prog => $prog,
+                      all_room => [ $obj,
+                                    "%s is now listening.", 
+                                    $$obj{obj_name} ]
+                     );
+             }
+             sql("insert into flag " .
+                 "   (obj_id,ofg_created_by,ofg_created_date,fde_flag_id)" .
+                 "values " .
+                 "   (?,?,now(),?)",
+                 $$obj{obj_id},
+                 $who,
+                 $$hash{fde_flag_id});
+             my_commit;
+             if(@info{rows} != 1) {
+                return "#-1 Flag not removed [Internal Error]";
+             }
+             remove_flag_cache($obj,$flag);
+
+             set_cache($obj,"FLAG_$flag",1);
+   
+             return "Set.";
+          }
+       } else {
+          return "#-1 Permission Denied.";
+       }
    }
 }
 
@@ -13724,23 +15949,121 @@ sub set_flag
 #
 sub set_atr_flag
 {
-   my ($object,$atr,$flag,$override,$switch) = 
-      (obj(shift),shift,shift,shift,shift);
-   my $who = $$user{obj_name};
-   my ($remove,$count);
-   $flag = uc(trim($flag));
+    my ($object,$atr,$flag,$override,$switch) = 
+       (obj(shift),shift,shift,shift,shift);
+    my $who = $$user{obj_name};
+    my ($remove,$count);
+    $flag = uc(trim($flag));
 
-   $atr = "obj_$atr" if reserved($atr);
-   if($flag =~ /^\s*!\s*(.+?)\s*$/) {
-      ($remove,$flag) = (1,$1);
-   }
-   if(!$override && !can_set_flag($object,$object,$flag)) {
-      return "#-1 Permission Denied.";
-   } elsif(!db_attr_exist($object,$atr)) {
-      return "#-1 UNKNOWN ATTRIBUTE ($atr).";
-   } else {
-      db_set_flag($$object{obj_id},$atr,lc($flag),$remove ? undef : 1);
-      return "Set." if(!defined $$switch{quiet});
+    if(memorydb) {
+       $atr = "obj_$atr" if reserved($atr);
+       if($flag =~ /^\s*!\s*(.+?)\s*$/) {
+          ($remove,$flag) = (1,$1);
+       }
+       if(!$override && !can_set_flag($object,$object,$flag)) {
+          return "#-1 Permission Denied.";
+       } elsif(!db_attr_exist($object,$atr)) {
+          return "#-1 UNKNOWN ATTRIBUTE ($atr).";
+       } else {
+          db_set_flag($$object{obj_id},$atr,lc($flag),$remove ? undef : 1);
+          return "Set." if(!defined $$switch{quiet});
+       }
+    } else {
+
+       $who = "CREATE_USER" if($flag eq "PLAYER" && $who eq undef);
+       ($flag,$remove) = ($',1) if($flag =~ /^\s*!\s*/);         # remove flag 
+       
+   
+       # lookup flag info
+       my $hash = one(
+           "select fde1.fde_flag_id, " .
+           "       fde1.fde_name, " .
+           "       fde2.fde_name fde_permission_name," .
+           "       fde1.fde_permission" .
+           "       from flag_definition fde1," .
+           "            flag_definition fde2 " .
+           " where fde1.fde_permission = fde2.fde_flag_id " .
+           "   and fde1.fde_type = 2 " .
+           "   and fde1.fde_name=trim(upper(?))",
+           $flag
+          );
+   
+       if($hash eq undef || !defined $$hash{fde_flag_id} ||
+          $$hash{fde_name} eq "ANYONE") {       # unknown flag?
+          return "#-1 Unknown Flag. ($flag)";
+       }
+   
+       if(!perm($object,$$hash{fde_name})) {
+          return "#-1 Permission Denied.";
+       }
+   
+       if($override || $$hash{fde_permission_name} eq "ANYONE" ||
+          ($$hash{fde_permission} >= 0 && 
+           hasflag($user,$$hash{fde_permission_name})
+          )) {
+   
+          # check if the flag is already set
+   
+          my $atr_id = one_val(
+                        "select atr.atr_id value " .
+                        "  from attribute atr left join  " .
+                        "       (flag flg) on (flg.atr_id = atr.atr_id) " .
+                        " where atr.obj_id = ? " .
+                        "   and atr_name = upper(?) ",
+                        $$object{obj_id},
+                        $atr
+                       );
+   
+          if($atr_id eq undef) {
+             return "#-1 Unknown attribute on object";
+          }
+   
+          # see if flag is already set
+          my $flag_id = one_val("select ofg_id value " .
+                                "  from flag " .
+                                " where atr_id = ? " .
+                                "   and fde_flag_id = ?",
+                                $atr_id,
+                                $$hash{fde_flag_id}
+                               );
+                                  
+          # add flag to the object/user
+          if($flag_id ne undef && $remove) {
+             sql("delete from flag " .
+                 " where ofg_id= ? ",
+                 $flag_id
+                );
+             my_commit;
+   
+             set_cache_atrflag($object,$atr,$flag);
+             return "Flag Removed." if(!defined $$switch{quiet});
+          } elsif($remove) {
+             return "Flag not set." if(!defined $$switch{quiet});
+          } elsif($flag_id ne undef) {
+             return "Already Set." if(!defined $$switch{quiet});
+          } else {
+             sql("insert into flag " .
+                 "   (obj_id, " .
+                 "    ofg_created_by, " .
+                 "    ofg_created_date, " .
+                 "    fde_flag_id, " .
+                 "    atr_id)" .
+                 "values " .
+                 "   (?,?,now(),?,?)",
+                 $$object{obj_id},
+                 $who,
+                 $$hash{fde_flag_id},
+                 $atr_id);
+             my_commit;
+             if(@info{rows} != 1) {
+                return "#-1 Flag note removed [Internal Error]";
+             }
+             set_cache_atrflag($object,$atr,$flag);
+             return "Set." if(!defined $$switch{quiet});
+          }
+       } else {
+          return "#-1 Permission Denied."; 
+       }
    }
 } 
 
@@ -13801,45 +16124,66 @@ sub destroy_object
 
    my $loc = loc($target);
 
-   for my $exit (lexits($target)) {                   # destroy all exits
-      if(valid_dbref($exit)) {
-         db_delete($exit);
+   if(memorydb) {
+      for my $exit (lexits($target)) {                   # destroy all exits
+         if(valid_dbref($exit)) {
+            db_delete($exit);
+         }
       }
-   }
 
-   for my $obj (lcon($target)) {             # move objects out of the way
-      my $home = home($obj);
+      for my $obj (lcon($target)) {             # move objects out of the way
+         my $home = home($obj);
 
-      necho(self => $self,
-            prog => $prog,
-            target => [ $obj, "The room shakes and begins to crumble." ],
-            room   => [ $obj, "%s has left.", name($obj) ]
-           );
+         necho(self => $self,
+               prog => $prog,
+               target => [ $obj, "The room shakes and begins to crumble." ],
+               room   => [ $obj, "%s has left.", name($obj) ]
+              );
 
-      # default to first room if home can't be determined.
-      if($home eq undef || $home == $$target{obj_id}) {
-         $home = first_room($$obj{obj_id}); 
+         # default to first room if home can't be determined.
+         if($home eq undef || $home == $$target{obj_id}) {
+            $home = first_room($$obj{obj_id}); 
+         }
+         set_home($self,$prog,$obj,$home);
+         teleport($self,$prog,$obj,$home);
+
+         cmd_look($obj,prog($obj,$obj,$obj));
       }
-      set_home($self,$prog,$obj,$home);
-      teleport($self,$prog,$obj,$home);
+      
+      if(!hasflag($target,"ROOM")) {
+         my $loc = loc($target);                        # remove from location
+         db_remove_list($loc,"obj_content",$$target{obj_id});
+         db_remove_list($loc,"obj_exits",$$target{obj_id});
+         necho(self    => $self,
+               prog    => $prog,
+               all_room    =>  [ $target, "%s was destroyed.", name($target) ],
+               all_room2   => [ $target, "%s has left.", name($target) ]
+              );
+      }
 
-      cmd_look($obj,prog($obj,$obj,$obj));
-   }
+      push(@free,$$target{obj_id});
+      db_delete($target);
+      return 1;
+   } else {
+      sql("delete " .
+          "  from object ".
+          " where obj_id = ?",
+          $$target{obj_id}
+         );
    
-   if(!hasflag($target,"ROOM")) {
-      my $loc = loc($target);                        # remove from location
-      db_remove_list($loc,"obj_content",$$target{obj_id});
-      db_remove_list($loc,"obj_exits",$$target{obj_id});
-      necho(self    => $self,
-            prog    => $prog,
-            all_room    =>  [ $target, "%s was destroyed.", name($target) ],
-            all_room2   => [ $target, "%s has left.", name($target) ]
-           );
+      if(@info{rows} != 1) {
+         my_rollback;
+         return 0;
+      }  else {
+         delete $cache{$$target{obj_id}};
+         set_cache($loc,"lcon");                   # invalid cache entries
+         set_cache($loc,"con_source_id");
+         set_cache($loc,"lexits");
+         my_commit;
+   
+         return 1;
+      }
    }
-
-   push(@free,$$target{obj_id});
-   db_delete($target);
-   return 1;
 }
 
 sub create_object
@@ -13867,15 +16211,91 @@ sub create_object
       $where = -1;
    }
 
-   my $id = get_next_dbref();
-   db_delete($id);
-   db_set($id,"obj_name",$name);
-   db_set($id,"obj_created_by",$$user{hostname});
+   if(memorydb) {
+      my $id = get_next_dbref();
+      db_delete($id);
+      db_set($id,"obj_name",$name);
+      db_set($id,"obj_created_by",$$user{hostname});
 
-   if($pass ne undef && $type eq "PLAYER") {
-      db_set($id,"obj_password",mushhash($pass));
-   }
+      if($pass ne undef && $type eq "PLAYER") {
+         db_set($id,"obj_password",mushhash($pass));
+      }
  
+      my $out = set_flag($self,$prog,$id,$type,1);
+      set_flag($self,$prog,$id,"NO_COMMAND",1);
+
+      if($out =~ /^#-1 /) {
+         necho(self => $self,
+               prog => $prog,
+               source => [ "%s", $out ]
+              );
+         db_delete($id);
+         push(@free,$id);
+         return undef;
+      }
+
+      if($type eq "PLAYER") {
+         db_set($id,"obj_lock_default","#" . $id);
+         db_set($id,"obj_home",$where);
+         db_set($id,"obj_money",@info{"conf.starting_money"});
+         db_set($id,"obj_firstsite",$where);
+         db_set($id,"obj_quota",@info{"conf.starting_quota"});
+         db_set($id,"obj_total_quota",@info{"conf.starting_quota"});
+         @player{lc($name)} = $id;
+      } else {
+         db_set($id,"obj_home",$$self{obj_id});
+      }
+
+      db_set($id,"obj_owner",$$self{obj_id});
+      db_set($id,"obj_created_date",scalar localtime());
+      if($type eq "PLAYER" || $type eq "OBJECT") {
+         teleport($self,$prog,$id,$where);
+      }
+      return $id;
+   } else {
+      # find an id to reuse. You shouldn't refuse IDs in a db, but it
+      # part of the "charm" of a MUSH.
+      my $id = one_val("select a.obj_id + 1 value ".
+                       "  from object a ".
+                       "     left join object b ".
+                       "        on a.obj_id + 1 = b.obj_id ".
+                       "where b.obj_id is null ".
+                       "  and a.obj_id is not null ".
+                       "limit 1"
+                      );
+      if($id ne undef) {
+         sql(" insert into object " .
+             "    (obj_id,obj_name,obj_password,obj_owner,obj_created_by," .
+             "     obj_created_date, obj_home " .
+             "    ) ".
+             "values " .
+             "   (?, ?,password(?),?,?,now(),?)",
+             $id,$name,$pass,$owner,$who,$where);
+      } else {
+         sql(" insert into object " .
+             "    (obj_name,obj_password,obj_owner,obj_created_by," .
+             "     obj_created_date, obj_home " .
+             "    ) ".
+             "values " .
+             "   (?,password(?),?,?,now(),?)",
+             $name,$pass,$owner,$who,$where);
+      }
+   }
+
+   if(@info{rows} != 1) {                           # oops, nothing happened
+      necho(self => $self,
+            prog => $prog,
+            source => [ "object #%s was not created", $id ]
+           );
+      my_rollback;
+      return undef;
+   }
+
+   if($id eq undef) {                             # grab newly created id
+      $id = one_val("select last_insert_id() obj_id") ||
+          return my_rollback;
+   }
+
    my $out = set_flag($self,$prog,$id,$type,1);
    set_flag($self,$prog,$id,"NO_COMMAND",1);
 
@@ -13884,34 +16304,20 @@ sub create_object
             prog => $prog,
             source => [ "%s", $out ]
            );
-      db_delete($id);
-      push(@free,$id);
       return undef;
    }
-
-   if($type eq "PLAYER") {
-      db_set($id,"obj_lock_default","#" . $id);
-      db_set($id,"obj_home",$where);
-      db_set($id,"obj_money",conf("starting_money"));
-      db_set($id,"obj_firstsite",$where);
-      db_set($id,"obj_quota",conf("starting_quota"));
-      db_set($id,"obj_total_quota",conf("starting_quota"));
-      @player{lc($name)} = $id;
-   } else {
-      db_set($id,"obj_home",$$self{obj_id});
-   }
-
-   db_set($id,"obj_owner",$$self{obj_id});
-   db_set($id,"obj_created_date",scalar localtime());
-
-   # #0 was just created, don't move it around
-   if($id != 0 && ($type eq "PLAYER" || $type eq "OBJECT")) {
-      teleport($self,$prog,$id,$where);
+   if($type eq "PLAYER" || $type eq "OBJECT") {
+      teleport($self,$prog,$id,fetch($where));
    }
    return $id;
 }
 
 
+
+sub curval
+{
+   return one_val("select last_insert_id() value");
+}
 
 #
 # ignoreit
@@ -13976,9 +16382,22 @@ sub inuse_player_name
 
    if($self ne undef && lc(trim($name)) eq lc(name($self,1))) {
       return 0;                                 # allow for changes in case
-   } 
-
-   return defined @player{lc($name)} ? 1 : 0;
+   } elsif(memorydb) {
+      return defined @player{lc($name)} ? 1 : 0;
+   } else {
+      my $result = one_val(
+                     "select if(count(*) = 0,0,1) value " .
+                     "  from object obj, flag flg, flag_definition fde " .
+                     " where obj.obj_id = flg.obj_id " .
+                     "   and flg.fde_flag_id = fde.fde_flag_id " .
+                     "   and fde.fde_name = 'PLAYER' " .
+                     "   and atr_id is null " .
+                     "   and fde_type = 1 " .
+                     "   and lower(obj_name) = lower(?) ",
+                     $name
+                    );
+      return $result;
+   }
 }
 
 #
@@ -13996,7 +16415,18 @@ sub give_money
 
    my $money = money($target);
 
-   db_set($owner,"obj_money",$money + $amount);
+   if(memorydb) {
+      db_set($owner,"obj_money",$money + $amount);
+   } else {
+      sql("update object " .
+          "   set obj_money = ? ".
+          " where obj_id = ? ",
+          $money + $amount,
+          $$owner{obj_id});
+
+      return undef if(@info{rows} != 1);
+      set_cache($target,"obj_money",$money + $amount);
+   }
 
    return 1;
 }
@@ -14016,22 +16446,113 @@ sub set
       err($self,$prog,"Attribute name is bad, use the following characters: " .
            "A-Z, 0-9, and _ : $attribute");
    } elsif($value =~ /^\s*$/) {
-      if(reserved($attribute) && !$quiet) {
-         err($self,$prog,"That attribute name is reserved -> $quiet.");
-      } else {
-         db_set($obj,$attribute,undef);
-         if(!$quiet) {
-             necho(self => $self,
-                   prog => $prog,
-                   source => [ "Set." ]
-                  );
+      if(memorydb) {
+         if(reserved($attribute) && !$quiet) {
+            err($self,$prog,"That attribute name is reserved -> $quiet.");
+         } else {
+            db_set($obj,$attribute,undef);
+            if($$obj{obj_id} eq 0 && $attribute =~ /^conf./i) {
+               if(defined @default{$'}) {
+                  @info{$attribute} = @default{$'};
+               } else {
+                  delete @info{$attribute};
+               }
+            }
+            if(!$quiet) {
+                necho(self => $self,
+                      prog => $prog,
+                      source => [ "Set." ]
+                     );
+            }
          }
+      } else {
+         sql("delete " .
+             "  from attribute " .
+             " where atr_name = ? " .
+             "   and obj_id = ? ",
+             lc($attribute),
+             $$obj{obj_id}
+            );
+         set_cache($obj,"latr_regexp_1");
+         set_cache($obj,"latr_regexp_2");
+         set_cache($obj,"latr_regexp_3");
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "Set." ]
+              );
       }
    } else {
-      if(reserved($attribute) && !$quiet) {
-         err($self,$prog,"That attribute name is reserved.");
+      if(memorydb) {
+         if(reserved($attribute) && !$quiet) {
+            err($self,$prog,"That attribute name is reserved.");
+         } else {
+            db_set($obj,$attribute,$value);
+            if($$obj{obj_id} eq 0 && $attribute =~ /^conf./i) {
+               @info{$attribute} = $value;
+            }
+            if(!$quiet) {
+                necho(self => $self,
+                      prog => $prog,
+                      source => [ "Set." ]
+                     );
+            }
+         }
       } else {
-         db_set($obj,$attribute,$value);
+         # match $/^/! till the first unescaped :
+         if($value =~ /([\$\^\!])(.+?)(?<![\\])([:])/) {
+            ($pat,$value) = ($2,$');
+            if($1 eq "\$") {
+               $type = 1;
+            } elsif($1 eq "^") {
+               $type = 2;
+            } elsif($1 eq "!") {
+               $type = 3;
+            }
+            $pat =~ s/\\:/:/g;
+         } else {
+            $type = 0;
+         }
+   
+         sql("insert into attribute " .
+             "   (obj_id, " .
+             "    atr_name, " .
+             "    atr_value, " .
+             "    atr_pattern, " .
+             "    atr_pattern_type,  ".
+             "    atr_regexp, ".
+             "    atr_first,  ".
+             "    atr_created_by, " .
+             "    atr_created_date, " .
+             "    atr_last_updated_by, " .
+             "    atr_last_updated_date)  " .
+             "values " .
+             "   (?,?,?,?,?,?,?,?,now(),?,now()) " .
+             "ON DUPLICATE KEY UPDATE  " .
+             "   atr_value=values(atr_value), " .
+             "   atr_pattern=values(atr_pattern), " .
+             "   atr_pattern_type=values(atr_pattern_type), " .
+             "   atr_regexp=values(atr_regexp), " .
+             "   atr_first=values(atr_first), " .
+             "   atr_last_updated_by=values(atr_last_updated_by), " .
+             "   atr_last_updated_date = values(atr_last_updated_date)",
+             $$obj{obj_id},
+             uc($attribute),
+             $value,
+             $pat,
+             $type,
+             glob2re($pat),
+             atr_first($pat),
+             $$user{obj_name},
+             $$user{obj_name}
+            );
+   
+         set_cache($obj,"latr_regexp_1");
+         set_cache($obj,"latr_regexp_2");
+         set_cache($obj,"latr_regexp_3");
+         if($$obj{obj_id} eq 0 && $attribute =~ /^conf./i) {
+            @info{$attribute} = $value;
+         }
+   
          if(!$quiet) {
              necho(self => $self,
                    prog => $prog,
@@ -14074,17 +16595,6 @@ sub pget
    return subget(mget($$parent{value},$attribute));   # get attr from parent
 }
 
-sub conf
-{
-   my $attr = get(obj(0),"conf." . $_[0]);
-
-   if($attr =~ /^\s*#(\d+)\s*$/) {
-      return $1;
-   } else {
-      return $attr;
-   }
-}
-
 sub get
 {
    my ($obj,$attribute,$flag) = (obj($_[0]),$_[1],$_[2]);
@@ -14092,8 +16602,37 @@ sub get
 
    $attribute = "description" if(lc($attribute) eq "desc");
   
-   my $attr = subget(mget($obj,$attribute,$flag),$flag);
-   return $attr;
+   if(memorydb) {
+      my $attr = subget(mget($obj,$attribute,$flag),$flag);
+      printf("RETURNING: '%s'\n",$attr) if $flag;
+      return $attr;
+   } else {
+      if((my $hash = one("select atr_value, " .
+                         "       atr_pattern, ".
+                         "       atr_pattern_type ".
+                         "  from attribute " .
+                         " where obj_id = ? " .
+                         "   and atr_name = upper( ? )",
+                         $$obj{obj_id},
+                         $attribute
+                        ))) {
+         if($$hash{atr_pattern} ne undef && !$flag) {
+            my $type;                            # rebuild full attribute value
+            if($$hash{atr_pattern_type} == 1) {
+               $type = "\$";
+            } elsif($$hash{atr_pattern_type} == 2) {
+               $type = "^";
+            } elsif($$hash{atr_pattern_type} == 3) {
+               $type = "!";
+            }
+            return $type . $$hash{atr_pattern} . ":" . $$hash{atr_value};
+         } else {                                      # no pattern to rebuild
+            return $$hash{atr_value};
+         }
+      } else {                                                 # atr not found
+         return undef;
+      }
+   }
 }
 
 sub loc
@@ -14106,6 +16645,23 @@ sub player
 {
    my $obj = shift;
    return hasflag($obj,"PLAYER");
+}
+
+sub same
+{
+   my ($one,$two) = @_;
+   return ($$one{obj_id} == $$two{obj_id}) ? 1 : 0;
+}
+
+sub obj_ref
+{
+   my $obj  = shift;
+
+   if(ref($obj) eq "HASH") {
+      return $obj;
+   } else {
+      return fetch($obj);
+   }
 }
 
 sub obj_name
@@ -14172,14 +16728,57 @@ sub teleport
 
    my $loc = loc($target);
 
-   if($loc ne undef) {
-      db_set($loc,"OBJ_LAST_INHABITED",scalar localtime());
-      db_remove_list($loc,"obj_content",$$target{obj_id});
+   if(memorydb) {
+      if($loc ne undef) {
+         db_set($loc,"OBJ_LAST_INHABITED",scalar localtime());
+         db_remove_list($loc,"obj_content",$$target{obj_id});
+      }
+      db_set($target,"OBJ_LAST_INHABITED",scalar localtime());
+      db_set($target,"obj_location",$$dest{obj_id});
+      db_set_list($dest,"obj_content",$$target{obj_id});
+      return 1;
+   } else {
+      if(hasflag($loc,"ROOM")) {
+         set($self,$prog,$loc,"LAST_INHABITED",scalar localtime(),1);
+      }
+      set_cache($target,"lcon");                       # remove cached items
+      set_cache($target,"con_source_id");
+      set_cache($loc,"lcon");
+      set_cache($loc,"con_source_id");
+      set_cache($dest,"lcon");
+      set_cache($dest,"con_source_id");
+
+      # look up destination object
+      # remove previous location record for object
+      sql("delete from content " .                      # remove previous loc
+          " where obj_id = ?",
+          $$target{obj_id});
+
+      # insert current location record for object
+      my $result = sql(
+          "INSERT INTO content (obj_id, ".               # set new location
+          "                     con_source_id, ".
+          "                     con_created_by, ".
+          "                     con_created_date, ".
+          "                     con_type) ".
+          "     VALUES (?, ".
+          "             ?, ".
+          "             ?, ".
+          "             now(), ".
+          "             ?)",
+          $$target{obj_id},
+          $$dest{obj_id},
+          ($$self{obj_name} eq undef) ? "CREATE_COMMAND": $$self{obj_name},
+          ($type eq undef) ? 3 : 4
+      );
+   
+      $loc = loc($target);
+      if(hasflag($loc,"ROOM")) {
+         set($self,$prog,$loc,"LAST_INHABITED",scalar localtime(),1);
+      }
+      my_commit;
+      return 1;
    }
-   db_set($target,"OBJ_LAST_INHABITED",scalar localtime());
-   db_set($target,"obj_location",$$dest{obj_id});
-   db_set_list($dest,"obj_content",$$target{obj_id});
-   return 1;
 }
 
 sub obj
@@ -14226,42 +16825,116 @@ sub set_home
 {
    my ($self,$prog,$obj,$dest) = (obj(shift),obj(shift),obj(shift),obj(shift));
 
-   db_set($obj,"obj_home",$$dest{obj_id});
+   if(memorydb) {
+      db_set($obj,"obj_home",$$dest{obj_id});
+   } else {
+      sql("update object " .
+          "   set obj_home = ? ".
+          " where obj_id = ? ",
+          $$dest{obj_id},
+          $$obj{obj_id}
+         );
+
+      if(@info{rows} != 1) {
+         return err($self,$prog,"Internal Error, unable to set home");
+      } else {
+         my_commit;
+      }
+   }
 }
 
 sub link_exit
 {
    my ($self,$exit,$src,$dst) = obj_import(@_);
 
-   if($src ne undef && defined $$src{obj_id}) {
-      db_set_list($$src{obj_id},"obj_exits",$$exit{obj_id});
-      db_set($$exit{obj_id},"obj_location",$$src{obj_id});
-   }
+   if(memorydb) {
+      if($src ne undef && defined $$src{obj_id}) {
+         db_set_list($$src{obj_id},"obj_exits",$$exit{obj_id});
+         db_set($$exit{obj_id},"obj_location",$$src{obj_id});
+      }
 
-   if($dst ne undef && defined $$exit{obj_id}) {
-      db_set($$exit{obj_id},"obj_destination",$$dst{obj_id});
+      if($dst ne undef && defined $$exit{obj_id}) {
+         db_set($$exit{obj_id},"obj_destination",$$dst{obj_id});
+      }
+      return 1;
+   } else {
+      my $count=one_val("select count(*) value " .
+                        "  from content " .
+                        "where obj_id = ?",
+                        $$exit{obj_id});
+   
+      if($count > 0) {
+         one("update content " .
+             "   set con_dest_id = ?," .
+             "       con_updated_by = ? , ".
+             "       con_updated_date = now() ".
+             " where obj_id = ?",
+             $$dst{obj_id},
+             obj_name($self,$self,1),
+             $$exit{obj_id});
+      } else {
+         one("INSERT INTO content (obj_id, ".                # set new location
+             "                     con_source_id, ".
+             "                     con_dest_id, ".
+             "                     con_created_by, ".
+             "                     con_created_date, ".
+             "                     con_type) ".
+             "     VALUES (?, ".
+             "             ?, ".
+             "             ?, ".
+             "             ?, ".
+             "             now(), ".
+             "             ?) ",
+             $$exit{obj_id},
+             $$src{obj_id},
+             $$dst{obj_id},
+             obj_name($self,$self,1),
+             4
+         );
+      }
+
+      if(@info{rows} == 1) {
+         set_cache($src,"lexits");
+         set_cache($exit,"con_source_id");
+         my_commit;
+         return 1;
+      } else {
+         my_rollback;
+         return 0;
+      }
    }
-   return 1;
 }
 
 sub lastsite
 {
    my $target = obj(shift);
 
-   my $attr = mget($target,"obj_lastsite");
+   if(memorydb) {
+      my $attr = mget($target,"obj_lastsite");
 
-   if($attr eq undef) {
-      return undef;
-   } else {
-      my $list = $$attr{value};
-      my $last = (sort {$a <=> $b} keys %$list)[-1];
-
-      if($$list{$last} =~ /^\d+,\d+,(.*)$/) {
-         return $1;
-      } else {
-         delete @$list{$last};
+      if($attr eq undef) {
          return undef;
+      } else {
+         my $list = $$attr{value};
+         my $last = (sort {$a <=> $b} keys %$list)[-1];
+
+         if($$list{$last} =~ /^\d+,\d+,(.*)$/) {
+            return $1;
+         } else {
+            delete @$list{$last};
+            return undef;
+         }
       }
+   } else {
+      return one_val("SELECT skh_hostname value " .
+                     "  from socket_history skh " .
+                     "     join (select max(skh_id) skh_id  ".
+                     "             from socket_history  ".
+                     "            where obj_id = ?  ".
+                     "          ) max ".
+                     "       on skh.skh_id = max.skh_id",
+                     $$target{obj_id}
+                    );
    }
 }
 
@@ -14269,17 +16942,32 @@ sub lasttime
 {
    my ($target,$flag) = (obj(shift),shift);
 
-   my $attr = mget($target,"obj_lastsite");
+   if(memorydb) {
+      my $attr = mget($target,"obj_lastsite");
 
-   if($attr eq undef) {
-      return undef;
-   } else {
-      my $list = $$attr{value};
-
-      if($flag) {
-         return (sort keys %$list)[-1];
+      if($attr eq undef) {
+         return undef;
       } else {
-         return scalar localtime((sort keys %$list)[-1]);
+         my $list = $$attr{value};
+
+         if($flag) {
+            return (sort keys %$list)[-1];
+         } else {
+            return scalar localtime((sort keys %$list)[-1]);
+         }
+      }
+   } else {
+      my $last = one_val("select ifnull(max(skh_end_time), " .
+                         "              max(skh_start_time) " .
+                         "             ) value " .
+                         "  from socket_history " .
+                         " where obj_id = ? ",
+                         $$target{obj_id}
+                        );
+      if($flag) {
+         return fuzzy($last);
+      } else {
+         return $last;
       }
    }
 }
@@ -14290,16 +16978,32 @@ sub firstsite
 
    if(!hasflag($target,"PLAYER")) {
       return undef;
-   } 
-
-   return get($target,"obj_created_by");
+   } elsif(memorydb) {
+      return get($target,"obj_created_by");
+   } else {
+      return one_val("SELECT skh_hostname value " .
+                     "  from socket_history skh " .
+                     "     join (select min(skh_id) skh_id  ".
+                     "             from socket_history  ".
+                     "            where obj_id = ?  ".
+                     "          ) min".
+                     "       on skh.skh_id = min.skh_id",
+                     $$target{obj_id}
+                    );
+   }
 }
 
 sub firsttime
 {
    my $target = obj(shift);
 
-   return scalar localtime(fuzzy(get($target,"obj_created_date")));
+   if(memorydb) {
+      return scalar localtime(fuzzy(get($target,"obj_created_date")));
+   } else {
+      my $obj = fetch($target);
+
+      return $$obj{obj_created_date};
+   }
 }
 
 #
@@ -14378,9 +17082,40 @@ sub quota_left
      return 99999999;
   } elsif(hasflag($obj,"GUEST")) {
      return 0;
-  } 
+  } elsif(memorydb) {
+     return get(owner($obj),"obj_quota");
+  } else {
+     return one_val("select max(obj_quota) - count(*) + 1 value " .
+                    "  from object " .
+                    " where obj_owner = ?" .
+                    "    or obj_id = ?",
+                    $$owner{obj_id},
+                    $$owner{obj_id}
+                );
+   }
+}
 
-  return get(owner($obj),"obj_quota");
+#
+# get_segment
+#    Return the position and text of a segment if the matching $delimiter
+#    is found.
+#
+sub get_segment
+{
+   my ($array,$end,$delim,$toppings) = @_;
+   my $start = $end;
+   my @depth;
+
+   while($start > 0) {
+      $start--;
+      if(defined $$toppings{$$array[$start]}) {
+         push(@depth,$$toppings{$$array[$start]});
+      } elsif($$array[$start] eq $depth[$#depth]) {
+         pop(@depth);
+      } elsif($$array[$start] eq $delim) {
+         return $start,join('',@$array[$start .. $end]);
+      }
+   }
 }
 
 sub isatrflag
@@ -14388,7 +17123,31 @@ sub isatrflag
    my $txt = shift;
    $txt = $' if($txt =~ /^\s*!/);
 
-   return flag_attr(trim($txt));
+   if(memorydb) {
+      return flag_attr(trim($txt));
+   } else {
+      return one_val("select count(*) value " .
+                     "  from flag_definition " .
+                     " where fde_name = upper(trim(?)) " .
+                     "   and fde_type = 2",
+                     $txt
+                    );
+   }
+}
+
+#
+# source
+#    Return if the source of the input is a player[1] or a object[0].
+#
+sub source
+{
+   if(defined $$user{internal} &&
+      defined @{$$user{internal}}{cmd} &&
+      defined @{@{$$user{internal}}{cmd}}{source}) {
+      return @{@{$$user{internal}}{cmd}}{source};
+   } else {
+      return 0;
+   }
 }
 
 sub is_flag
@@ -14396,9 +17155,25 @@ sub is_flag
    my $flag = shift;
 
    $flag = trim($') if($flag =~ /^\s*!/);
-
-   return (flag_letter($flag) eq undef) ? 0 : 1;
+   if(memorydb) {
+      return (flag_letter($flag) eq undef) ? 0 : 1;
+   } else {
+      my $count = one_val("select count(*) value " .
+                         "  from flag_definition fde1," .
+                         " where fde_name = trim(upper(?)) ".
+                         "   and fde_type = 1",
+                         $flag
+                        );
+      return ($count == 0) ? 0 : 1;
+   }
 }
+# #!/usr/bin/perl
+#
+# tm_lock.pl
+#    Evaluation of a string based lock to let people use/not use things.
+#
+
+use strict;
 
 sub lock_error
 {
@@ -14651,6 +17426,165 @@ sub lock_uncompile
       return $$result{lock};
     }
 }
+# #!/usr/bin/perl
+#
+# tm_mysql.pl
+#   Routines required for TeenyMUSH to access mysql.
+#
+use strict;
+use Carp;
+
+
+#
+# get_db_credentials
+#    Load the database credentials from the teenymush.conf file
+#
+sub get_db_credentials
+{
+   my $fn = "teenymush.conf";
+
+   $fn .= ".dev" if(-e "$fn.dev");
+
+   for my $line (split(/\n/,getfile($fn))) {
+      $line =~ s/\r|\n//g;
+      if($line =~ /^\s*(user|pass|database)\s*=\s*([^ ]+)\s*$/) {
+         @info{$1} = $2;
+      }
+   }
+}
+
+get_db_credentials;
+
+
+#
+# sql
+#    Connect / Reconnect to the database and run some sql.
+#
+sub sql
+{
+   my ($sql,@args) = @_;
+   my (@result,$sth);
+   @info{sqldone} = 0;
+
+   delete @info{rows};
+
+#   if($sql !~ /^insert into io/) {
+#     con("SQL: '%s' -> '%s'\n",$sql,join(',',@args));
+##      con("     '%s'\n",code("short"));
+#   }
+
+   #
+   # clean up the sql a little
+   #  keep track of last sql that was run for debug purposes.
+   #
+   $sql =~ s/\s{2,999}/ /g;
+   @info{sql_last} = $sql;
+   @info{sql_last_args} = join(',',@args);
+   @info{sql_last_code} = code();
+
+   # connected/reconnect to DB if needed
+   if(!defined @info{db_handle} || !@info{db_handle}->ping) {
+      @info{host} = "localhost" if(!defined @info{host});
+      @info{db_handle} = DBI->connect("DBI:mysql:database=@info{database}:" .
+                                      "host=@info{host}",
+                                      @info{user},
+                                      @info{pass},
+                                      {AutoCommit => 0, RaiseError => 1,
+                                        mysql_auto_reconnect => 1}
+                                      ) 
+                                      or die "Can't connect to database: " .
+                                         $DBI::errstr;
+   }
+
+   $sth = @info{db_handle}->prepare($sql) ||
+      die("Could not prepair sql: $sql");
+
+   for my $i (0 .. $#args) {
+      $sth->bind_param($i+1,$args[$i]);
+   }
+
+   if(!$sth->execute( )) {
+      die("Could not execute sql");
+   }
+   @info{rows} = $sth->rows;
+
+   # do not fetch results from inserts / deletes 
+   if($sql !~ /^\s*(insert|delete|update) /i) {
+      while(my $ref = $sth->fetchrow_hashref()) {
+         push(@result,$ref);
+      }
+   }
+
+   # clean up and return the results
+   $sth->finish();
+   delete @info{sql_last};
+   delete @info{sql_last_args};
+   return \@result;
+}
+
+#
+# one_val
+#    fetch the first entry in value column on a select that returns only
+#    one row.
+#
+sub one_val
+{
+   my ($sql,@args) = @_;
+
+   my $array = sql($sql,@args);
+   return (@info{rows} == 1) ? @{$$array[0]}{value} : undef;
+}
+
+#
+# fetch one row or nothing
+#
+sub one
+{
+   my ($sql,@args) = @_;
+   my $array = sql($sql,@args);
+
+   if(@info{rows} == 1) {
+      return $$array[0];
+   } elsif(@info{rows} == 2 && $sql =~ /ON DUPLICATE/i) {
+      @info{rows} = 1;
+      return $$array[0];
+   } else {
+      return undef;
+   }
+}
+
+sub my_commit
+{
+   @info{db_handle}->commit;
+}
+
+sub my_rollback
+{
+   @info{db_handle}->rollback;
+}
+
+sub fetch
+{
+   my $obj = obj($_[0]);
+   my $debug = shift;
+
+   $$obj{obj_id} =~ s/#//g;
+
+   if(memorydb) {
+      return $obj;
+   } else {
+      my $hash=one("select * from object where obj_id = ?",$$obj{obj_id}) ||
+         return undef;
+      return $hash;
+   }
+}
+
+# #!/usr/bin/perl
+#
+#
+# tm_sockets.pl
+#    Code to handle accessing sockets.
+#
 
 #
 # add_last_info
@@ -14689,7 +17623,20 @@ sub add_site_restriction
 {
    my $sock = shift;
 
-   $$sock{site_restriction} = 4;
+   if(mysqldb) {
+       my $hash=one("select ifnull(min(ste_type),4) ste_type" .
+                    "  from site ".
+                    " where (lower(?) like lower(ste_pattern) ".
+                    "    or lower(?) like lower(ste_pattern))" .
+                    "   and ifnull(ste_end_date,now()) >= now()",
+                    $$sock{ip},
+                    $$sock{hostname}
+                   );
+       $$sock{site_restriction} = $$hash{ste_type};
+   } else {
+       $$sock{site_restriction} = 4;
+       ### ADD ###
+   }
 }
 
 #
@@ -14796,6 +17743,12 @@ sub server_process_line
          local $SIG{__DIE__} = sub {
             con("----- [ Crash Report@ %s ]-----\n",scalar localtime());
             con("User:     %s\nCmd:      %s\n",name($user),$_[0]);
+            if(mysqldb && defined @info{sql_last}) {
+               con("LastSQL: '%s'\n",@info{sql_last});
+               con("         '%s'\n",@info{sql_last_args});
+               delete @info{sql_last};
+               delete @info{sql_last_args};
+            }
             con("%s",code("long"));
          };
 
@@ -14804,6 +17757,7 @@ sub server_process_line
             if(loggedin($hash) || 
                     (defined $$hash{obj_id} && hasflag($hash,"OBJECT"))) {
                add_last_info($input);                                   #logit
+               io($user,1,$input);
                return mushrun(self   => $user,
                               runas  => $user,
                               invoker=> $user,
@@ -14822,6 +17776,7 @@ sub server_process_line
 #         con("LastSQL: '%s'\n",@info{sql_last});
 #         con("         '%s'\n",@info{sql_last_args});
 #         con("         '%s'\n",@info{sql_last_code});
+         my_rollback if mysqldb;
    
          my $msg;
          if($_[1] =~ /^\s*connnect\s+/) {
@@ -14896,6 +17851,12 @@ sub server_handle_sockets
          local $SIG{__DIE__} = sub {
             con("----- [ Crash Report@ %s ]-----\n",scalar localtime());
             printf("User:     %s\nCmd:      %s\n",name($user),$_[0]);
+            if(mysqldb && defined @info{sql_last}) {
+               con("LastSQL: '%s'\n",@info{sql_last});
+               con("         '%s'\n",@info{sql_last_args});
+               delete @info{sql_last};
+               delete @info{sql_last_args};
+            }
             con("%s",code("long"));
          };
 
@@ -14938,13 +17899,13 @@ sub server_handle_sockets
                if($$hash{site_restriction} <= 2) {                  # banned
                   con("   BANNED   [Booted]\n");
                   if($$hash{site_restriction} == 2) {
-                     printf($new "%s",conf("badsite"));
+                     printf($new "%s",@info{"conf.badsite"});
                   }
                   server_disconnect(@{@connected{$new}}{sock});
-               } elsif(!defined conf("login")) {
+               } elsif(!defined @info{"conf.login"}) {
                   printf($new "Welcome to %s\r\n\r\n",@info{"version"});
                } else {
-                  printf($new "%s\r\n",conf("login"));    #  show login
+                  printf($new "%s\r\n",@info{"conf.login"});    #  show login
                }
             }                                                        
          } elsif(sysread($s,$buf,1024) <= 0) {          # socket disconnected
@@ -14988,6 +17949,10 @@ sub server_handle_sockets
    if($@){
       con("Server Crashed, minimal details [main_loop]\n");
 
+      if(mysqldb) {
+         con("LastSQL: '%s'\n",@info{sql_last});
+         con("         '%s'\n",@info{sql_last_args});
+      }
       con("%s\n---[end]-------\n",$@);
    }
 }
@@ -15006,19 +17971,21 @@ sub server_disconnect
    if(defined @connected{$id}) {
       my $hash = @connected{$id};
 
-      my $attr = mget(@connected{$id},"obj_lastsite");
+      if(memorydb) {                             # update disconnect time
+         my $attr = mget(@connected{$id},"obj_lastsite");
 
-      if($attr ne undef && defined $$attr{value} &&
-         ref($$attr{value}) eq "HASH" && defined $$hash{connect}) {
-         my $last = $$attr{value};
+         if($attr ne undef && defined $$attr{value} &&
+            ref($$attr{value}) eq "HASH" && defined $$hash{connect}) {
+            my $last = $$attr{value};
 
-         my $ctime = $$hash{connect};
-         if(defined $$last{$ctime} && $$last{$ctime} =~ /,([^,]+)$/) {
-             db_set_hash(@connected{$id},
-                         "obj_lastsite",
-                         $ctime,
-                         time() . ",1,$1"
-                        );
+            my $ctime = $$hash{connect};
+            if(defined $$last{$ctime} && $$last{$ctime} =~ /,([^,]+)$/) {
+                db_set_hash(@connected{$id},
+                            "obj_lastsite",
+                            $ctime,
+                            time() . ",1,$1"
+                           );
+            }
          }
       }
 
@@ -15045,6 +18012,14 @@ sub server_disconnect
                prog => $prog,
                "[ Connection closed ]"
               );
+
+         if(mysqldb) {
+            sql("delete from socket " .             # delete socket table row
+                " where sck_socket = ? ",
+                $id
+               );
+            my_commit;
+         }
       } elsif(defined $$hash{connect_time}) {                # Player Socket
 
          my $key = connected_user($hash);
@@ -15053,6 +18028,28 @@ sub server_disconnect
             delete @{@connected_user{$$hash{obj_id}}}{$key};
             if(scalar keys %{@connected_user{$$hash{obj_id}}} == 0) {
                delete @connected_user{$$hash{obj_id}};
+            }
+         }
+
+         if(mysqldb) {
+            my $sck_id = one_val("select sck_id value " .     # find socket id
+                                 "  from socket " .
+                                 " where sck_socket = ?" ,
+                                 $id
+                                );
+
+            if($sck_id ne undef) {
+                sql("update socket_history " .           # log disconnect time
+                    "   set skh_end_time = now() " .
+                    " where sck_id = ? ",
+                     $sck_id
+                   );
+   
+                sql("delete from socket " .         # delete socket table row
+                    " where sck_id = ? ",
+                    $sck_id
+                   );
+                my_commit;
             }
          }
 
@@ -15089,28 +18086,85 @@ sub server_disconnect
 #
 sub server_start
 {
-   con("TeenyMUSH listening on port %s\n",conf("port"));
-   $listener = IO::Socket::INET->new(LocalPort => conf("port"),
+   #
+   # close the loop on connections that have start times but not end times
+   #
+
+   if(mysqldb) {
+      sql("delete from socket");
+      sql("update socket_history " .
+              "   set skh_end_time = skh_start_time " .
+              " where skh_end_time is null");
+      my_commit;
+   }
+
+   if(memorydb) {
+      my $file = newest_full(@info{"conf.mudname"} . ".FULL.DB");
+
+      if($file eq undef) {
+         con("   No database found, loading starter database.\n");
+         con("   Connect as: god potrzebie\n\n");
+         db_read_string(<<__EOF__);
+server: TeenyMUSH 0.9, dbversion=1.0, exported=Wed Oct 17 08:28:30 2018, type=normal
+obj[0] {
+   conf.starting_room::A:#1
+   obj_created_by::A:Adrick
+   obj_created_date::A:2016-05-05 13:30:56
+   obj_flag::L:player,god
+   obj_home::A:1
+   obj_location::A:1
+   obj_lock_default::A:#0
+   obj_money::A:0
+   obj_name::A:God
+   obj_owner::A:0
+   obj_password::A:*EF5D6D678BAE641D8DAF107523B0EA48D420E0E0
+   obj_quota::A:0
+ }
+obj[1] {
+   description::A:A non-descript room
+   last_inhabited::A:Thu Oct  4 14:26:25 2018
+   obj_created_by::A:Adrick
+   obj_created_date::A:2016-04-15 13:49:58
+   obj_flag::L:room
+   obj_home::A:-1
+   obj_name::A:Void
+   obj_owner::A:0
+ }
+** Dump Completed Wed Oct 17 08:28:30 2018 **
+__EOF__
+      } else {
+         db_read(undef,undef,$file);
+         @info{db_last_dump} = time();
+      }
+   }
+
+   read_atr_config();
+
+   my $count = 0;
+
+   @info{"conf.port"} = 4096 if(@info{"conf.port"} !~ /^\s*\d+\s*$/);
+   con("TeenyMUSH listening on port %s\n",@info{"conf.port"});
+   $listener = IO::Socket::INET->new(LocalPort => @info{"conf.port"},
                                      Listen    => 1,
                                      Reuse     => 1
                                     );
 
-   if(conf("httpd") ne undef && conf("httpd") > 0) {
-      if(conf("httpd") =~ /^\s*(\d+)\s*$/) {
-         con("HTTP listening on port %s\n",conf("httpd"));
+   if(@info{"conf.httpd"} ne undef && @info{"conf.httpd"} > 0) {
+      if(@info{"conf.httpd"} =~ /^\s*(\d+)\s*$/) {
+         con("HTTP listening on port %s\n",@info{"conf.httpd"});
 
-         $web = IO::Socket::INET->new(LocalPort => conf("httpd"),
+         $web = IO::Socket::INET->new(LocalPort => @info{"conf.httpd"},
                                       Listen    =>1,
-                                      Reuse     =>1
+                                      Reuse=>1
                                      );
       } else {
          con("Invalid httpd port number specified in #0/conf.httpd");
       }
    }
 
-   if(conf("websocket") ne undef && conf("websocket") > 0) {
-      if(conf("websocket") =~ /^\s*(\d+)\s*$/) {
-         con("Websocket listening on port %s\n",conf("websocket"));
+   if(@info{"conf.websocket"} ne undef && @info{"conf.websocket"} > 0) {
+      if(@info{"conf.websocket"} =~ /^\s*(\d+)\s*$/) {
+         con("Websocket listening on port %s\n",@info{"conf.websocket"});
          websock_init();
       } else {
          con("Invalid websocket port number specified in #0/conf.websocket");
@@ -15125,29 +18179,40 @@ sub server_start
 
    $ws->{select_readable}->add($listener);
 
-   if(conf("httpd") ne undef) {
+   if(@info{"conf.httpd"} ne undef) {
       $ws->{select_readable}->add($web);
    }
    $readable = $ws->{select_readable};
 
    # main loop;
-   @info{run} = 1;
-   while(@info{run}) {
+   while(1) {
       eval {
          server_handle_sockets();
       };
       if($@){
          con("Server Crashed, minimal details [main_loop]\n");
+         if(mysqldb) {
+            con("LastSQL: '%s'\n",@info{sql_last});
+            con("         '%s'\n",@info{sql_last_args});
+         }
          con("%s\n---[end]-------\n",$@);
       }
    }
 }
 
 
+# #!/usr/bin/perl
+#
+# tm_websock.pl
+#    Code required to access websockets from within the server. When this
+#    code is enabled, the listener from websockets is used instead of
+#    the standard INET one.
+#
+
 sub websock_init
 {
    $websock = IO::Socket::INET->new( Listen    => 5,
-                                     LocalPort => conf("websocket"),
+                                     LocalPort => @info{"conf.websocket"},
                                      Proto     => 'tcp',
                                      Domain    => AF_INET,
                                      ReuseAddr => 1,
@@ -15182,7 +18247,7 @@ sub ws_login_screen
 {
    my $conn = shift;
 
-   ws_echo($conn->{socket}, conf("login"));
+   ws_echo($conn->{socket}, @info{"conf.login"});
 # foo
 }
 
@@ -15282,7 +18347,7 @@ sub ws_process
    if($msg =~ /^#M# /) {
       web("   %s %s\@ws [%s]\n",ts(),@{$ws->{conns}{$conn->{socket}}}{ip},$');
       @{$ws->{conns}{$conn->{socket}}}{type} = "NON_INTERACTIVE";
-      my $self = fetch(conf("webuser"));
+      my $self = fetch(@info{"conf.webuser"});
 
       my $prog = mushrun(self   => $self,
                          runas  => $self,
@@ -15648,4 +18713,8 @@ sub db_read_import
         );
 }
 
-main();                                                  #!# run only once
+while(1) {
+#   eval {
+      main();                                               #!# run only once
+#   };
+}

@@ -231,6 +231,8 @@ sub process_commandline
 #
 sub main
 {
+   @info{run} = 1;
+
    # trap signal HUP and try to reload the code
    $SIG{HUP} = sub {
       my $count = reload_code();
@@ -239,10 +241,8 @@ sub main
    };
 
    # trap signal INIT and try to dump the database
-   $SIG{'INT'} = sub {  con("**** Program Exiting ******\n");
-                        cmd_dump(obj(0),{},"CRASH");
+   $SIG{'INT'} = sub {  cmd_dump(obj(0),{},"CRASH");
                         @info{crash_dump_complete} = 1;
-                        con("**** Dump Complete Exiting ******\n");
                         exit(1);
                      };
 
@@ -2331,6 +2331,8 @@ sub cmd_dump
       return err($self,$prog,"Permission denied.");
    }
 
+   return if $#db == -1;
+   con("**** Program EXITING ******\n") if($type eq "CRASH");
    $type = "normal" if($type eq undef);
 
    #-----------------------------------------------------------------------#
@@ -2414,6 +2416,7 @@ sub cmd_dump
                source => [ "\@dump completed." ],
               );
       }
+      con("**** Dump Complete: Exiting ******\n") if($type eq "CRASH");
       return;
    } else {
       return "RUNNING";                                       # still running
@@ -6934,11 +6937,8 @@ sub db_process_line
    }
 }
 
-$SIG{'INT'} = sub {  con("**** Program Exiting ******\n"); 
-                     cmd_dump(obj(0),{},"CRASH");
+$SIG{'INT'} = sub {  cmd_dump(obj(0),{},"CRASH");
                      @info{crash_dump_complete} = 1;
-                     con("**** Dump Complete Exiting ******\n");
-                     con("CALLED\n");
                      exit(1);
                   };
 
@@ -6946,10 +6946,9 @@ END {
    if(@info{run} == 0) {
       con("%s shutdown by %s.\n",conf("mudname"),@info{shutdown_by});
       cmd_dump(obj(0),{});
+      @info{crash_dump_complete} = 1;
    } elsif(!defined @info{crash_dump_complete} && $#db > -1) {
-      con("**** Program EXITING ******\n");
       cmd_dump(obj(0),{},"CRASH");
-      con("**** Dump Complete Exiting 2 ******\n");
    }
 }
 
@@ -15093,7 +15092,8 @@ sub server_start
    $listener = IO::Socket::INET->new(LocalPort => conf("port"),
                                      Listen    => 1,
                                      Reuse     => 1
-                                    );
+                                    ) ||
+      die("   Port already in use.");
 
    if(conf("httpd") ne undef && conf("httpd") > 0) {
       if(conf("httpd") =~ /^\s*(\d+)\s*$/) {

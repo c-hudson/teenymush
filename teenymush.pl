@@ -60,6 +60,7 @@ my (%command,                  #!# commands for after player has connected
     %engine,                   #!# process holder for running
     %ansi_rgb,                 #!# color number to rgb code
     %ansi_name,                #!# color names to 256 color id
+    %default,                  #!# default values for some config options
 
     #----[memory database structures]---------------------------------------#
     %help,                     #!# online-help
@@ -159,8 +160,11 @@ sub getbinfile
 
 sub load_defaults
 {
-   my %default;
-
+   delete @default{keys %default};
+   @default{version}                  = "TeenyMUSH 0.9";
+   @default{max}                      = 78;
+   @default{dump_interval}            = 3600;
+   @default{master_override}          = "no";
    @default{money_name_plural}        = "Pennies";
    @default{money_name_singular}      = "Penny";
    @default{paycheck}                 = 50;
@@ -169,11 +173,11 @@ sub load_defaults
    @default{linkcost}                 = 1;
    @default{digcost}                  = 10;
    @default{createcost}               = 10;
-   @default{function_invocation_limit}= 2500;
-   @default{weblog}                   = "teenymush.web.log";
-   @default{conlog}                   = "teenymush.log";
+   @default{function_limit}           = 2500;
+   @default{weblog}                   = "yes";
+   @default{conlog}                   = "yes";
    @default{httpd_invalid}            = 3;
-   @default{login}                    = "Welcome to @info{version}\r\n\r\n" .
+   @default{login}                    = "Welcome to TeenyMUSH\r\n\r\n" .
                                         "   Type the below command to " .
                                         "customize this screen after loging ".
                                         "in as God.\r\n\r\n    \@set #0/" .
@@ -182,11 +186,6 @@ sub load_defaults
    @default{httpd_template}           = "<pre>";
    @default{mudname}                  = "TeenyMUSH";
    @default{port}                     = "4096";
-
-   
-   for my $i (keys %default) {
-      set(obj(0),{},0,"conf.$i",@default{$i}) if(conf($i) eq undef);
-   }
 }
 
 #
@@ -202,6 +201,11 @@ sub arg
    return 0;
 }
 
+#
+# process_commandline
+#    Allow the user to set config attributes when the mush is not running.
+#    The mush will dump a new db and shutdown when complete.
+#
 sub process_commandline
 {
    my $hit  = 0;
@@ -247,9 +251,6 @@ sub main
                      };
 
    load_modules();
-
-   @info{version} = "TeenyMUSH 0.9";
-   @info{max} = 78;
 
    initialize_functions(); 
    initialize_ansi();
@@ -1793,8 +1794,8 @@ sub cmd_huh
 {
    my ($self,$prog,$txt) = @_;
 
-   printf("HUH: '%s' -> '%s'\n",@{$$prog{cmd}}{cmd},$txt);
-   printf("%s\n",code("long"));
+#   printf("HUH: '%s' -> '%s'\n",@{$$prog{cmd}}{cmd},$txt);
+#   printf("%s\n",code("long"));
    if(hasflag($self,"VERBOSE")) {
       necho(self   => owner($self),
             prog   => $prog,
@@ -1829,7 +1830,7 @@ sub cmd_version
    my ($self,$prog) = @_;
    my $src =  "https://github.com/c-hudson/teenymush";
                    
-   my $ver = (@info{version} =~ /^TeenyMUSH ([\d\.]+)$/i) ? $1 : "N/A";
+   my $ver = (conf("version") =~ /^TeenyMUSH ([\d\.]+)$/i) ? $1 : "N/A";
 
    $src = "<a href=$src>$src</a>" if($$prog{hint} eq "WEB");
 
@@ -2325,6 +2326,11 @@ sub cmd_dump
    my ($self,$prog,$type) = @_;
    my ($file,$start);
 
+   printf("CMD_DUMP: '%s' -> '%s'\n",get(obj(0),"conf.mudname"));
+   if(conf("mudname") eq undef) {
+      printf("%s\n",code("long"));
+      exit(0);
+   }
    if(in_run_function($prog)) {
       return out($prog,"#-1 \@DUMP can not be called from RUN function");
    } elsif(!hasflag($self,"WIZARD") && !hasflag($self,"GOD")) {
@@ -2349,15 +2355,15 @@ sub cmd_dump
                                                 localtime(time);
       $mon++;
       $yr -= 100;
+#
       my $fn = sprintf("dumps/%s.FULL.%02d%02d%02d_%02d%02d%02d.tdb",
-                       conf("mudname"),
-                       $yr,$mon,$day,$hour,$min,$sec);
+                       conf("mudname"),$yr,$mon,$day,$hour,$min,$sec);
 
       open($file,"> $fn") ||
         return err($self,$prog,"Unable to open $fn for writing");
 
       printf($file "server: %s, dbversion=%s, exported=%s, type=$type\n",
-         @info{version},db_version(),scalar localtime());
+         conf("version"),db_version(),scalar localtime());
 
       $$cmd{dump_file} = $file;
       @info{backup_mode} = $$prog{pid};
@@ -2544,8 +2550,8 @@ sub cmd_dolist
 
    if(defined $$switch{delimit}) {                       # handle delimiter
       if($txt =~ /^\s*([^ ]+)\s*/) {
-         $txt = $';                        # first word of list is delimiter
-         $delim = $1;
+         $txt = $';                       # first word of list is delimiter
+         $delim = evaluate($self,$prog,$1);
       } else {
          return err($self,$prog,"Could not determine delimiter");
       }
@@ -2556,7 +2562,8 @@ sub cmd_dolist
    if(!defined $$cmd{dolist_list}) {                      # initialize dolist
        my ($first,$second) = balanced_split($txt,"=",4);
        $$cmd{dolist_cmd}   = $second;
-       $$cmd{dolist_list} = [safe_split(evaluate($self,$prog,$first),$delim)];
+       my $txt = evaluate($self,$prog,$first);
+       $$cmd{dolist_list} = [safe_split($txt,$delim)];
        $$cmd{dolist_count} = 0;
        $$prog{iter_stack} = [] if(!defined $$prog{iter_stack});
        $$cmd{dolist_loc} = $#{$$prog{iter_stack}} + 1;
@@ -2571,6 +2578,7 @@ sub cmd_dolist
 
    my $item = trim(shift(@{$$cmd{dolist_list}}));
    if($item !~ /^\s*$/) {
+      $item = fun_escape($self,$prog,$item);
       my $cmds = $$cmd{dolist_cmd};
       $cmds =~ s/\#\#/$item/g;
       delete $$prog{attr} if defined $$prog{attr};
@@ -3163,8 +3171,11 @@ sub cmd_send
        $$prog{idle} = 1;                   # socket pending, try again later
        return "RUNNING";
     } else {
+#       printf("#SEND: '%s'\n",$_[0]);
        my $txt = ansi_remove(evaluate($self,$prog,shift));
+#       printf("#SEND: '%s'\n",$txt);
 #       my $txt = evaluate($self,$prog,shift);
+##       printf("       '%s'\n",$txt);
        my $switch = shift;
        $txt =~ s/\r|\n//g;
        $txt =~ tr/\x80-\xFF//d;
@@ -4178,6 +4189,11 @@ sub cmd_help
    } elsif(defined @help{"@" . lc(trim($txt))}) {
       $help = @help{"@" . lc(trim($txt))};
    }
+
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ "%s", $help ],
+        );
 }
 
 
@@ -6892,6 +6908,7 @@ sub db_process_line
    my ($state,$line) = @_;
 
    $line =~ s/\r|\n//g;
+   printf("# '%s'\n",$line);
    $$state{chars} += length($_);
    if($$state{obj} eq undef &&  $line =~                            # header
       /^server: ([^,]+), dbversion=([^,]+), exported=([^,]+), type=/) {
@@ -6933,6 +6950,8 @@ sub db_process_line
       delete @$state{loc};
    } else {
       con("Unable to parse[$$state{obj}]: '%s'\n",$line);
+      printf("Unable to parse[$$state{obj}]: '%s'\n",$line);
+      printf("%s\n",code("long"));
       die();
    }
 }
@@ -7041,7 +7060,7 @@ sub mush_command
 
    $cmd = evaluate($self,$prog,$cmd) if($src ne undef && $src == 0);
    
-   if(@info{master_overide} eq "no") {      # search master room first
+   if(conf("master_override") eq "no") {   # search master room first
       for my $obj (lcon(conf("master"))) {
          run_obj_commands($self,$prog,$runas,$obj,$cmd) && return 1;
       }
@@ -7063,7 +7082,7 @@ sub mush_command
       return 0;
    }
 
-   if(@info{master_overide} ne "no") {             # search master room
+   if(conf("master_override") ne "no") {        # search master room
       for my $obj (lcon(conf("master"))) {             # but not twice
          run_obj_commands($self,$prog,$runas,$obj,$cmd) && return 1;
       }
@@ -7946,7 +7965,7 @@ sub dprint
 
     my $txt = sprintf($fmt,@args);
 
-    if($depth + length($txt) < @info{max}) {           # short, copy it as is.
+    if($depth + length($txt) < conf("max")) {           # short, copy it as is.
 #        $out .= sprintf("%s%s [%s]\n"," " x $depth,$txt,code());
         $out .= sprintf("%s%s\n"," " x $depth,$txt);
                                          # Text enclosed in {}, split apart?
@@ -7976,7 +7995,7 @@ sub fmt_dolist
     my $out;
 
     # to short, don't seperate
-    if($depth + length($cmd . " " . $txt) < @info{max}) {
+    if($depth + length($cmd . " " . $txt) < conf("max")) {
        return dprint($depth,$cmd . " " . $txt);
     }
 
@@ -8022,7 +8041,9 @@ sub fmt_switch
     my $out;
 
     # to small, do nothing
-    return dprint($depth,"%s %s",$cmd,$txt) if(length($txt)+$depth + 3 < @info{max});
+    if(length($txt)+$depth + 3 < conf("max")) {
+       return dprint($depth,"%s %s",$cmd,$txt);
+    }
 
     # split up command by ','
     my @list = fmt_balanced_split($txt,',',3);
@@ -8032,7 +8053,7 @@ sub fmt_switch
 
 
     my $len = $depth + length($cmd) + 1;                  # first subsegment
-    if($len + length($first)  > @info{max}) {                        # multilined
+    if($len + length($first)  > conf("max")) {                 # multilined
         $first =~ s/=\s*$//g;
        $out .= dprint($depth,
                       "%s %s=",
@@ -8057,7 +8078,7 @@ sub fmt_switch
           } else {                                          # test condition
              $out .= dprint($depth+3,"%s",@list[$i]);
           }
-       } elsif($depth + $indent + length(@list[$i]) > @info{max} ||  # long cmd
+       } elsif($depth + $indent + length(@list[$i]) > conf("max") || # long cmd
                @list[$i] =~ /^\s*{.*}\s*;{0,1}\s*$/) {
           $out .= pretty($depth+6,@list[$i]);
        } else {                                                  # short cmd
@@ -8076,7 +8097,7 @@ sub fmt_amper
    if($txt =~ /^([^ ]+)\s+([^=]+)\s*=/) {
       my ($atr,$obj,$val) = ($1,$2,$');
 
-      if(length($val) + $depth < @info{max}) {
+      if(length($val) + $depth < conf("max")) {
          $out .= dprint($depth,"%s","$cmd$txt");
       } elsif($val =~ /^\s*\[.*\]\s*(;{0,1})\s*$/) {
          $out .= dprint($depth,"%s","&$atr $obj=");
@@ -8122,7 +8143,8 @@ sub function_print_segment
    # skipped over parts. 
    #
    # FYI This comparison is slighytly wrong, but close
-   if($depth + length("$left$function($arguments)$right") - length(@array[0]) < @info{max}) {
+   if($depth + length("$left$function($arguments)$right") - length(@array[0]) 
+      < conf("max")) {
       if($mright ne undef) {                 # does the function end right?
          if(@array[0] =~ /^\s*\)$mright/) {
             @array[0] = $';                                          # yes
@@ -8173,7 +8195,7 @@ sub function_print
    my ($depth,$txt) = @_;
    my $out;
 
-   if($depth + length($txt) < @info{max}) {                      # too small
+   if($depth + length($txt) < conf("max")) {                      # too small
       return dprint($depth,"%s",$txt);
    }
 
@@ -8271,7 +8293,7 @@ sub pretty
         '@while'  => sub { fmt_while(@_);  },
     );
 
-    if($depth + length($txt) < @info{max}) {
+    if($depth + length($txt) < conf("max")) {
         return (" " x $depth) . $txt;
     }
 
@@ -8362,6 +8384,7 @@ sub initialize_functions
    @fun{escape}    = sub { return &fun_escape(@_);                 };
    @fun{trim}      = sub { return &fun_trim(@_);                   };
    @fun{ansi}      = sub { return &fun_ansi(@_);                   };
+   @fun{ansi_remove}=sub { return &fun_ansi_remove(@_);            };
    @fun{colors}    = sub { return &fun_colors(@_);                 };
    @fun{ansi_debug}= sub { return &fun_ansi_debug(@_);             };
    @fun{substr}    = sub { return &fun_substr(@_);                 };
@@ -9039,7 +9062,11 @@ sub fun_trim
    good_args($#_,1,2,3) ||
       return "#-1 FUNCTION (TRIM) EXPECTS 1, 2, OR 3 ARGUMENTS";
 
-   my $txt    = ansi_init(evaluate($self,$prog,shift));
+   my $return = chr(13);
+   my $input = evaluate($self,$prog,shift);
+   $input =~ s/\r//mg;
+  
+   my $txt    = ansi_init($input);
    my $type   = trim(ansi_remove(evaluate($self,$prog,shift)));
    my $chars  = trim(ansi_remove(evaluate($self,$prog,shift)));
 
@@ -9100,6 +9127,7 @@ sub fun_escape
          @{$$str{ch}}[$i] eq "]" ||
          @{$$str{ch}}[$i] eq "(" ||
          @{$$str{ch}}[$i] eq ")" ||
+         @{$$str{ch}}[$i] eq "," ||
          @{$$str{ch}}[$i] eq ";") {
          $out .= join('',@{@{$$str{code}}[$i]}) . "\\" . @{$$str{ch}}[$i];
       } else {
@@ -9207,6 +9235,16 @@ sub rgb2ansi
       }
    }
    return "\e[38;5;$result\m";
+}
+
+sub fun_ansi_remove
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+
+   
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (ANSI_REMOVE) EXPECTS 1 ARGUMENT";
+   return ansi_remove(evaluate($self,$prog,shift));
 }
 
 sub fun_ansi
@@ -10400,13 +10438,7 @@ sub fun_mudname
 
 sub fun_version
 {
-   my ($self,$prog) = (shift,shift);
-
-   if(defined @info{version}) {
-      return @info{version};
-   } else {
-      return "TeenyMUSH";
-   }
+   return conf("version");
 }
 
 #
@@ -12172,7 +12204,7 @@ sub parse_function
 {
    my ($self,$prog,$fun,$txt,$type) = @_;
 
-   if($$prog{function_command}++ > conf("function_invocation_limit")) {
+   if($$prog{function_command}++ > conf("function_limit")) {
       return undef; # "#-1 FUNCTION INVOCATION LIMIT HIT";
    }
    $$prog{function}++;
@@ -12332,7 +12364,7 @@ sub evaluate
    # handle string containing a single non []'ed function
    #
    return if(!valid_dbref($self));
-   if($txt =~ /^\s*([a-zA-Z_0-9]+)\((.*)\)\s*$/s) {
+   if($txt =~ /^\s*([a-zA-Z_0-9]+)\((.*)\)\s*$/m) {
       my $fun = fun_lookup($self,$prog,$1,undef,1);
       if($fun ne "huh") {                   # not a function, do not evaluate
          my $result = parse_function($self,$prog,$fun,"$2)",2);
@@ -12363,11 +12395,11 @@ sub evaluate
    #
    while($txt =~ /([\\]*)\[([a-zA-Z_0-9]+)\(/s && ord(substr($`,-1)) ne 27) {
       my ($esc,$before,$after,$unmod) = ($1,$`,$',$2);
-      my $fun = fun_lookup($self,$prog,$unmod,$before);
       $out .= evaluate_substitutions($self,$prog,$before);
       $out .= "\\" x (length($esc) / 2);
 
       if(length($esc) % 2 == 0) {
+         my $fun = fun_lookup($self,$prog,$unmod,$before);
          my $result = parse_function($self,$prog,$fun,$',1);
 
          if($result eq undef) {
@@ -12970,7 +13002,7 @@ sub pennies
    if($amount == 1) {
       return $amount . " " . conf("money_name_singular") . ".";
    } else {
-      return $amount . " " . conf("conf.money_name_plural") . ".";
+      return $amount . " " . conf("money_name_plural") . ".";
    }
 }
 
@@ -13383,12 +13415,12 @@ sub logit
 
 sub web
 {
-   logit("weblog",@_);
+   logit("weblog",@_) if(lc(conf("weblog")) eq "yes");
 }
 
 sub con
 {
-   logit("conlog",@_);
+   logit("conlog",@_) if(lc(conf("conlog")) eq "yes");
 }
 
 
@@ -13547,10 +13579,10 @@ sub necho
                 push(@$stack,$msg);
              }
           } else {
-             printf("WHO: '%s' -> '%s' -> '%s'\n",
-                 @{$$prog{created_by}}{obj_id},
-                 $$target{obj_id},
-                 $$self{obj_id});
+#             printf("WHO: '%s' -> '%s' -> '%s'\n",
+#                 @{$$prog{created_by}}{obj_id},
+#                 $$target{obj_id},
+#                 $$self{obj_id});
 #             printf("%s\n",print_var($prog));
 #             printf("SKIP2: '%s'\n",$msg);
           }
@@ -14073,11 +14105,24 @@ sub pget
    return subget(mget($$parent{value},$attribute));   # get attr from parent
 }
 
+#
+# conf
+#    Grab a configuration option from off of "#0/conf.name" or the @default
+#    variable. Also strip any "#" from dbrefs.
+#
 sub conf
 {
-   my $attr = get(obj(0),"conf." . $_[0]);
-
-   if($attr =~ /^\s*#(\d+)\s*$/) {
+   my $attr;
+   
+   if(hasattr(obj(0),"conf.$_[0]")) {
+      $attr = get(obj(0),"conf." . $_[0]);
+   } elsif(defined @default{lc($_[0])}) {             # use @defaults?
+      $attr = @default{lc($_[0])};
+   } else {
+      return undef;
+   }
+   
+   if($attr =~ /^\s*#(\d+)\s*$/) {         # return just the number of a dbref
       return $1;
    } else {
       return $attr;
@@ -14787,8 +14832,10 @@ sub server_process_line
    my $data = @connected{$$hash{sock}};
 
    if(defined $$data{raw} && $$data{raw} == 1) {
+      $input =~ s/\r//mg;
       handle_object_listener($data,"%s",$input);
    } elsif(defined $$data{raw} && $$data{raw} == 2) {
+      $input =~ s/\r//mg;
      add_telnet_data($data,$input);
    } else {
 #      eval {                                                  # catch errors

@@ -81,7 +81,6 @@ sub load_modules
 {
    my %mod = (
       'URI::Escape'            => 'httpd',    
-#      'DBI'                    => 'mysqldb',   
       'Net::WebSocket::Server' => 'websocket',
       'Net::HTTPS::NB'         => 'url_https',
       'Net::HTTP::NB'          => 'url_http',      
@@ -586,6 +585,8 @@ sub initialize_commands
    # ------------------------------------------------------------------------#
    @command{screenwidth}    ={ fun => sub { return 1;}                      };
    @command{screenheight}   ={ fun => sub { return 1;}                      };
+   @command{"\@wall"}       ={ fun => sub { return &cmd_wall(@_);}          };
+   @command{"\@read"}       ={ fun => sub { return &cmd_read(@_);}          };
    @command{"\@function"}   ={ fun => sub { return &cmd_function(@_);}      };
    @command{"\@perl"}       ={ fun => sub { return &cmd_perl(@_); }         };
    @command{say}            ={ fun => sub { return &cmd_say(@_); }          };
@@ -618,8 +619,7 @@ sub initialize_commands
    @command{"\@create"}     ={ fun => sub { return cmd_create(@_); }        };
    @command{"print"}        ={ fun => sub { return cmd_print(@_); }         };
    @command{"go"}           ={ fun => sub { return cmd_go(@_); }            };
-   @command{"home"}         ={ fun => sub { return cmd_go($_[0],$_[1],
-                                               "home");}                    };
+   @command{"home"}         ={ fun => sub { return cmd_home(@_); }          };
    @command{"examine"}      ={ fun => sub { return cmd_ex(@_); }            };
    @command{"ex"}           ={ fun => sub { return cmd_ex(@_); }            };
    @command{"e"}            ={ fun => sub { return cmd_ex(@_); }            };
@@ -686,7 +686,6 @@ sub initialize_commands
    @command{"\@websocket"}  ={ fun => sub { cmd_websocket(@_); }            };
    @command{"\@find"}       ={ fun => sub { cmd_find(@_); }                 };
    @command{"\@bad"}        ={ fun => sub { cmd_bad(@_); }                  };
-   @command{"\@dbread"}     ={ fun => sub { fun_dbread(@_); }               };
    @command{"\@dump"}       ={ fun => sub { cmd_dump(@_); }                 };
    @command{"\@import"}     ={ fun => sub { cmd_import(@_); }               };
    @command{"\@stat"}       ={ fun => sub { cmd_stat(@_); }                 };
@@ -762,12 +761,69 @@ sub get_mail
    }
 }
 
+sub cmd_home
+{
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
+
+   if($txt !~ /^\s*$/) {                           # simulate non-command
+       return cmd_huh($self,$prog);
+   } else {
+       cmd_go($self,$prog,"home");
+   }
+}
+
+#
+# cmd_wall
+#    Send a message to everyone or just the wizards
+#
+sub cmd_wall
+{
+   my ($self,$prog) = (obj(shift),shift);
+   my ($msg,$hash);
+
+   hasflag($self,"GOD") || hasflag($self,"WIZARD") ||
+      return err("Permission denied.");
+
+   my $txt = evaluate($self,$prog,shift);
+   my $switch = shift;
+
+   verify_switches($self,$prog,$switch,"emit","pose","wizard","no_prefix") || 
+      return;
+
+   my $txt = evaluate($self,$prog,shift);
+
+   if($$switch{emit}) {                              # determine msg format
+      $msg = "Announcment: " . trim($txt);
+   } elsif($$switch{pose}) {
+      $msg = "Announcment: " . name($self) . " " . trim($txt);
+   } elsif($$switch{wizard}) {
+      $msg = "Broadcast: " . name($self) . " says, \"" . trim($txt) . "\"";
+   } elsif($$switch{no_prefix}) {
+      $msg = name($self) . " shouts, \"" . trim($txt) . "\"";
+   } else {
+      $msg = "Announcment: " . name($self) . " shouts, \"" . trim($txt) . "\"";
+   }
+
+   for my $key (keys %connected) {
+      $hash = @connected{$key};
+      next if $$hash{raw} != 0;
+      next if($$switch{wizard} && !hasflag($hash,"WIZARD"));
+
+      necho(self => $self,
+            prog => $prog,
+            target => [ $hash, "%s", $msg ]
+           );
+   }
+}
+
 sub cmd_shutdown
 {
    my ($self,$prog) = (obj(shift),shift);
 
-   hasflag($self,"GOD") || hasflag($self) ||
+   hasflag($self,"GOD") || hasflag($self,"WIZARD") ||
       return err("Permission denied.");
+
+   cmd_wall($self,$prog,$_[0]) if($_[0] !~ /^\s*/);
 
    for my $key (keys %connected) {
       my $hash = @connected{$key};
@@ -831,6 +887,8 @@ sub cmd_parent
       );
    }
 }
+
+
 sub cmd_capture
 {
    my ($self,$prog) = (obj(shift),shift);
@@ -2326,7 +2384,6 @@ sub cmd_dump
    my ($self,$prog,$type) = @_;
    my ($file,$start);
 
-   printf("CMD_DUMP: '%s' -> '%s'\n",get(obj(0),"conf.mudname"));
    if(conf("mudname") eq undef) {
       printf("%s\n",code("long"));
       exit(0);
@@ -2802,7 +2859,7 @@ sub cmd_read
                $data =~ s/\n$//g;
                @help{$name} = $data;
             }
-            $name = $';
+            $name = lc($');
             $data = undef;
          } else {
             $data .= $_ . "\n";
@@ -3513,7 +3570,7 @@ sub cmd_toad
                                $$cmd{toad_name} ]
               );
       }
-      delete @player{lc($$cmd{toad_name2})};
+      delete @player{trim(ansi_remove(lc($$cmd{toad_name2})))};
       db_delete($$cmd{toad_dbref});
    } else {
       return "RUNNING";                                      # still running
@@ -3736,8 +3793,8 @@ sub cmd_name
       }
 
       if(hasflag($target,"PLAYER")) {
-         delete @player{lc(name($target,1))};
-         @player{lc($name)} = $$target{obj_id};
+         delete @player{trim(ansi_remove(lc(name($target,1))))};
+         @player{trim(ansi_remove(lc($name)))} = $$target{obj_id};
       }
       db_set($target,"obj_name",$name);
       db_set($target,"obj_cname",$cname);
@@ -4066,7 +4123,7 @@ sub cmd_teleport
    controls($self,$target) ||
       return err($self,$prog,"Permission Denied.");
 
-   controls($self,$location) ||
+   (controls($self,$location) || hasflag($location,"JUMP_OK")) ||
       return err($self,$prog,"Permission Denied.");
 
    if(hasflag($location,"EXIT")) {
@@ -4172,10 +4229,10 @@ sub cmd_quit
 
 sub cmd_help
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,ansi_remove(shift));
 
-   $txt = "help" if($txt =~  /^\s*$/);
    my $help;
+   $txt = "help" if($txt =~  /^\s*$/);
 
    # initalize help variable if needed
    cmd_read($self,$prog,"help",1) if(scalar keys %help == 0);
@@ -4188,6 +4245,8 @@ sub cmd_help
       $help = @help{lc(trim($`))};
    } elsif(defined @help{"@" . lc(trim($txt))}) {
       $help = @help{"@" . lc(trim($txt))};
+   } else {
+      $help = "No entry for '" . lc(trim($txt) . "'");
    }
 
    necho(self   => $self,
@@ -4470,7 +4529,7 @@ sub mushhash
 #
 sub invalid_player
 {
-   my ($self,$name,$pass) = @_;
+   my ($self,$name,$pass) = (shift,ansi_remove(shift),shift);
 
    if($name =~ /^\s*#(\d+)\s*$/) {
       if(valid_dbref($1) && hasflag($1,"PLAYER") &&
@@ -4480,17 +4539,18 @@ sub invalid_player
       } else {
          return 1;
       }
-   } elsif(!defined @player{lc($name)}) {
+   } elsif(!defined @player{trim(ansi_remove(lc($name)))}) {
       return 1;
    } elsif(lc($name) eq "guest") {               # any password for guest
       $$self{obj_id} = @player{lc($name)};
       return 0;
-   } elsif(!valid_dbref(@player{lc($name)}) ||
-      get(@player{lc($name)},"obj_password") ne mushhash($pass)) {
-      $$self{obj_id} = @player{lc($name)};
+   } elsif(!valid_dbref(@player{trim(ansi_remove(lc($name)))}) ||
+      get(@player{trim(ansi_remove(lc($name)))},"obj_password") ne 
+         mushhash($pass)) {
+      $$self{obj_id} = @player{trim(ansi_remove(lc($name)))};
       return 1;
    } else {
-      $$self{obj_id} = @player{lc($name)};
+      $$self{obj_id} = @player{trim(ansi_remove(lc($name)))};
       return 0;
    }
 }
@@ -4718,6 +4778,9 @@ sub reconstitute
       $value =~ s/\n+$//;
    }
 
+   if(defined $$switch{detail}) {
+      $$
+   }
    return color("h",uc($name)) .
           (($flag ne undef) ? "[$flag]: " : ": ") .
           (($type ne undef) ? "$type$pattern:$value" : $value);
@@ -4764,8 +4827,8 @@ sub viewable
 
 sub list_attr
 {
-   my ($obj,$pattern,$switch) = @_;
-   my (@out,$pat,$keys);
+   my ($obj,$pattern,$s) = @_;
+   my (@out,$pat,$val,$keys);
 
    $pat = glob2re($pattern) if($pattern ne undef);
 
@@ -4776,19 +4839,24 @@ sub list_attr
          my $attr = mget($obj,$name);
 
          if($name eq "obj_lastsite") {
-            push(@out,reconstitute($short,"","",short_hn(lastsite($obj))));
+            $val = reconstitute($short,"","",short_hn(lastsite($obj)));
          } elsif($name eq "obj_created_by") {
-            push(@out,reconstitute("first","","",short_hn($$attr{value})));
+            $val = reconstitute("first","","",short_hn($$attr{value}));
          } else {
-            push(@out,reconstitute($short,
-                                   $$attr{type},
-                                   $$attr{glob},
-                                   $$attr{value},
-                                   list_attr_flags($attr),
-                                   $switch
-                                  )
-             );
+            $val = reconstitute($short,
+                                $$attr{type},
+                                $$attr{glob},
+                                $$attr{value},
+                                list_attr_flags($attr),
+                                $s
+                               );
          }
+         if(defined $$s{detail}) {
+            $val = color("h","Mod") . ":" . ts($$attr{created}). "," . 
+                   color("h","Created") . ":". ts($$attr{modified}) . "," .
+                   color("h","Value") . ":" . $val;
+         }
+         push(@out,$val);
       }
    }
 
@@ -4807,7 +4875,7 @@ sub cmd_ex
 #   my ($self,$prog,$txt) = @_;
    my ($target,$desc,@exit,@content,$atr,$out);
 
-   verify_switches($self,$prog,$switch,"raw","command") || return;
+   verify_switches($self,$prog,$switch,"raw","command","detail") || return;
 
    $txt = evaluate($self,$prog,$txt);
 
@@ -6342,6 +6410,7 @@ sub initialize_flags
    @flag{NO_COMMAND}   ={ letter => "n", perm => "!GUEST", type => 1, ord=>24 };
    @flag{GOING}        ={ letter => "g", perm => "GOD",    type => 1, ord=>25 };
    @flag{IMPORTED}     ={ letter => "I", perm => "GOD",    type => 1, ord=>26 };
+   @flag{JUMP_OK}      ={ letter => "J", perm => "!GUEST", type => 1, ord=>27 };
 }
 
 #
@@ -6353,7 +6422,7 @@ sub initialize_flags
 #
 sub db_version
 {
-   return "1.5";
+   return "2.0";
 }
 
 sub hasattr
@@ -6400,9 +6469,6 @@ sub hasattr
 #    the data from either @delta (contains any changes) or @db (actual
 #    database). @deleted defines if the object was deleted while the
 #    database was in backup mode.
-#
-#    WARNING: If this function is used for mysql, then the code assumes
-#             that the returned data will never be modified.
 #
 sub mget
 {
@@ -6644,9 +6710,9 @@ sub serialize
    # so, the user could put a <RETURN> in their attribute... big deal?
    if($txt =~ /[\r\n]/) { 
       $txt = db_safe($txt);
-      return "$name:$flag:M:$txt";
+      return "$name:$$attr{created}:$$attr{modified}:$flag:M:$txt";
    } else {
-      return "$name:$flag:A:$txt";
+      return "$name:$$attr{created}:$$attr{modified}:$flag:A:$txt";
    }
 }
 
@@ -6744,7 +6810,8 @@ sub db_attr_exist
 
 sub db_set
 {
-   my ($id,$key,$value) = (obj(shift),lc(shift),shift);
+   my ($id,$key,$value,$created,$modified)=
+       (obj(shift),lc(shift),shift,shift,shift);
 
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
 
@@ -6756,8 +6823,19 @@ sub db_set
    }
 
    $$obj{$key} = {} if(!defined $$obj{$key});       # create attr if needed
-
    my $attr = $$obj{$key};
+
+   if($created ne undef) {
+      $$attr{created} = $created;
+   } elsif(!defined $$attr{created}) {
+      $$attr{created} = time();
+   }
+
+   if($modified ne undef) {
+      @$attr{modified} = $modified;
+   } else {
+      @$attr{modified} = time();
+   }
 
    # listen/command
    if(!reserved($attr) && $value =~ /^([\$\^\!])(.+?)(?<![\\])([:])/) {
@@ -6800,7 +6878,8 @@ sub db_set_flag
 
 sub db_set_list
 {
-   my ($id,$key,$value) = (obj(shift),lc(shift),lc(shift));
+   my ($id,$key,$value,$created,$modified) = 
+      (obj(shift),lc(shift),lc(shift),shift,shift);
 
    return if $value eq undef;
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
@@ -6809,6 +6888,19 @@ sub db_set_list
 
    $$obj{$key} = {} if(!defined $$obj{$key});
    my $attr = $$obj{$key};
+
+   if($created ne undef) {
+      $$attr{created} = $created;
+   } elsif(!defined $$attr{created}) {
+      $$attr{created} = time();
+   }
+
+   if($modified ne undef) {
+      $$attr{modified} = $modified;
+   } else {
+      $$attr{modified} = time();
+   }
+
    $$attr{value} = {} if(!defined $$attr{value});
    $$attr{type} = "list";
 
@@ -6833,7 +6925,8 @@ sub db_remove_list
 
 sub db_set_hash
 {
-   my ($id,$key,$value,$sub) = (obj(shift),lc(shift),lc(shift),shift);
+   my ($id,$key,$value,$sub,$created,$modified) = 
+       (obj(shift),lc(shift),lc(shift),shift,shift,shift);
 
    return if $value eq undef;
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
@@ -6842,6 +6935,19 @@ sub db_set_hash
 
    $$obj{$key} = {} if(!defined $$obj{$key});
    my $attr = $$obj{$key};
+
+   if($created ne undef) {
+      $$attr{created} = $created;
+   } elsif(!defined $$attr{created}) {
+      $$attr{created} = time();
+   }
+
+   if($modified ne undef) {
+      $$attr{modified} = $modified;
+   } else {
+      $$attr{modified} = time();
+   }
+
    $$attr{value} = {} if(!defined $$attr{value});
    $$attr{type} = "hash";
 
@@ -6882,13 +6988,15 @@ sub db_object
       for my $name ( (sort grep {/^obj_/} keys %$obj), 
                      (sort grep {!/^obj_/} keys %$obj) ) {
          my $attr = $$obj{$name};
+         $$attr{created} = time() if !defined $$attr{created};
+         $$attr{modified} = time() if !defined $$attr{modified};
          
          if(reserved($name) && defined $$attr{value} &&
             $$attr{type} eq "list") {
-            $out .= "   $name\::L:" . join(',',keys %{$$attr{value}}) . "\n";
+            $out .= "   $name\:$$attr{created}:$$attr{modified}::L:" . join(',',keys %{$$attr{value}}) . "\n";
          } elsif(reserved($name) && defined $$attr{value} &&
             $$attr{type} eq "hash") {
-            $out .= "   $name\::H:" . hash_serialize($$attr{value},$name,$i)."\n";
+            $out .= "   $name\:$$attr{created}:$$attr{modified}::H:" . hash_serialize($$attr{value},$name,$i)."\n";
          } else {
             $out .= "   " . serialize($name,$attr) . "\n";
          }
@@ -6908,7 +7016,6 @@ sub db_process_line
    my ($state,$line) = @_;
 
    $line =~ s/\r|\n//g;
-   printf("# '%s'\n",$line);
    $$state{chars} += length($_);
    if($$state{obj} eq undef &&  $line =~                            # header
       /^server: ([^,]+), dbversion=([^,]+), exported=([^,]+), type=/) {
@@ -6917,28 +7024,32 @@ sub db_process_line
       $$state{complete} = 1;                                  # dump complete
    } elsif($$state{obj} eq undef && $line =~ /^obj\[(\d+)]\s*{\s*$/) {
       $$state{obj} = $1;                                    # start of object
-   } elsif($$state{obj} ne undef && $line =~ /^\s*([^ \/:]+):([^:]*):M:/) {
-      db_set($$state{obj},$1,db_unsafe($'));                 # MIME attribute
-      db_set_flag($$state{obj},$1,$2,1) if($2 ne undef);
-   } elsif($$state{obj} ne undef && $line =~ /^\s*([^ \/:]+):([^:]*):A:/) {
-      db_set($$state{obj},$1,$');                        # standard attribute
-      db_set_flag($$state{obj},$1,$2,1) if($2 ne undef);
+   } elsif($$state{obj} ne undef && 
+      $line =~ /^\s*([^ \/:]+):(\d+):(\d+):([^:]*):M:/) {
+      db_set($$state{obj},$1,db_unsafe($'),$2,$3);           # MIME attribute
+      db_set_flag($$state{obj},$1,$4,1) if($4 ne undef);
+   } elsif($$state{obj} ne undef && 
+      $line =~ /^\s*([^ \/:]+):(\d+):(\d+):([^:]*):A:/) {
+      db_set($$state{obj},$1,$',$2,$3);                  # standard attribute
+      db_set_flag($$state{obj},$1,$4,1) if($4 ne undef);
       $$state{loc} = $' if($1 eq "obj_location");
-   } elsif($$state{obj} ne undef && $line =~ /^\s*([^ \/:]+):([^:]*):L:/) {
-      my ($attr,$list) = ($1,$');                            # list attribute
+   } elsif($$state{obj} ne undef && 
+      $line =~ /^\s*([^ \/:]+):(\d+):(\d+):([^:]*):L:/) {
+      my ($attr,$list,$created,$modified) = ($1,$',$2,$3);   # list attribute
       for my $item (split(/,/,$list)) {
-         db_set_list($$state{obj},$attr,$item);
+         db_set_list($$state{obj},$attr,$item,$created,$modified);
          if($attr eq "obj_flag" && $item =~ /^\s*(PLAYER|EXIT)\s*$/i) {
             $$state{type} = uc($1);
          }
       }
-   } elsif($$state{obj} ne undef && $line =~ /^\s*([^ \/:]+):([^:]*):H:/) {
-      my ($attr,$list) = ($1,$');                           # hash attribute
+   } elsif($$state{obj} ne undef && 
+      $line =~ /^\s*([^ \/:]+):(\d+):(\d+):([^:]*):H:/) {
+      my ($attr,$list,$created,$modified) = ($1,$');         # hash attribute
       for my $item (split(/;/,$list)) {
          if($item =~ /^([^:]+):A:([^;]+)/) {
-            db_set_hash($$state{obj},$attr,$1,$2);
+            db_set_hash($$state{obj},$attr,$1,$2,$created,$modified);
          } elsif($item =~ /^([^:]+):M:([^;]+)/) {
-            db_set_hash($$state{obj},$attr,$1,db_unsafe($2));
+            db_set_hash($$state{obj},$attr,$1,db_unsafe($2),$created,$modified);
          }
       }
    } elsif($$state{obj} ne undef && $line =~ /^\s*}\s*$/) {    # end of object
@@ -7787,7 +7898,7 @@ sub find
       printf("got here: 4\n") if $debug;
       return $self;
    } elsif($thing =~ /^\s*\*/) {
-       my $player = lc(trim($'));
+       my $player = trim(ansi_remove(lc($')));
        if(defined @player{$player}) {
       printf("got here: 5\n") if $debug;
           return obj(@player{$player});
@@ -7857,7 +7968,7 @@ sub find_content
 #
 sub find_player
 {
-   my ($self,$prog,$thing) = (obj(shift),shift,trim(lc(shift)));
+   my ($self,$prog,$thing) = (obj(shift),shift,trim(ansi_remove(lc(shift))));
    my ($partial,$dup);
 
    if($thing =~ /^\s*#(\d+)\s*$/) {
@@ -7867,7 +7978,7 @@ sub find_player
    } elsif($thing =~ /^\s*%#\s*$/) {
       return $$prog{created_by};
    } elsif($thing =~ /^\s*\*/) {
-       my $player = lc(trim($'));
+       my $player = trim(ansi_remove(lc($')));
        if(defined @player{$player}) {
           return obj(@player{$player});
        } else {
@@ -8356,7 +8467,7 @@ sub pretty
 sub initialize_functions
 {
    delete @fun{keys %fun};
-   @fun{decode_entities} = sub { return decode_entities(@_[2]) };
+   @fun{decode_entities} = sub { return &fun_decode_entities(@_); };
    @fun{set}       = sub { return &fun_set(@_);                    };
    @fun{EVAL}      = sub { return &fun_eval(@_);                   };
    @fun{html_strip}= sub { return &fun_html_strip(@_);             };
@@ -8504,7 +8615,9 @@ sub initialize_functions
    @fun{ldelete}    = sub { return &fun_ldelete(@_);               };
    @fun{hasattr}    = sub { return &fun_hasattr(@_);               };
    @fun{hasattrp}   = sub { return &fun_hasattrp(@_);              };
-   @fun{ansi2mush}  = sub { return &fun_ansi2mush(@_);              };
+   @fun{attr_created}=sub { return &fun_attr_created(@_);          };
+   @fun{attr_modified}=sub{ return &fun_attr_modified(@_);         };
+   @fun{ansi2mush}  = sub { return &fun_ansi2mush(@_);             };
 }
 
 
@@ -8659,6 +8772,16 @@ sub ansi_compress
 }
 
 
+sub fun_decode_entities
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (DECODE_ENTITIES) EXPECTS 1 ARGUMENTS";
+
+   return decode_entities(evaluate($self,$prog,shift));
+}
+
 sub fun_ansi2mush
 {
    my($self,$prog) = (obj(shift),shift);
@@ -8771,6 +8894,60 @@ sub fun_hasattrp
       $hash = mget($$parent{value},$attr);
    }
    return (ref($hash) eq "HASH") ? 1 : 0;
+}
+
+sub fun_attr_created
+{
+   my($self,$prog) = (obj(shift),shift);
+   my ($obj,$attr);
+
+   # handle args in "object/attr" or "object,attr" format
+
+   if($#_ == 0) {
+      ($obj,$attr) = balanced_split(shift,"/",4);
+   } else {
+      ($obj,$attr) = (shift,shift);
+   }
+   $obj = evaluate($self,$prog,$obj);
+   $attr = evaluate($self,$prog,$attr);
+
+   my $target = find($self,$prog,evaluate($self,$prog,$obj)) ||
+      return "#-1 NOT FOUND";
+
+   my $hash = mget($target,$attr);
+
+   if(ref($hash) eq "HASH") {
+      return $$hash{created};
+   } else {
+      return $$hash{created};
+   }
+}
+
+sub fun_attr_modified
+{
+   my($self,$prog) = (obj(shift),shift);
+   my ($obj,$attr);
+
+   # handle args in "object/attr" or "object,attr" format
+
+   if($#_ == 0) {
+      ($obj,$attr) = balanced_split(shift,"/",4);
+   } else {
+      ($obj,$attr) = (shift,shift);
+   }
+   $obj = evaluate($self,$prog,$obj);
+   $attr = evaluate($self,$prog,$attr);
+
+   my $target = find($self,$prog,evaluate($self,$prog,$obj)) ||
+      return "#-1 NOT FOUND";
+
+   my $hash = mget($target,$attr);
+
+   if(ref($hash) eq "HASH") {
+      return $$hash{modified};
+   } else {
+      return $$hash{modified};
+   }
 }
 
 sub fun_tohex
@@ -9565,7 +9742,7 @@ sub fun_url
    my ($self,$prog) = (obj(shift),shift);
    my ($host,$path,$sock,$secure);
 
-   good_args($#_,1) ||
+   good_args($#_,1,3) ||
       return set_var($prog,"data","#-1 FUNCTION (URL) EXPECTS 1 ARGUMENT");
 
    hasflag($self,"SOCKET_INPUT") ||
@@ -9642,7 +9819,13 @@ sub fun_url
 #      printf("PATH: '%s'\n",$path);
 
       eval {                        # protect against uncontrollable problems
-         $sock->write_request(GET => "/$path", 'User-Agent' => 'curl/7.52.1');
+         if($#_ == 1) {
+            my ($type,$value) = (shift,shift);
+            $sock->write_request(GET => "/$path",'User-Agent' => 'curl/7.52.1',
+               $type => $value );
+         } else {
+            $sock->write_request(GET => "/$path",'User-Agent' => 'curl/7.52.1');
+         }
 #         $sock->write_request(GET => "/$path", 'User-Agent' => 'Wget/1.19.4');
 #           printf($sock "GET /$path HTTP/1.1\n");
 #           printf($sock "User-Agent: Wget/1.19.4 (linux-gnu)\n");
@@ -13143,22 +13326,6 @@ sub evaluate_substitutions
 }
 
 
-#
-# text
-#    Generic function to return the results of a single column query.
-#    Column needs to be aliased to text.
-#
-sub text
-{
-   my ($sql,@args) = @_;
-   my $out; # = "---[ Start ]---\n";                              # add header
-
-   for my $hash (@{sql($sql,@args)}) {                            # run query
-      $out .= $$hash{text} . "\n";                                # add output
-   }
-   # $out .= "---[  End  ]---";                                   # add footer
-   return $out;
-}
 
 #
 # controls
@@ -13927,7 +14094,7 @@ sub create_object
       db_set($id,"obj_firstsite",$where);
       db_set($id,"obj_quota",conf("starting_quota"));
       db_set($id,"obj_total_quota",conf("starting_quota"));
-      @player{lc($name)} = $id;
+      @player{trim(ansi_remove(lc($name)))} = $id;
    } else {
       db_set($id,"obj_home",$$self{obj_id});
    }
@@ -14009,7 +14176,7 @@ sub inuse_player_name
       return 0;                                 # allow for changes in case
    } 
 
-   return defined @player{lc($name)} ? 1 : 0;
+   return defined @player{trim(ansi_remove(lc($name)))} ? 1 : 0;
 }
 
 #
@@ -14864,10 +15031,6 @@ sub server_process_line
 #      };
 
       if($@) {                                # oops., you sunk my battle ship
-#         con("# %s crashed the server with: %s\n%s",name($hash),$_[1],$@); 
-#         con("LastSQL: '%s'\n",@info{sql_last});
-#         con("         '%s'\n",@info{sql_last_args});
-#         con("         '%s'\n",@info{sql_last_code});
    
          my $msg;
          if($_[1] =~ /^\s*connnect\s+/) {
@@ -15009,13 +15172,13 @@ sub server_handle_sockets
 
            
                # store last transaction in @info{connected_raw_socket} 
-               if(defined @connected{$s} && @{@connected{$s}}{raw} > 0) {
-                  if(@info{connected_raw_socket} ne $s) {
-                     delete @info{connected_raw};
-                     @info{connected_raw_socket} = $s;
-                  } 
-                  @info{connected_raw} .= $` . "\n";
-               }
+#               if(defined @connected{$s} && @{@connected{$s}}{raw} > 0) {
+#                  if(@info{connected_raw_socket} ne $s) {
+#                     delete @info{connected_raw};
+#                     @info{connected_raw_socket} = $s;
+#                  } 
+#                  @info{connected_raw} .= $` . "\n";
+#               }
 
 #               if(!defined @connected{$s}) {
 #                  printf("## no socket??? '$s'\n");
@@ -15635,7 +15798,7 @@ sub db_read_import
                db_set_list($id+$start,"obj_flag",lc($flag));
             }
             if($flag eq "PLAYER") {
-               @player{lc($name)} = $id;
+               @player{trim(ansi_remove(lc($name)))} = $id;
                db_set($id+$start,"obj_name","imp_$name");
                db_set($id+$start,"obj_cname","imp_$name");
             }

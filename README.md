@@ -10,6 +10,7 @@ modification of the internal server code.
 ```
           wget https://github.com/c-hudson/teenymush/raw/master/teenymush.pl
           wget https://github.com/c-hudson/teenymush/raw/master/help.txt
+          wget https://github.com/c-hudson/teenymush/raw/master/god.sh
 ```
 
    2. Run teenymush.pl script

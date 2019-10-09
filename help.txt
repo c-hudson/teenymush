@@ -618,15 +618,27 @@ Example:
      > say escape({}[]();,)
      You say, "\{\}\[\]\(\)\;"
 & trim()
-function:
-
-     trim(<text>)
-
-     Removes any leading or trailing spaces.
-
-Example:
-     > say trim(        this is a test       )
-     You say, "this is a test"
+TRIM()
+  Function: trim(<string> [,<trim style> [,<trim character(s)>]])
+ 
+  This function will trim trailing and/or lead characters on the string
+  that you specify.  <trim character> specifies the character to trim (default
+  is space), and <trim style> tells the kind of trimming to perform (default
+  is trim both sides of the string).  You may specify more than one character
+  for trimming.
+ 
+  The following values for <trim style> are recognized:
+      'b' :   Trim both ends of the string (default)
+      'l' :   Trim the left end of the string.
+      'r' :   Trim the right end of the string.
+  Note: anything else specified for <trim style> will trim both sides.
+ 
+  Example:
+    > say trim(;;;Wacka;;;,,;)
+    You say "Wacka"
+    > say trim(%b%b%b Polly Parrot %b%b%b%b,r)
+    You say "    Polly Parrot"
+    > say trim(---Trim Rules!---,l,-)
 & @wipe
 command :
      @wipe <object>
@@ -1018,7 +1030,12 @@ SUBSTITUTIONS
     %m0 - %m9 = Matches wild card 0 - 9 from a conditional statment in
                 @switch.
     %va-%vz   = Contents of attribute va through vz.
-  
+    %q0-%q9   = Value of temporary (setq) register 0 through 9.
+    %qa-%qz   = Value of temporary (setq) register a through z.
+    %#        = Database number of the object that caused the message to be
+                displayed or the action list to be run (Enactor).
+    %!        = Database number of the object holding the message or running
+                the action list (Executor).
 & ansi
 function:
 
@@ -1098,3 +1115,375 @@ ansi codes:
 
 & ifelse()
 run: help if()
+& lrand()
+LRAND()
+
+  FUNCTION: lrand(<lower>,<upper>,<count>,[,<output delim>])
+
+  Returns a list with <count> elements separated by <output delim> (or
+  a space if not specified) of random numbers between <lower> and
+  <upper>.
+
+  For instance, 'lrand(3, 6, 5)' would generate five random numbers
+  in the range 3 - 6 (i.e., 3, 4, 5, or 6), such as '4 6 3 5 6'.
+& pickrand()
+PICKRAND()
+
+  FUNCTION: pickrand(<word1> <word2> <...<wordN>[,<delimiter>])
+
+  This function picks a random element from a list.  It's faster than
+  first(shuffle(foo)) or extract(foo,rand(words(foo)),1).  <delimiter> is an
+  optional one-character output delimiter.
+
+  Example:
+    > say pickrand(foo bar baz)
+    You say, "bar"
+& ilev()
+ILEV()
+
+  FUNCTION: ilev()
+
+  Returns the nesting level of iter() and parse() functions. Outside
+  of any iterator, ilev() returns -1. The first level is indicated by 0, the
+  second by 1, etc.
+& itext()
+ITEXT()
+
+  FUNCTION: itext(<n>)
+            inum(<n>)
+            ilev()
+
+  These functions, when called within an iter() or parse(), return the
+  equivalent of ## (itext) or #@ (inum), with reference to the nth more
+  outermost iter(), where n=0 refers to the current iter(), n=1 to an iter()
+  in which the current iter() is nested, etc.
+
+  Unlike the ## and #@ substitutions which are substituted in the evaluation
+  string before it is evaluated, itext(), inum(), and ilev() substitute their
+  values as part of evaluation. In this way, the use of these functions is
+  safer than the ## and #@ substitutions and is therefore preferred.
+
+  > say [iter(red blue green,iter(fish shoe, #@:##))]
+  You say, "1:red 1:red 2:blue 2:blue 3:green 3:green"
+
+  > say [iter(red blue green,iter(fish shoe, [inum(1)]:[itext(1)]))]
+  You say, "1:red 1:red 2:blue 2:blue 3:green 3:green"
+
+  > say [iter(red blue green,iter(fish shoe, [inum(0)]:[itext(0)]))]
+  You say, "1:fish 2:shoe 1:fish 2:shoe 1:fish 2:shoe"
+
+  > say [iter(red blue green,iter(fish shoe, [itext(1)]:[itext(0)]))]
+  You say, "red:fish red:shoe blue:fish blue:shoe green:fish green:shoe"
+& inum()
+run: help itext()
+& foreach()
+ Function: foreach([<object>/]<attribute>,<string>[,<begin>, <end>])
+   
+  Each character in <string> has the user-defined function of the first
+  argument performed on it; the character is passed to the function as
+  %0. The results are concatenated. If <begin> and <end> are specified,
+  only the characters between <begin> and <end> are parsed, other characters
+  are concatenated as they are. This allows a rudimentary form of tokens and
+  speeds up the evaluation greatly if tokenizing is your purpose.
+   
+  Examples:
+    > &add_one me=[add(%0,1)]
+    Set.
+    > say [foreach(add_one, 54321)]
+    You say, "65432"
+    > &add_one me=[add(%0,1)]
+    Set.
+    > say [foreach(add_one, This adds #0# to numbers in this string.,#,#)]
+    You say, "This adds 1 to numbers in this string."
+& listinter()
+LISTINTER()
+  Function: listinter(<list1>, <list2>[, <delim> [, <sep>] [,<type>]]])
+  
+  This function returns the intersection of two sets, keeping the order of the
+  first set.  Any element in <list1> that is in <list2> will be
+  displayed.  The following types exist:
+  
+      0 - remove duplicates from lists (default)
+      1 - show list with duplicates
+  
+  Example:
+    > say listinter(foo baz gleep bar foo bar, bar moof gleep)
+    You say, "gleep bar"
+    > say listinter(foo baz gleep bar foo bar, bar moof gleep,,-)
+    You say, "gleep-bar"
+    > say listinter(foo baz gleep bar foo bar, bar moof gleep,,-,1)
+    You say, "gleep-bar-bar"
+& lnum()
+  Function: lnum(<number>[,<number>,<seperator>])
+ 
+  Returns a list of numbers from 0 to <number>-1.
+  If a second number is specified it tells to use
+  the range of numbers between the two values.
+  The order you put it in specifies if it increments
+  or decrements the value.
+ 
+  Example:
+    > say lnum(5) 
+    You say "0 1 2 3 4"
+    > say lnum(5,10)
+    You say "5 6 7 8 9 10"
+    > say lnum(7,3)
+    You say "7 6 5 4 3"
+    > say lnum(1,5,@)
+    You say "1@2@3@4@5"
+& ldelete()
+LDELETE()
+
+  FUNCTION: ldelete(<list>, <positions>[, <input delim> [, <output delim>]])
+
+  This function removes elements(s) from <list> at the given <positions>.
+  Negative <positions> are relative to the end of the list.  Elements of
+  <list> are delimited by <input delim>.  Elements of <positions> are always
+  delimited by a space.
+
+  Elements of the returned list are separated by <output delim> which
+  defaults to <input delim> which defaults to a space.
+
+  Examples:
+    > say ldelete(This is not a test, 3)
+    You say, "This is a test"
+    > say ldelete(Yet@Another@Mundane@List, 3, @)
+    You say, "Yet@Another@List"
+    > say ldelete(lemon|orange|pear|apple,2 3,|)
+    You say, "lemon|apple"
+    > say ldelete(foo bar baz boing,3,,%b~%b)
+    You say, "foo ~ bar ~ boing"
+& edit()
+EDIT()
+  Function: edit(<string>, <from>, <to> [[,<type>] [,<strict>]])
+ 
+  This function edits <string>, replacing all occurrences of the substring
+  <from> with the string <to>.  If <from> is '$', then <to> is appended to
+  <string>, while if <from> is '^', then it is prepended.
+  
+  <type> has the following values that are allowed:
+    1 - enable single edit (where it edits the first match no sequent matches)
+  
+  <strict> has the following values that are allowed:
+    1 - strict mode will keep ansi alignment to original strings values.
+    2 - raw mode will allow you to edit ansi markup in a string.
+  
+  Note: option 2 (raw mode) was the original method ansi worked.
+   
+  Examples:
+    > say edit(This is a test,is,x)   
+    You say "Thx x a test"
+    > say edit(Atlantic,^,Trans)
+    You say "TransAtlantic"
+& citer()
+CITER()
+  Function: citer(<list>, <eval>[, <delim>])
+  
+  <list> is a list of characters that you wish to iterate.  The list can
+  be any regular character (including spaces).  <eval> is a string that is
+  to be evaluated once for each character in <list>.  It returns a SPACE
+  (or optional delimited) separated list of these evaluations.  The effect
+  is similar to that of iter(), except it takes it as a character by 
+  character basis instead of a word by word basis.  The special substitution
+  of '##' is used for the current item of the list.  #@ is used for the
+  positional match of that item in that list.  This is similar to 
+  the explode function found on other mushes or in PHP.
+  
+  This function does not handle itext/inum/%i.  
+   
+  Examples:
+    > say citer(boo!,##)
+    You say "b o o !"
+    > say citer(boo!,##-#@)
+    You say "b-1 o-2 o-3 !-4"
+    > say citer(testing,strlen(##))
+    You say "1 1 1 1 1 1 1"
+    > say citer(bob,## WHEE ##,@)
+    You say "b WHEE b@o WHEE o@b WHEE b"
+& @capture
+Command: @capture <attribute> = <command>
+
+  This command will run a command and capture the output. When
+  the command finishes running, the specified attribute will
+  be trigged with %1 containing the output from the command.
+  This command will @capture output from most mushcode and 
+  most internal commands.
+
+  Example:
+      &responce me = say # %0
+      @capture responce = @weather 56001
+
+      You say, "# Uptime: 63 days, 6 hours, 49 minutes"
+& center()
+CENTER()
+
+  FUNCTION: center(<string>, <width>[, <fill>])
+
+  This function centers <string> within a <width>-sized field.
+
+  The background of this field is specified by a repeating pattern of <fill>
+  characters. The origin of this repeating pattern is at the first position
+  of the field. Another way of saying this is that the repeating pattern
+  starts in first position and repeats to the right. The last <fill> pattern
+  may be truncated.
+
+  By default, <fill> is a single, normal-colored space. The color of
+  <string> and <fill> is maintained.
+
+  If the visual width of <string> is longer than <width> characters, it is
+  truncated to fit.
+
+  Example:
+    > say center(a,5,-)
+    You say, "--a--"
+& set()
+SET()
+
+  FUNCTION: set(<object>, <string>)
+
+  Works the same as @set, <object> and <string> are equivalent to what comes
+  before and after the '=' sign.  Returns nothing.
+
+  The following demonstrate how to use set() for setting or clearing a flag,
+  attribute flag, or attribute on an object. As with @set, flags are cleared
+  by using an exclamation mark(!) preceding the flag name for both general and
+  attribute flags.  For attributes, an empty value after the colon (:) will
+  clear the attribute value from the <object>.
+
+    set(<object>, <flag>)
+    set(<object>/<attribute>, <attribute flag>)
+    set(<object>, <attribute>:<value>)
+
+  Examples:
+
+  > think [set(me,foo:Twenty Pink Pigs)]
+  < think [set(me,foo:)]
+  > think [set(me,VERBOSE)]
+  > think [set(me/foo,!VISUAL)]
+
+  Related Topics: @set
+& @IDESC
+
+  COMMAND:   @idesc <object> = <message>
+  ATTRIBUTE: Idesc
+
+  Sets the internal description for <object>.  The internal description of an
+  object will be shown to any player entering it.  If not set, the regular
+  description in the Desc attribute is shown instead.
+
+  Function references and %-substitutions are allowed in inside descriptions,
+  and are evaluated when someone fails to get or look at the object.  In
+  function references, 'me' refers to the object being looked at, while
+  %-substitutions that refer to the enactor (such as %n, %#, %p, etc)
+  refer to the player doing the looking.
+
+  This attribute is only meaningful for players and things, and will never be
+  automatically triggered on other object types.
+
+  Example: @idesc car = You are sitting in the driver's seat of a Volkswagen
+                        Beetle.
+& @SHUTDOWN
+
+  COMMAND: @shutdown <text>
+
+  Disconnects all connected players, saves the database to disk, and shuts
+  down the game.  The game is unavailable until it is restarted.
+
+& @WALL
+
+  COMMAND: @wall[/<switches>] <message>
+
+  With no switches, shouts <message> to every connected player or to every
+  connected wizard, prefixed by either 'Announcement:' (if for everyone) or
+  'Broadcast:' (if for wizards).  The following switches can be used to get the
+  described effects:
+
+     /emit      - Format the message as an emit (ie send just <message>).
+     /pose      - Format the message as a pose (ie <yourname> <message>).
+     /wizard    - Only send the message to connected wizards.
+     /admin     - Send the message to connected wizards and royalty.
+     /no_prefix - Don't prepend 'Announcement:' or 'Broadcast:' to the message.
+
+  If neither /emit or /pose are used, you can format the message one of several
+  ways by specifying ':', ';', or '"' as the first character of the message.
+  ':' and ';' format the message as if /pose were specified, except that ';'
+  does not insert a space between your name and the message.  '"' formats the
+  message in normal @wall format (this is the default).
+  The message is also written to the log file.
+
+& attr_created()
+attr_create()
+
+  FUNCTION: attr_created(<object>, <attribute>)
+            attr_created(<object> / <attribute>)
+
+  Returns a number which corresponds to the time of the creation of the
+  attribute. See convsecs() to convert this into a human readable time.
+
+  Examples:
+
+  > say [attr_created(me,testing)]
+  > say [attr_created(me/testing)]
+
+  You say, "1570464266"
+
+  > think [convsecs(attr_created(me/testing))]
+
+   You say, "Mon Oct  7 11:04:26 2019"
+
+  Related Topics: @set, convsecs(), attr_modified()
+
+& attr_modified()
+attr_modified()
+
+  FUNCTION: attr_modified(<object>, <attribute>)
+            attr_modified(<object> / <attribute>)
+
+  Returns a number which corresponds to the time of the modification of the
+  attribute. See convsecs() to convert this into a human readable time.
+
+  Examples:
+
+  > say [attr_modified(me,testing)]
+  > say [attr_modified(me/testing)]
+
+  You say, "1570464266"
+
+  > think [convsecs(attr_modified(me/testing))]
+
+   You say, "Mon Oct  7 11:04:26 2019"
+
+  Related Topics: @set, convsecs(), attr_created()
+
+& EXAMINE
+
+  Command: examine[/<switches>] <object>[/<wild-attrib>]
+  
+  Available switches are on: help examine4
+  
+  Displays all available information about <object>.  <object> may be an
+  object, 'me' or 'here'. You must control the object to examine it, or it
+  must be set VISUAL.  If you do not own the object, you will just see the
+  name of the object's owner, and optionally any public attributes and 
+  attributes owned by you set on the object.
+ 
+  If an attribute is owned by a player other than the owner of the object,
+  the number of the attribute owner is shown in parentheses immediately
+  following the attribute name.  Flag letters may appear in parentheses also,
+  to indicate the status of the attribute.
+
+  If you specify a wildcard-ed attribute name, then only those attributes
+  that match are shown.  So, 'exam me/v?' will show all your attributes that
+  start with v and are two characters long.
+
+  The following switches are available:
+
+     /raw     - Shows the attributes as is without any formating to make
+                MushCode more readable.
+
+     /command - List attributes with a $-command, ^-listen, or !-listen.
+                Good for finding commands on an object. 
+
+     /detail  - List the creation and modification times on an attribute
+
+  Related Topics: look

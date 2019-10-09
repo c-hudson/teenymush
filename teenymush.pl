@@ -588,6 +588,7 @@ sub initialize_commands
    @command{"\@wall"}       ={ fun => sub { return &cmd_wall(@_);}          };
    @command{"\@read"}       ={ fun => sub { return &cmd_read(@_);}          };
    @command{"\@function"}   ={ fun => sub { return &cmd_function(@_);}      };
+   @command{"\@imc"}        ={ fun => sub { return &cmd_imc(@_);}           };
    @command{"\@perl"}       ={ fun => sub { return &cmd_perl(@_); }         };
    @command{say}            ={ fun => sub { return &cmd_say(@_); }          };
    @command{"\""}           ={ fun => sub { return &cmd_say(@_); },  nsp=>1 };
@@ -790,8 +791,6 @@ sub cmd_wall
    verify_switches($self,$prog,$switch,"emit","pose","wizard","no_prefix") || 
       return;
 
-   my $txt = evaluate($self,$prog,shift);
-
    if($$switch{emit}) {                              # determine msg format
       $msg = "Announcment: " . trim($txt);
    } elsif($$switch{pose}) {
@@ -893,14 +892,9 @@ sub cmd_capture
 {
    my ($self,$prog) = (obj(shift),shift);
   
-#   printf("CMD_CAPTURE: called '%s'\n",$_[0]);
    my ($attr,$command) = balanced_split(shift,"=",4);
-#   printf("ATTR: '%s'\n",$attr);
-#   printf("CMD: '%s'\n",$command);
    $attr = evaluate($self,$prog,$attr);
    $command = evaluate($self,$prog,$command);
-#   printf("ATTR: '%s'\n",$attr);
-#   printf("CMD: '%s'\n",$command);
 
    if($attr eq undef || $command eq undef) {
       return err($self,$prog,"Usage: \@capture [attribute] = [command]");
@@ -911,14 +905,12 @@ sub cmd_capture
                        output => $$prog{output},
                        self => $self
                      };
-#   printf("CAPTURE: '%s'\n",$$self{obj_id});
 
    necho(self   => $self,
          prog   => $prog,
          source => [ "Capture started (%s / %s)." , $attr,$command]
    );
 
-#   printf("RUN: '%s'\n",$command);
    mushrun(self   => $self,
            prog   => $prog,
            runas  => $self,
@@ -1326,6 +1318,56 @@ sub cmd_while
        return "RUNNING";
     }
     return "DONE";
+}
+
+#
+# cmd_imc
+#    Loop while the expression is true
+#
+sub cmd_imc
+{
+   my ($self,$prog,$txt) = @_;
+   my (%last,$first);
+
+   hasflag($self,"GOD") ||
+      return err($self,$prog,"Permission denied.");
+
+   in_run_function($prog) &&
+      return err($self,$prog,"#-1 \@WHILE can not be called from RUN function");
+
+   my $cmd = $$prog{cmd_last};
+
+   if(!defined @info{imc} || ref(@info{imc}) ne "HASH") {
+      return err($self,$prog,"imc command not recieved via HTTPD");
+   } elsif(!defined $$cmd{imc_start}) {                  # initialize "loop"
+      delete @info{sigusr1};
+      $$cmd{imc_start} = time();
+   } elsif(defined $$cmd{imc_running}) {                        # finished?
+      delete @info{imc};
+      delete @info{imc_running};
+      delete @info{sigusr1};
+      return "DONE";
+   } elsif(time() - $$cmd{imc_start} > 10) {
+      delete @info{imc};
+      return err($self,$prog,"SIGUSR1 signal not recieved within 10 seconds");
+   }
+
+   my $hash = @info{imc};
+
+   if(defined @info{sigusr1} &&              # wait for permission to start
+      time() - @info{sigusr1} < 10 &&
+      time() - $$hash{timestamp} < 10) {
+      $$prog{from} = "ATTR";            # a lie, but it gets us where we want.
+      mushrun(self   => $self,
+              prog   => $prog,
+              source => 0,
+              cmd    => @{@info{imc}}{command},
+              child  => 1
+              );
+      $$cmd{imc_running} = time();
+   }
+   $$prog{idle} = 1;
+   return "RUNNING";
 }
 
 
@@ -2624,6 +2666,20 @@ sub cmd_dolist
        $$cmd{dolist_count} = 0;
        $$prog{iter_stack} = [] if(!defined $$prog{iter_stack});
        $$cmd{dolist_loc} = $#{$$prog{iter_stack}} + 1;
+   } elsif($#{$$cmd{dolist_list}} == -1) {
+      if(defined $$switch{notify}) {
+         mushrun(self   => $self,
+                 prog   => $prog,
+                 runas  => $self,
+                 source => 0,
+                 cmd    => "\@notify/first/quiet",
+                 child  => 2,
+                );
+      }
+      if(defined $$prog{iter_stack}) {
+         my $array = $$prog{iter_stack};
+         delete @$array[$$cmd{dolist_loc} .. $#$array];
+      }
    }
    $$cmd{dolist_count}++;
 
@@ -2635,9 +2691,12 @@ sub cmd_dolist
 
    my $item = trim(shift(@{$$cmd{dolist_list}}));
    if($item !~ /^\s*$/) {
-      $item = fun_escape($self,$prog,$item);
+#      $item = fun_escape($self,$prog,$item);
       my $cmds = $$cmd{dolist_cmd};
-      $cmds =~ s/\#\#/$item/g;
+#      $cmds =~ s/\#\#/$item/g;
+
+      @{$$prog{iter_stack}}[$$cmd{dolist_loc}]={val => $item, pos => ++$count};
+      
       delete $$prog{attr} if defined $$prog{attr};
 
       if(defined $$prog{cmd} && @{$$prog{cmd}}{source} == 1) {
@@ -2659,20 +2718,7 @@ sub cmd_dolist
       }
    }
 
-   if($#{$$cmd{dolist_list}} == -1) {
-      if(defined $$switch{notify}) {
-         mushrun(self   => $self,
-                 prog   => $prog,
-                 runas  => $self,
-                 source => 0,
-                 cmd    => "\@notify/first/quiet",
-                 child  => 2,
-                );
-      }
-      return "DONE";
-   } else {
-      return "RUNNING";
-   }
+  return "RUNNING";
 }
 
 
@@ -2786,7 +2832,7 @@ sub cmd_wait
                      cmd    => $$cmd{wait_cmd},
                     );
    }
-   $$cmd{idle} = 1;
+   $$prog{idle} = 1;
    return "BACKGROUNDED";
 }
 
@@ -3230,7 +3276,7 @@ sub cmd_send
     } else {
 #       printf("#SEND: '%s'\n",$_[0]);
        my $txt = ansi_remove(evaluate($self,$prog,shift));
-#       printf("#SEND: '%s'\n",$txt);
+#       printf("       '%s'\n",$txt);
 #       my $txt = evaluate($self,$prog,shift);
 ##       printf("       '%s'\n",$txt);
        my $switch = shift;
@@ -7072,6 +7118,8 @@ $SIG{'INT'} = sub {  cmd_dump(obj(0),{},"CRASH");
                      exit(1);
                   };
 
+$SIG{'USR1'} = sub { @info{sigusr1} = time(); }
+
 END {
    if(@info{run} == 0) {
       con("%s shutdown by %s.\n",conf("mudname"),@info{shutdown_by});
@@ -7527,6 +7575,9 @@ sub mushrun_done
    if($$prog{hint} eq "WEBSOCKET") {
       my $msg = join("",@{@$prog{output}});
       $prog->{sock}->send_utf8(ansi_remove($msg));
+   } elsif($$prog{hint} eq "IMC") {
+      http_out($$prog{sock},"%s",join("",@{@$prog{output}}));
+      http_disconnect($$prog{sock});
    } elsif($$prog{hint} eq "WEB") {
       if(defined $$prog{output}) {
          if(defined $$prog{get} && $$prog{get} =~ /^\~/) {
@@ -12305,12 +12356,13 @@ sub fun_iter
    for my $item (safe_split(evaluate($self,$prog,$list),$idelim)) {
        $item = trim($item) if ($idelim eq " ");
        @{$$prog{iter_stack}}[$loc] = { val => $item, pos => ++$count };
-       my $new = $txt;
-       $new =~ s/##/$item/g;
-       $new =~ s/#\@/$count/g;
-       push(@result,evaluate($self,$prog,$new));
+#       my $new = $txt;
+#       $new =~ s/##/$item/g;
+#       $new =~ s/#\@/$count/g;
+       $$prog{var} = {} if !defined $$prog{var};
+       push(@result,evaluate($self,$prog,$txt));
    }
-   delete @{$$prog{iter_stack}}[$loc];
+   delete @{$$prog{iter_stack}}[$loc .. $#{$$prog{iter_stack}}];
 
    return join($odelim,@result);
 }
@@ -12940,6 +12992,33 @@ sub http_process_line
          } elsif(defined @{@info{httpd_ban}}{$addr}) {
             web("   %s %s\@web [BANNED-%s]\n",ts(),$addr,$$data{get});
             http_error($s,"%s","BANNED for invalid requests");
+         } elsif($$data{get} =~ /^pid$/) {
+            web(" * %s %s\@web [%s]\n",ts(),$addr,$$data{get});
+            if($addr eq "localhost" || $addr eq "127.0.0.1") {
+               http_reply_simple($s,$1,"%s","$$");
+            } else {
+               http_error($s,"%s","pid request from bad location. '$addr'");
+            }
+         } elsif($$data{get} =~ /^imc /) {
+            delete @info{sigusr1};
+            web(" * %s %s\@web [%s]\n",ts(),$addr,$$data{get});
+            if($addr eq "localhost" || $addr eq "127.0.0.1") {
+               @info{imc}={ timestamp => time(), command => substr($',0,1024) };
+               my $god = obj(0);
+               my $prog = mushrun(self   => $god,
+                                  runas  => $god,
+                                  invoker=> $god,
+                                  source => 0,
+                                  cmd    => "\@imc",
+                                  hint   => "IMC",
+                                  sock   => $s,
+                                  output => [],
+                                  nosplit => 1,
+                                 );
+                $$prog{get} = $$data{get};
+            } else {
+               http_error($s,"%s","imc request from bad location.");
+            }
          } else {                                          # mush command
             web("   %s %s\@web [%s]\n",ts(),$addr,$$data{get});
             my $prog = mushrun(self   => $self,
@@ -13149,7 +13228,6 @@ sub err
    my ($self,$prog,$fmt) = (obj(shift),obj(shift),shift);
    my (@args) = @_;
 
-   printf("ERR: '$fmt'\n",@args);
    necho(self => $self,
          prog => $prog,
          source => [ $fmt,@args ],
@@ -13246,7 +13324,7 @@ sub evaluate_substitutions
    my ($out,$seq,$debug);
 
    my $orig = $t;
-   while($t =~ /(\[|\]|\\|%m[0-9]|%q[0-9a-z]|%i[0-9]|%[!pbrtnk#0-9%]|%(v|w)[a-zA-Z]|\[|\]|%=<[^>]+>|%\{[^}]+\})/i) {
+   while($t =~ /(\[|\]|\\|%m[0-9]|%q[0-9a-z]|%i[0-9]|%[!pbrtnk#0-9%]|%(v|w)[a-zA-Z]|\[|\]|%=<[^>]+>|%\{[^}]+\}|##|#@)/i) {
       ($seq,$t)=($1,$');                                   # store variables
       $out .= $`;
 
@@ -13255,6 +13333,18 @@ sub evaluate_substitutions
          $t = substr($t,1);
       } elsif($seq eq "%%") {
          $out .= "\%";
+      } elsif($seq eq "##") {
+         if(!defined $$prog{iter_stack} || $#{$$prog{iter_stack}} == -1 ) {
+            $out .= "##";
+         } else {
+            $out .= @{@{$$prog{iter_stack}}[-1]}{val};
+         }
+      } elsif($seq eq "#@") {
+         if(!defined $$prog{iter_stack} || $#{$$prog{iter_stack}} == -1 ) {
+            $out .= "#@";
+         } else {
+            $out .= @{@{$$prog{iter_stack}}[-1]}{pos};
+         }
       } elsif($seq eq "[") {
          $out .= "[" if(ord(substr($`,-1)) == 27);       # escape sequence?
       } elsif($seq eq "]" || $seq eq "]") {
@@ -13737,13 +13827,14 @@ sub necho
                    push(@$stack,$msg);
                    @$stack[$#$stack] =~ s/\n+$//;
 #                   printf("ADD: '%s' - '%s'\n",$msg,$#{$$prog{output}});
-                   
+                   next;
                 } else {
 #                   printf("CMD: '%s'\n",lc(@{$$prog{cmd}}{mushcmd}));
 #                   printf("SKIP1: '%s'\n",$msg);
                 }
              } else {
                 push(@$stack,$msg);
+                next;
              }
           } else {
 #             printf("WHO: '%s' -> '%s' -> '%s'\n",
@@ -13753,7 +13844,6 @@ sub necho
 #             printf("%s\n",print_var($prog));
 #             printf("SKIP2: '%s'\n",$msg);
           }
-          next;
       }
 
       if(!loggedin($target) && 

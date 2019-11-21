@@ -1487,3 +1487,37 @@ attr_modified()
      /detail  - List the creation and modification times on an attribute
 
   Related Topics: look
+& @search
+@SEARCH
+
+  COMMAND: @search [<player>] [<class>=<restriction>
+
+  Displays information about objects that meet the search criteria.
+  Because this command is computationally expensive, it costs 100 coins.
+  <player> restricts the search to the named player, while <class>
+  and <restriction> control the objects listed.
+
+  Except when getting lists of players ('@search type=player' or
+  '@search flags=P'), you may only search for objects that you own.
+
+  Examples:
+    @search flags=PWc              <-- search for connected wizards.
+    @search type=room              <-- list all rooms owned by me.
+    @search eval=gt(money(##),10)  <-- search for things worth more than 10.
+    @search type=room,100,300      <-- Rooms between #100 and #300, inclusive
+                                       #5000 to the end of the database.
+  Related Topics: @find
+& train
+TRAIN
+  Command: train
+  The train command is used to output to the player what exactly you have 
+  typed.  The output is not parsed and is taken verbatum and displayed as
+  is. 
+  
+  Example:
+    > train @emit To do addition, type:  say add(1,1) = 2
+    YourName types -=> @emit To do addition, type: say add(1,1) = 2
+    To do addition, type: say add(1,1) = 2                         
+  
+  See Also: @emit, pose, @pemit, think
+

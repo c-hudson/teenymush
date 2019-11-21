@@ -72,17 +72,23 @@ my (%command,                  #!# commands for after player has connected
     %flag,                     #!# flag definition
    );                          #!#
 
+
+sub version
+{
+   return "TeenyMUSH 0.9";
+}
 #
 # load_modules
 #    Some modules are "optional". Load these optional modules or disable
 #    their use by setting the coresponding @info variable to -1.
 #
+# perl -MCPAN -e "install Net::WebSocket::Server"
 sub load_modules
 {
    my %mod = (
-      'URI::Escape'            => 'httpd',    
+      'URI::Escape'            => 'uri_escape',       # liburi-encode-perl
       'Net::WebSocket::Server' => 'websocket',
-      'Net::HTTPS::NB'         => 'url_https',
+      'Net::HTTPS::NB'         => 'url_https', # libnet-https-nb-perl
       'Net::HTTP::NB'          => 'url_http',      
       'HTML::Entities'         => 'entities',
       'Digest::MD5'            => 'md5',
@@ -93,12 +99,11 @@ sub load_modules
    );
 
    for my $key (keys %mod) {
-      if(!defined @info{"@mod{$key}"} || @info{"@mod{$key}"} == 1) {
+      if(!defined @info{"@mod{$key}"} || @info{"@mod{$key}"} eq undef) {
+	 @info{"@mod{$key}"} = 1;
          eval "use $key; 1;" or @info{"@mod{$key}"} = -1;
          if(@info{"@mod{$key}"} == -1) {
-            con("WARNING: Missing $key module, @mod{$key} disabled\n");
-         } elsif(!defined @info{"@mod{$key}"}) {
-            @info{"@mod{$key}"} = 0;
+            printf("WARNING: Missing $key module, @mod{$key} disabled\n");
          }
       }
    }
@@ -160,7 +165,6 @@ sub getbinfile
 sub load_defaults
 {
    delete @default{keys %default};
-   @default{version}                  = "TeenyMUSH 0.9";
    @default{max}                      = 78;
    @default{dump_interval}            = 3600;
    @default{master_override}          = "no";
@@ -210,7 +214,7 @@ sub process_commandline
    my $hit  = 0;
 
    for my $i (0 .. $#ARGV) {             # set conf attributes from cmdline
-      if(@ARGV[$i] =~ /^--D([^=]+)=/) {
+      if(@ARGV[$i] =~ /^-{1,2}D([^=]+)=/) {
          if($' eq undef) {
             con("%s   Deleting conf.%s setting\n",
                 ($hit == 0) ? "\n" : "",$1,$');
@@ -235,6 +239,8 @@ sub process_commandline
 sub main
 {
    @info{run} = 1;
+
+   printf("%s\n",conf("version"));
 
    # trap signal HUP and try to reload the code
    $SIG{HUP} = sub {
@@ -583,6 +589,7 @@ sub initialize_commands
    @offline{screenwidth}    = sub { return;                                 };
    @offline{screenheight}   = sub { return;                                 };
    # ------------------------------------------------------------------------#
+   @command{"\@search"}     ={ fun => sub { return &cmd_search(@_);}        };
    @command{screenwidth}    ={ fun => sub { return 1;}                      };
    @command{screenheight}   ={ fun => sub { return 1;}                      };
    @command{"\@wall"}       ={ fun => sub { return &cmd_wall(@_);}          };
@@ -698,6 +705,7 @@ sub initialize_commands
    @command{"\@capture"}    ={ fun => sub { cmd_capture(@_); }              };
    @command{"\@\@"}         ={ fun => sub { return 1; }                     };
    @command{"\@shutdown"}   ={ fun => sub { cmd_shutdown(@_); }             };
+   @command{"train"}        ={ fun => sub { cmd_train(@_); }                };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -762,6 +770,26 @@ sub get_mail
    }
 }
 
+sub cmd_train
+{
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
+
+   necho(self    => $self,
+         prog   => $prog,
+         room   => [ $self, "%s types -=> %s", name($self),$txt ],
+         source => [ "%s types -=> %s",name($self),$txt ]
+        );
+
+   mushrun(self   => $self,
+           prog   => $prog,
+           runas  => $self,
+           source => 0,
+           cmd    => $txt
+          );
+}
+#
+# cmd_home: move the player to their home
+#
 sub cmd_home
 {
    my ($self,$prog,$txt) = (obj(shift),shift,shift);
@@ -920,16 +948,111 @@ sub cmd_capture
           );
 }
 
+sub cmd_search
+{
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
+   my (@out, $start,$max);
+
+   # if in run() search entire db, or 100 at a time
+   my $max = in_run_function($prog) ? $#db + 1 : 100;
+
+   my $cmd = $$prog{cmd};
+   if(!defined $$cmd{search_pos}) {                       # initialize "loop"
+      if($txt =~ /(type|flags|eval|object)\s*=\s*/i) {
+         $txt = $`;
+         $$cmd{search_type} = lc($1);
+         $$cmd{search_txt} = $';
+
+         if($$cmd{search_type} eq "type") {
+            if($$cmd{search_txt} =~ /^\s*(room|player|object|exit)\s*$/i) {
+               $$cmd{search_txt} = lc($1);
+            } else {
+               return err($self,$prog,"$$cmd{search_txt}: unknown type");
+            }
+         } 
+      }
+
+      if($txt =~ /^\s*$/) {                         # default to current user
+         $$cmd{search_target} = $self;
+      } else {                                            # use provided user
+         $$cmd{search_target} = find_player($self,$prog,$txt) ||
+            return err($self,$prog,"Unknown player.");
+      }
+      $$cmd{search_pos} = 0;
+      $$cmd{out} = [];
+      $$prog{iter_stack} = [] if !defined $$prog{iter_stack};
+      $$cmd{search_loc} = $#{$$prog{iter_stack}} + 1;
+   }
+
+   for($start=$$cmd{search_pos};                   # loop for $max objects
+          $$cmd{search_pos} < $#db &&
+          $$cmd{search_pos} - $start < $max;
+          $$cmd{search_pos}++) {
+      if(valid_dbref($$cmd{search_pos})) {              # does object match?
+         if(owner_id($$cmd{search_pos}) == @{$$cmd{search_target}}{obj_id}) {
+            my $add = 1;
+            if($$cmd{search_type} eq "flags") {
+               for my $letter (split(//,$$cmd{search_txt})) {
+                  $add = 0 if(!hasflag($$cmd{search_pos},$letter));
+               }
+            } elsif($$cmd{search_type} eq "type") {
+               $add = 0 if(!hasflag($$cmd{search_pos},$$cmd{search_txt}));
+            } elsif($$cmd{search_type} eq "object") {
+               if(lc(substr(name($$cmd{search_pos}),0,
+                  length($$cmd{search_txt}))) ne lc($$cmd{search_txt})) {
+                  $add = 0;
+               }
+            } elsif($$cmd{search_type} eq "eval") {
+               my $array = $$prog{iter_stack};
+               $$array[$$cmd{search_loc}] =
+                  {val => "#$$cmd{search_pos}", pos => 1 };
+               if(evaluate($self,$prog,$$cmd{search_txt}) == 0) {
+                  $add = 0;
+               }
+               delete @$array[$$cmd{search_loc} .. $#$array];
+            }
+
+            if($add) {
+               if(defined $$prog{nomushrun}) {
+                  push(@{$$cmd{out}},"#$$cmd{search_pos}");
+               } else {
+                  push(@{$$cmd{out}},obj_name($self,$$cmd{search_pos}));
+               }
+            }
+         }
+      }
+   }
+
+   if($$cmd{search_pos} >= $#db) {                          # search is done
+      delete @$cmd{search_pos};
+
+      if($#{$$cmd{out}} == -1) {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "Nothing found." ]
+           );
+      } else {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ join(($$prog{nomushrun}) ? " " : "\n",@{$$cmd{out}})]
+           );
+      }
+   } else {
+      return "RUNNING";                                     # more to do
+   }
+}
+
+
 sub cmd_big
 {
-   my ($self,$prog) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
    my (@out, $start);
 
    if(defined $$prog{nomushrun}) {
       return err($self,$prog,"This command is not run() safe.");
    }
 
-   my $cmd = $$prog{cmd_last};
+   my $cmd = $$prog{cmd};
    if(!defined $$cmd{big_pos}) {                       # initialize "loop"
       $$cmd{big_pos} = 0;
       $$cmd{hash} = {};
@@ -941,19 +1064,31 @@ sub cmd_big
           $$cmd{big_pos} - $start < 100;
           $$cmd{big_pos}++) {
       if(valid_dbref($$cmd{big_pos})) {              # does object match?
-         $$hash{length(db_object($$cmd{big_pos}))} = $$cmd{big_pos};
+         if($txt eq "player") {
+            $$hash{name(owner($$cmd{big_pos}))} += length(db_object($$cmd{big_pos}));
+         } else {
+            $$hash{length(db_object($$cmd{big_pos}))} = $$cmd{big_pos};
+         }
       }
    }
    if($$cmd{big_pos} >= $#db) {                          # search is done
       delete @$cmd{big_pos};
       my @out;
-      for my $i (sort {$b <=> $a} keys %$hash) {
-          push(@out,$$hash{$i} . " is " . $i . " bytes\n");
-          last if $#out > 10;
+
+      if($txt eq "player") {
+         for my $i (sort {$$hash{$b} <=> $$hash{$a}} keys %$hash) {
+            push(@out,"$i is $$hash{$i} bytes.");
+             last if $#out > 10;
+         }
+      } else {
+         for my $i (sort {$b <=> $a} keys %$hash) {
+             push(@out,"#" . $$hash{$i} . " is " . $i . " bytes.");
+             last if $#out > 10;
+         }
       }
       necho(self   => $self,
             prog   => $prog,
-            source => [ join('',@out) ]
+            source => [ join("\n",@out) ]
         );
       delete @$cmd{big_pos};
    } else {
@@ -963,28 +1098,33 @@ sub cmd_big
 
 sub cmd_function
 {
-   my ($self,$prog,$txt) = (obj(shift),shift,shift);
+   my ($self,$prog) = (obj(shift),shift);
 
    hasflag($self,"WIZARD") ||
       return err($self,$prog,"Permission denied.");
 
-   if($txt =~ /^\s*([a-z][a-z0-9]*)\s*=\s*/) {
-      my $atr = fun_get($self,$prog,$');
+   my ($name,$atr) = besplit($self,$prog,shift,"=");
 
-      if($atr eq undef) {
-         return err($self,$prog,"Invalid object/attribute specified.");
-      }
-
-      @info{mush_function} = {} if(!defined @info{mush_function});
-
-      @{@info{mush_function}}{"$1$2"} = $';
-      necho(self   => $self,                                    # notify user
-            prog   => $prog,
-            source => [ "Set." ]
-        );
+   if($name =~ /^\s*([a-z])([a-z0-9_]*)\s*$/) {
+      $name = "$1$2";
    } else {
-      return err($self,$prog,"Usage: \@function <function> = <obj>/<attr>");
+      return err($self,$prog,"Invalid user defined function name '$name'");
    }
+
+   my $data = fun_get($self,$prog,trim($atr));
+
+   if($atr eq undef) {
+      return err($self,$prog,"Invalid object/attribute specified.");
+   }
+
+   @info{mush_function} = {} if(!defined @info{mush_function});
+
+   @{@info{mush_function}}{$name} = trim($atr);
+
+   necho(self   => $self,                                    # notify user
+         prog   => $prog,
+         source => [ "Set." ]
+        );
 }
 
 
@@ -1283,7 +1423,7 @@ sub cmd_mail
 #
 sub cmd_while
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
    my (%last,$first);
 
    hasflag($self,"GUEST") &&
@@ -1292,7 +1432,7 @@ sub cmd_while
    in_run_function($prog) &&
       return out($prog,"#-1 \@WHILE can not be called from RUN function");
 
-   my $cmd = $$prog{cmd_last};
+   my $cmd = $$prog{cmd};
 
    if(!defined $$cmd{while_test}) {                 # initialize "loop"
         $first = 1;
@@ -1322,11 +1462,12 @@ sub cmd_while
 
 #
 # cmd_imc
-#    Loop while the expression is true
+#    interanal mush command - Execute a command without a password or
+#    a messy temp file.
 #
 sub cmd_imc
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
    my (%last,$first);
 
    hasflag($self,"GOD") ||
@@ -1335,7 +1476,7 @@ sub cmd_imc
    in_run_function($prog) &&
       return err($self,$prog,"#-1 \@WHILE can not be called from RUN function");
 
-   my $cmd = $$prog{cmd_last};
+   my $cmd = $$prog{cmd};
 
    if(!defined @info{imc} || ref(@info{imc}) ne "HASH") {
       return err($self,$prog,"imc command not recieved via HTTPD");
@@ -1391,8 +1532,8 @@ sub bad_object
 
    if(!valid_dbref($obj,1)) {
       return 3;
-   } elsif(name($obj) eq undef) {
-      return 1;
+#   } elsif(name($obj) eq undef) {
+#      return 1;
    } elsif(flag_list($obj,1) eq undef) {
       return 2;
    } else {
@@ -1402,14 +1543,14 @@ sub bad_object
 
 sub cmd_bad
 {
-   my ($self,$prog) = @_;
+   my ($self,$prog) = (obj(shift),shift);
    my (@out, $start);
 
    if(defined $$prog{nomushrun}) {
       return err($self,$prog,"This command is not run() safe.");
    }
 
-   my $cmd = $$prog{cmd_last};
+   my $cmd = $$prog{cmd};
    $$cmd{bad_pos} = 0 if(!defined $$cmd{bad_pos});     # initialize "loop"
 
    for($start=$$cmd{bad_pos};                   # loop for 100 objects
@@ -1541,7 +1682,7 @@ sub cmd_bad
 #
 sub cmd_find
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
    my ($start,@out);
  
    hasflag($self,"GUEST") &&
@@ -1552,7 +1693,7 @@ sub cmd_find
       return;
    }
 
-   my $cmd = $$prog{cmd_last};
+   my $cmd = $$prog{cmd};
 
    if(!defined $$cmd{find_pos}) {               # initialize "loop"
       $$cmd{find_pos} = 0;
@@ -1594,7 +1735,7 @@ sub cmd_find
 
 sub cmd_perl
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    if(hasflag($self,"GOD")) {
       eval ( $txt );  
@@ -1616,7 +1757,7 @@ sub cmd_perl
 #
 sub cmd_websocket
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    if(hasflag(owner($self),"WIZARD")) {
       websock_wall($txt); 
@@ -1634,7 +1775,7 @@ sub cmd_websocket
 #
 sub cmd_score
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    if($txt =~ /^\s*$/) {
       necho(self   => $self,
@@ -1735,6 +1876,11 @@ sub cmd_give
 }
 
 
+#
+# mini_trigger
+#    Used after the command envoked by capture has finished to run the
+#    code which should be outputing the results.
+#
 sub mini_trigger
 {
 #   my ($self,$prog,$a,$data) = @_;
@@ -1756,26 +1902,12 @@ sub mini_trigger
    }
    delete @$prog{output};                                         # clean up.
 
-   # get attribute to trigger
-#   printf("CAPTURE: attr => '%s'\n",$$hash{attr});
-#   printf("         type => '%s'\n",$$hash{type});
-#   printf("         out  => '%s'\n",$$hash{output});
-#   printf("         self => '%s'\n",$$self{obj_id});
-#   printf("         cmd  => '%s'\n",$cmd);
-#   printf("         self2=> '%s'\n",@{$$hash{self}}{obj_id});
-
-   
    my $cmd = pget($$hash{self},trim($$hash{attr}));
 
    if($cmd eq undef) {
       delete @$prog{capture};
       return err($self,$prog,"No such attribute");
    }
-
-#   printf("         cmd  => '%s'\n",$cmd);
-#   printf("         data => '%s'\n",$data);
-#   printf("         data => '%s'\n",$#{$$prog{output}});
-
 
    # if @capture was called from inside session already recording output,
    # it needs to be "restored" byt passing in the output into the mushrun().
@@ -1786,7 +1918,6 @@ sub mini_trigger
               prog   => $prog,
               source => 0,
               cmd    => $cmd,
-#              wild   => [ fun_escape($self,$prog,$data,1) ],
               wild   => [ $data ],
               invoker=> $self,
               output => []
@@ -1797,8 +1928,7 @@ sub mini_trigger
               prog   => $prog,
               source => 0,
               cmd    => $cmd,
-#              wild   => [ fun_escape($self,$prog,$data,1) ],
-             wild   => [ $data ],
+              wild   => [ $data ],
               invoker=> $self,
              );
     }
@@ -1892,7 +2022,7 @@ sub cmd_trigger
 #
 sub cmd_huh
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    $$prog{huh} = 1;
    if(defined $$prog{hint} && 
@@ -1901,7 +2031,7 @@ sub cmd_huh
          $$prog{huh} = 1;
       }
    }
-#   printf("HUH: '%s' -> '%s'\n",@{$$prog{cmd}}{cmd},$txt);
+   printf("HUH: '%s' -> '%s'\n",$$self{obj_id},@{$$prog{cmd}}{cmd});
 #   printf("%s\n",code("long"));
    if(hasflag($self,"VERBOSE")) {
       necho(self   => owner($self),
@@ -1924,7 +2054,7 @@ sub cmd_huh
 sub cmd_offline_huh
 { 
    my $sock = $$user{sock};
-   if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
+  if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
       ws_echo($sock,conf("login"));
    } else {
       printf($sock "%s\r\n",conf("login"));
@@ -1934,7 +2064,7 @@ sub cmd_offline_huh
 
 sub cmd_version
 {
-   my ($self,$prog) = @_;
+   my ($self,$prog) = (obj(shift),shift);
    my $src =  "https://github.com/c-hudson/teenymush";
                    
    my $ver = (conf("version") =~ /^TeenyMUSH ([\d\.]+)$/i) ? $1 : "N/A";
@@ -1952,7 +2082,7 @@ sub cmd_version
 
 sub cmd_crash
 {
-   my ($self,$prog) = @_;
+   my ($self,$prog) = (obj(shift),shift);
 
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission denied.");
@@ -1969,7 +2099,7 @@ sub cmd_crash
 
 sub cmd_reset
 {
-   my ($self,$prog) = @_;
+   my ($self,$prog) = (obj(shift),shift);
 
    if(!hasflag($self,"WIZARD")) {
      return err($self,$prog,"Permission Denied.");
@@ -1985,7 +2115,7 @@ sub cmd_reset
 #      my $eval = lock_eval($self,$prog,$self,$txt);
 sub cmd_lock
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission denied.");
@@ -2056,51 +2186,69 @@ sub set_var
 
 sub cmd_var
 {
-    my ($self,$prog,$txt) = @_;
-    my $pre;
+   my ($self,$prog,$var,$rest);
 
-    $$prog{var} = {} if !defined $$prog{var};
-    if($txt =~ /^\s*\d+/) {
-       necho(self   => $self,
-             prog   => $prog,
-             source => [ "Variables may not start with numbers\n" ],
-            );
-    } elsif($txt =~ /^\s*([^ ]+)\+\+\s*$/) {                     # increment
-       @{$$prog{var}}{evaluate($self,$prog,$1)}++;
-    } elsif($txt =~ /^\s*([^ ]+)\-\-\s*$/) {                     # decrement
-       @{$$prog{var}}{evaluate($self,$prog,$1)}--;
-    } else {
-       my ($var,$value) = balanced_split($txt,"=",4);
-       $var = trim($var);
-       $value =~ s/^\s+//;
+   if($#_ == 2) {                                         # current behavior
+      ($self,$prog,$var,$rest) = (obj(shift),shift,trim(shift),shift);
+   } else {                                       # emulate previous behavior
+      ($self,$prog,$var) = (obj(shift),shift,shift); # @var <var> = <value>
+      if($var =~ /(=|\+=|-=|\*=|\/=|\+\+|\-\-)\s*/) {
+         ($var,$rest) = (trim($`),$1 . $');
+      }
+   }
 
-       if($var =~ /\s*\+\s*$/) {                                    # append
-          $var = $`;
-          $var = evaluate($self,$prog,$`);
-          if(defined $$prog{var} && @{$$prog{var}}{$var} ne undef) {
-             $pre = @{$$prog{var}}{$var} . " ";
-          }
-       } else {                                                 # non-append
-          $var = evaluate($self,$prog,$var);
-       }
+   show_verbose($prog,$$prog{cmd});   # doesn't hit verbose code, so run it
+   $$prog{var} = {} if !defined $$prog{var};
 
-       if($var eq undef) {                                # no variable name
-          return err($self,$prog,"Invalid variable name.");
-       }
+   if($var =~ /^\s*\d+/) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Variables may not start with numbers\n" ],
+           );
+   } elsif($rest =~ /^\s*\+\+\s*$/) {                           # increment
+       @{$$prog{var}}{$var}++;
+   } elsif($rest =~ /^\s*\-\-\s*$/) {                            # decrement
+      @{$$prog{var}}{$var}--;
+   } elsif($rest =~ /^\s*\+=\s*/) {                                  # add
+      @{$$prog{var}}{$var} += evaluate($self,$prog,$');
+   } elsif($rest =~ /^\s*-=\s*/) {                                  # sub
+      @{$$prog{var}}{$var} -= evaluate($self,$prog,$');
+   } elsif($rest =~ /^\s*\*=\s*/) {                                  # mult
+      @{$$prog{var}}{$var} *= evaluate($self,$prog,$');
+   } elsif($rest =~ /^\s*\/=\s*/) {                                  # divide
+      my $num = evaluate($self,$prog,$');
 
-       $value = $pre . evaluate($self,$prog,$value);
-
-       if($value eq undef) {
-          delete @{$$prog{var}}{$var};
-       } else {
-          @{$$prog{var}}{$var} = $value;
-       }
-    }
+      if($num == 0) {
+         return err($self,$prog,"Divide by Zero not allowed.");
+      } else {
+         @{$$prog{var}}{$var} = @{$$prog{var}}{$var} / $num;
+      }
+   } elsif($rest =~ /^\s*\.=\s*/) {                                  # append
+      if(@{$$prog{cmd}}{source} == 0) {
+         @{$$prog{var}}{$var} .=  evaluate($self,$prog,$');
+      } else {
+         @{$$prog{var}}{$var} = $';
+      }
+   } elsif($rest =~ /^\s*=\s*/) {                                      # set
+      if(trim($') eq undef) {                             # no value, delete
+         delete @{$$prog{var}}{$var};
+      } elsif(@{$$prog{cmd}}{source} == 0) {           # from prog, evaluate
+         @{$$prog{var}}{$var} = evaluate($self,$prog,$');
+      } else {                                # from person, do not evaluate
+         @{$$prog{var}}{$var} = $';
+      }
+   } else {
+      return err($self,$prog,"Invalid command.");
+   }
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ "Set." ],
+        );
 } 
 
 sub cmd_boot
 {
-   my ($self,$prog,$txt,$switch) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    my ($boot,$target) = (0,undef);
 
    if(hasflag($self,"GUEST")) {
@@ -2175,7 +2323,7 @@ sub cmd_boot
 
 sub cmd_killpid
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    if(!hasflag($self,"WIZARD")) {
       return err($self,$prog,"Permission Denied.");
@@ -2213,14 +2361,47 @@ sub cmd_killpid
 
 sub cmd_ps
 {
-   my ($self,$prog,$txt,$switch) = @_;
-   my (@out, $var);
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
+   my (@out, $var, %max);
 
    verify_switches($self,$prog,$switch,"var") || return;
 
-   push(@out,"----[ Start ]----");
-
+   # determine max column sizes
+   @max{pid} = 3;
+   @max{owner} = 5;
+   @max{obj} = 3;
    for my $pid (keys %engine) {
+      my $p = @engine{$pid};
+      if(defined $$p{stack} && ref($$p{stack}) eq "ARRAY" &&
+         controls($self,$$p{created_by}) &&
+         (!hasflag($$p{created_by},"GOD") || hasflag($self,"GOD"))) {
+         @max{pid} = length($pid) if (length($pid) > @max{pid});
+
+         for my $i (0 .. $#{$$p{stack}}) {
+            my $obj = @{@{@{$$p{stack}}[0]}{runas}}{obj_id};
+            my $size = ansi_length(obj_name($self,$$p{created_by},1));
+            $size = length($$p{created_by}) + 1 if($size > 20);
+            @max{owner} = $size if $size > @max{owner};
+            @max{obj} = length($obj) + 1 if (length($obj)+1 > @max{obj});
+         }
+      }
+   }
+   @max{cmd} = 68 - (@max{pid} + @max{owner} + @max{obj});
+
+   # show header
+   push(@out,sprintf("%-*s | %-*s | %-*s | %s",
+       @max{pid},"Pid",
+       @max{owner},"Owner",
+       @max{obj},"Obj",
+       "Command"));
+   push(@out,sprintf("%s=|=%s=|=%s=|=%s",
+       "=" x @max{pid},
+       "=" x @max{owner},
+       "=" x @max{obj},
+       "=" x @max{cmd}),
+      );
+
+   for my $pid (sort {$a <=> $b} keys %engine) {               # show detail
       my $p = @engine{$pid};
       $$p{command} = 0 if !defined $$prog{command};
       $$p{function} = 0 if !defined $$p{function};
@@ -2232,47 +2413,118 @@ sub cmd_ps
          # can only see processes they control
          # non-gods can not see god processes
 
-         push(@out,sprintf("  PID: %s for %s [%sc/%sf]",
-                              $pid,
-                              obj_name($self,$$p{created_by}),
-                              $$p{command},
-                              $$p{function}
-                         )
-             );
-
          for my $i (0 .. $#{$$p{stack}}) {
             my $cmd = @{$$p{stack}}[$i];
-            my $left;
-   
-            if(defined $$cmd{sleep}) {
-               $left = "  [" . ($$cmd{sleep} - time()) . " seconds left]";
-            }
-            push(@out,sprintf("    '%s%s'%s",
-                              substr(single_line($$cmd{cmd}),0,64),
-                              (length(single_line($$cmd{cmd})) > 67)?"..." : "",
-                              $left
-                             )
-                );
-         }
+            my ($max,$name,$sleep);
 
-         if(defined $$switch{var}) {
-            for my $key (keys %{@$p{var}}) {
-               if(@{$$p{var}}{$key} !~ /^\s*$/) {
-                  if($var eq undef) {
-                     push(@out,"  ### Variables ###");           
-                     $var = 1;
-                  }
-                  push(@out, "    $key : " . substr(@{$$p{var}}{$key},1,60));
-               }
+            # get owner details but shorten if bigger then > 20
+            my $obj = @{@{@{$$p{stack}}[0]}{runas}}{obj_id};
+            my $size = ansi_length(obj_name($self,$$p{created_by},1));
+            if($size > 20) {
+               $name = "#" . $$p{created_by};
+               $max = @max{owner};
+            } else {
+               $name = obj_name($self,$$p{created_by},1);
+               $max = (@max{owner} - $size) + 
+                  length(obj_name($self,$$p{created_by},1));
             }
+
+            # fill in command details + sleep
+            my $c =  single_line($$cmd{cmd}); 
+            if(defined $$cmd{sleep}) {                   # show sleeping data
+               $sleep = "[" . ($$cmd{sleep} - time()) . "s left]";
+            }
+
+            if(length($c . $sleep) > @max{cmd}) {           # shorten command
+               $c = substr($c,0,@max{cmd} - length($sleep));
+            }
+
+            if($sleep ne undef) {                  # put sleep at end of line
+               $sleep=(" " x (@max{cmd}-length($c)-length($sleep))) . $sleep;
+            }
+
+            push(@out,sprintf("%*s | %*s | %*s | %s",
+                              @max{pid},
+                              ($i == 0) ? $pid : "",
+                              ($i == 0) ? $max : @max{owner},
+                              ($i == 0) ? $name : "",
+                              @max{obj},
+                              "#" . $obj,
+                              $c . $sleep
+                             )
+               );
          }
       }
    }
-   push(@out,"----[  End  ]----");
    necho(self   => $self,                           # target's room
          prog   => $prog,
          source => [ "%s", join("\n",@out) ]
         );
+
+#    my ($self,$prog,$txt,$switch) = @_;
+#    my (@out, $var);
+# 
+#    verify_switches($self,$prog,$switch,"var") || return;
+# 
+#    push(@out,"----[ Start ]----");
+# 
+#    for my $pid (keys %engine) {
+#       my $p = @engine{$pid};
+#       $$p{command} = 0 if !defined $$prog{command};
+#       $$p{function} = 0 if !defined $$p{function};
+#       $var = undef;
+# 
+#       if(defined $$p{stack} && ref($$p{stack}) eq "ARRAY" &&
+#          controls($self,$$p{created_by}) &&
+#          (!hasflag($$p{created_by},"GOD") || hasflag($self,"GOD"))) {
+#          # can only see processes they control
+#          # non-gods can not see god processes
+# 
+#          push(@out,sprintf("  PID: %s for %s [%sc/%sf]",
+#                               $pid,
+#                               obj_name($self,$$p{created_by}),
+#                               $$p{command},
+#                               $$p{function}
+#                          )
+#              );
+# 
+#          for my $i (0 .. $#{$$p{stack}}) {
+#             my $cmd = @{$$p{stack}}[$i];
+#             my $left;
+#    
+#             if(defined @{$$p{stack}}[0] && @{@{$$p{stack}}[0]}{runas}) {
+#                $left = " for " . 
+#                   obj_name($self,@{@{@{$$p{stack}}[0]}{runas}}{obj_id},1);
+#             }
+#             if(defined $$cmd{sleep}) {
+#                $left .= "  [" . ($$cmd{sleep} - time()) . " seconds left]";
+#             }
+#             push(@out,sprintf("    '%s%s'%s",
+#                               substr(single_line($$cmd{cmd}),0,64),
+#                               (length(single_line($$cmd{cmd})) > 67)?"..." : "",
+#                               $left
+#                              )
+#                 );
+#          }
+# 
+#          if(defined $$switch{var}) {
+#             for my $key (keys %{@$p{var}}) {
+#                if(@{$$p{var}}{$key} !~ /^\s*$/) {
+#                   if($var eq undef) {
+#                      push(@out,"  ### Variables ###");           
+#                      $var = 1;
+#                   }
+#                   push(@out, "    $key : " . substr(@{$$p{var}}{$key},1,60));
+#                }
+#             }
+#          }
+#       }
+#    }
+#    push(@out,"----[  End  ]----");
+#    necho(self   => $self,                           # target's room
+#          prog   => $prog,
+#          source => [ "%s", join("\n",@out) ]
+#         );
 }
 
 #
@@ -2281,7 +2533,7 @@ sub cmd_ps
 #
 sub cmd_halt
 {
-   my ($self,$prog) = @_;
+   my ($self,$prog) = (obj(shift),shift);
    my $obj = owner($self);
    my $count = 0;
 
@@ -2354,7 +2606,7 @@ sub test
 
 sub cmd_split
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
    my $max = 10;
    my @stack;
    
@@ -2411,7 +2663,7 @@ sub find_free_dbrefs
 
 sub cmd_player
 {
-   my ($self,$prog,$type) = @_;
+   my ($self,$prog,$type) = (obj(shift),shift,shift);
 
    delete @player{keys %player};
    for(my $i=0;$i <= $#db;$i++) {
@@ -2430,7 +2682,7 @@ sub cmd_player
 #
 sub cmd_dump
 {
-   my ($self,$prog,$type) = @_;
+   my ($self,$prog,$type) = (obj(shift),shift,shift);
    my ($file,$start);
 
    if(conf("mudname") eq undef) {
@@ -2450,7 +2702,7 @@ sub cmd_dump
    #-----------------------------------------------------------------------#
    # initialize loop                                                       #
    #-----------------------------------------------------------------------#
-   my $cmd = $$prog{cmd_last};
+   my $cmd = $$prog{cmd};
    if(!defined $$cmd{dump_pos}) {                      # initialize "loop"
       if(defined @info{backup_mode} && is_running(@info{backup_mode})) {
          return err($self,$prog,"Backup is already running.");
@@ -2573,7 +2825,7 @@ sub out
 
 sub cmd_notify
 {
-   my ($self,$prog,$txt,$switch)=(shift,shift,shift,shift);
+   my ($self,$prog,$txt,$switch)=(obj(shift),shift,shift,shift);
 
    verify_switches($self,$prog,$switch,"first","all","quiet") || return;
 
@@ -2607,7 +2859,7 @@ sub cmd_notify
 
 sub cmd_drain
 {
-   my ($self,$prog,$txt,$switch)=(shift,shift,shift,shift);
+   my ($self,$prog,$txt,$switch)=(obj(shift),shift,shift,shift);
 
    verify_switches($self,$prog,$switch,"quiet") || return;
 
@@ -2642,8 +2894,8 @@ sub cmd_drain
 #
 sub cmd_dolist
 {
-   my ($self,$prog,$txt,$switch) = @_;
-   my $cmd = $$prog{cmd_last};
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
+   my $cmd = $$prog{cmd};
    my ($delim, %last, $count);
 
    hasflag($self,"GUEST") &&
@@ -2753,7 +3005,7 @@ sub good_password
 
 sub cmd_password
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    if(hasflag($self,"GUEST")) {
       return err($self,$prog,"Permission Denied.");
@@ -2803,7 +3055,7 @@ sub cmd_wait
    in_run_function($prog) &&
       return out($prog,"#-1 \@WAIT can not be called from RUN function");
 
-   my $cmd = $$prog{cmd_last};
+   my $cmd = $$prog{cmd};
 
    if(!defined $$cmd{wait_time}) {
       ($$cmd{wait_time},$$cmd{wait_cmd}) = balanced_split(shift,"=",4);
@@ -2845,7 +3097,7 @@ sub cmd_wait
 
 sub cmd_sleep
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission denied.");
@@ -2853,7 +3105,7 @@ sub cmd_sleep
    in_run_function($prog) &&
       return out($prog,"#-1 \@SLEEP can not be called from RUN function");
 
-   my $cmd = $$prog{cmd_last};
+   my $cmd = $$prog{cmd};
 
    if(!defined $$cmd{sleep}) {
       if($txt =~ /^\s*(\d+)\s*$/) {
@@ -2885,7 +3137,7 @@ sub cmd_sleep
 
 sub cmd_read
 {
-   my ($self,$prog,$txt,$flag) = @_;
+   my ($self,$prog,$txt,$switch,$flag) = (obj(shift),shift,shift,shift,shift);
    my ($file, $data, $name);
    my $count = 0;
 
@@ -2961,7 +3213,7 @@ sub get_segment2
 
 sub cmd_squish
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
    my ($obj,$atr,$out);
 
    hasflag($self,"GUEST") &&
@@ -3037,7 +3289,7 @@ sub code_history
 
 sub cmd_switch
 {
-    my ($self,$prog,@list) = (shift,shift,balanced_split(shift,',',3));
+    my ($self,$prog,@list) = (obj(shift),shift,balanced_split(shift,',',3));
     my $switch = shift;
     my (%last, $pat,$done);
 
@@ -3118,7 +3370,7 @@ sub cmd_switch
 
 sub cmd_newpassword
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission denied.");
@@ -3149,7 +3401,7 @@ sub cmd_newpassword
    }
 }
 
-sub cmd_telnet
+sub cmd_telnet_old
 {
    my ($self,$prog,$txt) = (obj(shift),shift);
    my $txt = evaluate($self,$prog,shift);
@@ -3162,22 +3414,25 @@ sub cmd_telnet
 
    if(!$input && !$puppet) {
       return err($self,$prog,"Permission DENIED.");
-   } elsif(defined $$prog{socket_id}) {
+   } elsif(find_socket($self,$prog) ne undef) {
       return err($self,$prog,"A telnet connection is already open");
    } elsif($txt =~ /^\s*([^:]+)\s*[:| ]\s*(\d+)\s*$/) {
-      my $addr = inet_aton($1) ||
-         return err($self,$prog,"Invalid hostname '%s' specified.",$1);
+      my ($host,$port) = ($1,$2);
+      printf("cmd_telnet: opening connection to $host:$port\n");
+
       my $sock = IO::Socket::INET->new(Proto=>'tcp',
+                                       Type => SOCK_STREAM,
                                        blocking=>0,
                                        Timeout => 2) ||
          return err($self,$prog,"Could not create socket.");
       $sock->blocking(0);
 
-      my $sockaddr = sockaddr_in($2, $addr) ||
+      my $addr = inet_aton($host) ||
+         return err($self,$prog,"Invalid hostname '%s' specified.",$host);
+      my $sockaddr = sockaddr_in($port, $addr) ||
          return err($self,$prog,"Could not resolve hostname");
 
       connect($sock,$sockaddr) or                     # start connect to host
-      # $sock->connect($sockaddr) or                     # start connect to host
          $! == EWOULDBLOCK or $! == EINPROGRESS or         # and check status
          return err($self,$prog,"Could not open connection. $!");
 
@@ -3192,8 +3447,8 @@ sub cmd_telnet
          obj_id    => $$self{obj_id},
          sock      => $sock,
          raw       => 1,
-         hostname  => $1,
-         port      => $2, 
+         hostname  => $host,
+         port      => $port, 
          loggedin  => 0,
          opened    => time(),
          enactor   => $enactor,
@@ -3219,11 +3474,6 @@ sub cmd_telnet
       @info{io}->{$sock} = {};
       @info{io}->{$sock}->{buffer} = [];
 
-#      necho(self   => $self,
-#            prog   => $prog,
-#            source => [ "Connection started to: %s:%s\n",$1,$2 ],
-#            debug  => 1,
-#           );
       return 1;
    } else {
       necho(self   => $self,
@@ -3234,6 +3484,68 @@ sub cmd_telnet
    }
 }
 
+sub cmd_telnet
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+   my $txt = evaluate($self,$prog,shift);
+   my $pending = 1;
+
+   my $puppet = hasflag($self,"SOCKET_PUPPET");
+   my $input = hasflag($self,"SOCKET_INPUT");
+
+   if(!$input && !$puppet) {
+      return err($self,$prog,"Permission DENIED.");
+   } elsif(find_socket($self,$prog) ne undef) {
+      return err($self,$prog,"A \@telnet/url() connection is already open");
+   } elsif($txt =~ /^\s*([^:]+)\s*[:| ]\s*(\d+)\s*$/) {
+      my ($host,$port) = ($1,$2);
+#      printf("cmd_telnet: opening connection to '$host:$port'\n");
+
+      my $sock = IO::Socket::INET->new(Proto => 'tcp',
+                                       Blocking => 0) ||
+         return err($self,$prog,"Socket error, $!.");
+
+      my $iaddr = inet_aton($host) ||
+         return err($self,$prog,"Unknown host '%s'",$host);
+
+      my $paddr = sockaddr_in($port,$iaddr);
+
+      my $ret = connect($sock,$paddr);
+
+      if (!$ret && ! $!{EINPROGRESS}) {
+         return err($self,$prog,"Unable to connect") if (!$ret);
+      }
+
+      $$prog{socket_id} = $sock;
+      @connected{$sock} = {                         # store socket details
+         obj_id    => $$self{obj_id},
+         sock      => $sock,
+         raw       => ($puppet) ? 1 : 2,
+         hostname  => $host,
+         port      => $port,
+         loggedin  => 0,
+         opened    => time(),
+         enactor   => $enactor,
+         pending   => ($!{EINPROGRESS}) ? 1 : 0,    # socket still opening?
+         prog      => $prog
+      };
+
+      () = IO::Select->new($sock)->can_write(.2)    # see if socket is pending
+          or @{@connected{$sock}}{pending} = 2;
+
+      $readable->add($sock);                      # add to select() listener
+      @info{io} = {} if(!defined @info{io});           # create input buffer
+      @info{io}->{$sock} = {}; 
+      @info{io}->{$sock}->{buffer} = [];
+      return 1;
+   } else {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "usage: \@telnet <id>=<hostname>:<port> {$txt}" ],
+           );
+      return 0;
+   }
+}
 
 sub find_socket
 {
@@ -3281,16 +3593,11 @@ sub cmd_send
        $$prog{idle} = 1;                   # socket pending, try again later
        return "RUNNING";
     } else {
-#       printf("#SEND: '%s'\n",$_[0]);
        my $txt = ansi_remove(evaluate($self,$prog,shift));
-#       printf("       '%s'\n",$txt);
-#       my $txt = evaluate($self,$prog,shift);
-##       printf("       '%s'\n",$txt);
        my $switch = shift;
        $txt =~ s/\r|\n//g;
        $txt =~ tr/\x80-\xFF//d;
 
-#       printf("#SEND: '%s'\n",$txt);
        if(defined $$switch{lf}) {
           printf($sock "%s\n",$txt);
        } elsif(defined $$switch{cr}) {
@@ -3305,7 +3612,7 @@ sub cmd_send
 
 sub cmd_close
 {
-    my ($self,$prog) = @_;
+    my ($self,$prog) = (obj(shift),shift);
 
     hasflag($self,"WIZARD") ||
        return err($self,$prog,"Permission Denied.");
@@ -3343,7 +3650,7 @@ sub cmd_uptime
 
 sub cmd_force
 {
-    my ($self,$prog,$txt) = @_;
+    my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
     hasflag($self,"GUEST") &&
        return err($self,$prog,"Permission denied.");
@@ -3415,7 +3722,7 @@ sub motd
 
 sub cmd_list
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    if($txt =~ /^\s*motd\s*$/i) {
       necho(self => $self,
@@ -3474,7 +3781,7 @@ sub cmd_list
          my $out;
          for my $key (keys %connected) {
             my $hash = @connected{$key};
-            $out .= "\n$$hash{hostname}$$hash{start}$$hash{port}";
+            $out .= "\n$$hash{hostname}:$$hash{port} -> '$$hash{start}' -> '$$hash{pending}'";
          }
          necho(self   => $self,
                prog   => $prog,
@@ -3510,7 +3817,7 @@ sub cmd_list
 
 sub cmd_destroy
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission denied.");
@@ -3529,20 +3836,7 @@ sub cmd_destroy
    my $objname = obj_name($self,$target);
    my $loc = loc($target);
 
-   necho(self      => $self,
-         prog      => $prog,
-         source    => [ "%s was destroyed.",$objname ],
-         room      => [ $target, "%s was destroyed.",$name  ],
-         all_room  => [ $target, "%s has left.",$name ]
-        );
-   if(!destroy_object($self,$prog,$target)) {
-      necho(self    => $self,
-            prog    => $prog,
-            source  => [ "Internal error, object not destroyed." ],
-            room    => [ $target, "%s remateralizes and was not destroyed.",
-                         $name  ],
-           );
-   }
+   destroy_object($self,$prog,$target);
 }
 
 #
@@ -3552,7 +3846,7 @@ sub cmd_destroy
 #
 sub cmd_toad
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
    my $start;
 
    if(!hasflag($self,"WIZARD")) {
@@ -3564,7 +3858,7 @@ sub cmd_toad
    #-----------------------------------------------------------------------#
    # initialize loop                                                       #
    #-----------------------------------------------------------------------#
-   my $cmd = $$prog{cmd_last};
+   my $cmd = $$prog{cmd};
 
    if(!defined $$cmd{toad_pos}) {
       my $target = find($self,$prog,$txt) ||
@@ -3638,7 +3932,7 @@ sub cmd_toad
 
 sub cmd_think
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    my $txt = evaluate($self,$prog,$txt);
 
@@ -3681,7 +3975,7 @@ sub cmd_pemit
 
 sub cmd_emit
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission denied.");
@@ -3697,7 +3991,7 @@ sub cmd_emit
 
 sub cmd_drop
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    if(hasflag($self,"GUEST")) {
       return err($self,$prog,"Permission Denied.");
@@ -3711,7 +4005,7 @@ sub cmd_drop
       return err($self,$prog,"You may not drop yourself.");
    }
 
-   teleport($self,$prog,$target,fetch(loc($self))) ||
+   teleport($self,$prog,$target,loc($self)) ||
       return err($self,$prog,"Internal error, unable to drop that object");
 
    # provide some visual feed back to the player
@@ -3729,19 +4023,17 @@ sub cmd_drop
 
 sub cmd_leave
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
-   my $container = fetch(loc($self));
+   my $container = loc($self);
 
    if($container eq undef || hasflag($container,"ROOM")) {
       return err($self,$prog,"You can't leave.");
    }
 
-   my $dest = fetch(loc($container));
+   my $dest = loc($container);
 
-   if($dest eq undef) {
-      return err($self,$prog,"You can't leave.");
-   }
+   cmd_go($self,$prog,"home") if($dest eq undef);
 
    necho(self   => $self,
          prog   => $prog,
@@ -3766,7 +4058,7 @@ sub cmd_leave
 
 sub cmd_take
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
  
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission Denied.");
@@ -3820,7 +4112,7 @@ sub cmd_take
 
 sub cmd_name
 {
-   my ($self,$prog,$txt,$switch) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
 
    verify_switches($self,$prog,$switch,"quiet") || return;
 
@@ -3869,7 +4161,7 @@ sub cmd_name
 
 sub cmd_enter
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    hasflag($self,"GUEST") &&
      return err($self,$prog,"Permission denied.");
@@ -3877,9 +4169,14 @@ sub cmd_enter
    my $target = find($self,$prog,$txt) ||
       return err($self,$prog,"I don't see that here.");
 
-   # must be owner or object enter_ok to enter it
-   if(!controls($self,$target) && !hasflag($target,"ENTER_OK")) {
+   # enter your own objects or things set ENTER_OK. This should be a
+   # controls() for TinyMUSH compat but i'm against wizards entering that
+   # aren't specifically set enter_ok. They can @teleport if they really
+   # need too.
+   if(!(owner_id($target) == owner_id($self) || hasflag($target,"ENTER_OK"))) {
      return err($self,$prog,"Permission denied.");
+   } elsif(!(hasflag($target,"OBJECT") || hasflag($target,"PLAYER"))) {
+      return err($self,$prog,"I don't see that here.");
    }
 
    # check to see if object can pass enter lock
@@ -3917,7 +4214,7 @@ sub cmd_enter
 
 sub cmd_to
 {
-    my ($self,$prog,$txt) = @_;
+    my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
     if($txt =~ /^\s*([^ ]+)\s*/) {
        my $tg = find($self,$prog,$1) ||
@@ -3975,7 +4272,7 @@ sub whisper
 #
 sub cmd_whisper
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    if($txt =~ /^\s*([^ ]+)\s*=/) {                           # standard whisper
       whisper($self,$prog,$1,$');
@@ -4033,7 +4330,7 @@ sub page
 #
 sub cmd_page
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
 
    return page($self,$prog,$1,$') if($txt =~ /^\s*([^ ]+)\s*=/); # standard page
 
@@ -4048,7 +4345,7 @@ sub cmd_page
 
 sub cmd_last
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    my ($target,$extra, $hostname, $count,$out);
 
    if($txt =~ /^\s*$/) {
@@ -4101,7 +4398,7 @@ sub cmd_last
 #
 sub cmd_go
 {
-   my ($self,$prog,$txt) = (obj(shift),shift);
+   my ($self,$prog) = (obj(shift),shift);
    my ($exit ,$dest);
 
    my $txt = evaluate($self,$prog,shift);
@@ -4157,7 +4454,7 @@ sub cmd_go
 
 sub cmd_teleport
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    my ($target,$location);
 
    if($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*/) {
@@ -4187,7 +4484,7 @@ sub cmd_teleport
       if((owner(loc($location)) == $$self{obj_id} &&
          loc($location) == loc($target)) ||
          hasflag($self,"WIZARD")) {
-         $location = fetch(dest($location));
+         $location = dest($location);
 
          if($location eq undef) {
             return err($self,$prog,"That exit does not go anywhere.");
@@ -4220,7 +4517,7 @@ sub cmd_teleport
 #
 sub cmd_print
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    $txt =~ s/^\s+|\s+$//g;
 
    if(!hasflag($self,"WIZARD")) {
@@ -4242,7 +4539,7 @@ sub cmd_print
 
 sub cmd_clear
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
 
    if(!hasflag($self,"WIZARD")) {
       err($self,$prog,"Permission denied.");
@@ -4267,20 +4564,20 @@ sub cmd_clear
 
 sub cmd_quit
 {
-   my ($self,$prog) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
 
-   if(defined $$self{sock}) {
-      my $sock = $$self{sock};
+   if(!defined $$prog{user} || !defined $$prog{user}->{sock}) {
+      return err($self,$prog,"Non-Players may not QUIT");
+   }
 
-      if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
-         ws_echo($sock,conf("logoff"));
-         ws_disconnect(@c{$sock}) if(defined @c{$sock});
-      } else {
-         printf($sock "%s",conf("logoff"));
-         server_disconnect($sock);
-      }
+   my $sock = $$prog{user}->{sock};
+
+   if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
+      ws_echo($sock,conf("logoff"));
+      ws_disconnect(@c{$sock}) if(defined @c{$sock});
    } else {
-      err($self,$prog,"Permission denied [Non-players may not quit]");
+      printf($sock "%s",conf("logoff"));
+      server_disconnect($sock);
    }
 }
 
@@ -4292,7 +4589,7 @@ sub cmd_help
    $txt = "help" if($txt =~  /^\s*$/);
 
    # initalize help variable if needed
-   cmd_read($self,$prog,"help",1) if(scalar keys %help == 0);
+   cmd_read($self,$prog,"help",undef,1) if(scalar keys %help == 0);
 
    if(defined @help{lc(trim($txt))}) {
       $help = @help{lc(trim($txt))};
@@ -4315,7 +4612,7 @@ sub cmd_help
 
 sub cmd_pcreate
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
 
    if($$user{site_restriction} == 3) {
       necho(self   => $self,
@@ -4351,7 +4648,7 @@ sub create_exit
 
 sub cmd_create
 {
-   my ($self,$prog,$txt) = (@_[0],@_[1],trim(@_[2]));
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,trim(shift),shift);
 
    if(hasflag($self,"GUEST")) {
       return err($self,$prog,"Permission denied.");
@@ -4383,7 +4680,7 @@ sub cmd_create
 
 sub cmd_link
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    my ($name,$target,$destination);
 
    hasflag($self,"GUEST") &&
@@ -4419,7 +4716,7 @@ sub cmd_link
 
 sub cmd_dig
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    my ($loc,$room_name,$room,$in,$out,$cost,$quota);
      
    if(hasflag($self,"GUEST")) {
@@ -4524,7 +4821,7 @@ sub cmd_dig
 
 sub cmd_open
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    my ($exit,$destination,$dest);
   
    hasflag($self,"GUEST") &&
@@ -4620,7 +4917,7 @@ sub invalid_player
 #
 sub cmd_connect
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    my $sock = @$user{sock};
    my ($atr,$player);
  
@@ -4729,23 +5026,18 @@ sub cmd_connect
 #
 sub cmd_doing
 {
-   my ($self,$prog,$txt,$switch) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
 
    if(hasflag($self,"GUEST")) {
       necho(self   => $self,
             prog   => $prog,
-            source => [ "Permission denied." ]
-           );
-   } elsif(!defined @connected{$$self{sock}}) {
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "Permission denied." ]
+            source => [ "Permission denieD." ]
            );
    } elsif(defined $$switch{header} && $txt =~ /^\s*$/) {
       if(!hasflag($self,"WIZARD")) {
           return necho(self   => $self,
                        prog   => $prog,
-                       source => [ "Permission denied." ]
+                       source => [ "Permission denIed." ]
                       );
       }
       @info{"doing_header"} = $txt;
@@ -4757,7 +5049,7 @@ sub cmd_doing
       if(!hasflag($self,"WIZARD")) {
           return necho(self   => $self,
                        prog   => $prog,
-                       source => [ "Permission denied." ]
+                       source => [ "Permission deNied." ]
                       );
       }
       @info{"doing_header"} = $txt;
@@ -4772,7 +5064,9 @@ sub cmd_doing
             source => [ "Removed." ]
            );
    } else {
-      $connected{$$self{sock}}{obj_doing} = trim($txt);
+      for my $s (keys %{@connected_user{$$self{obj_id}}}) {
+         $connected{$s}->{obj_doing} = trim($txt);
+      }
       necho(self   => $self,
             prog   => $prog,
             source => [ "Set." ]
@@ -4904,20 +5198,23 @@ sub list_attr
    for my $name (lattr($obj)) {
       my $short = $name;
       $short =~ s/^obj_//;
+      next if($pat ne undef && $short !~ /$pat/i);
+
       if(viewable($obj,$name,$pat)) {
          my $attr = mget($obj,$name);
-         if(db_set_ishash($obj,$name)) {
+         if($name !~ /^obj_/ && db_set_ishash($obj,$name)) {
             next if($pattern ne undef && $short !~ /$pat/i);
 #            next if($subpat ne undef && $key !~ /$spat/i);
 
+            my $count = 0;
             for my $key (db_hash_keys($obj,$name)) {
-               if($key =~ /$spat/i) {
-                  push(@out,"$name-$key -> value");
+               if($subpat eq undef || $key =~ /$spat/i) {
+                  push(@out,color("h",$name)) if($count++ == 0);
+                  push(@out," + " . color("h","$key") .  " : " . 
+                     @{$$attr{value}}{$key});
                }
             }
          } else {
-            next if $pat ne undef && $short !~ /$pat/i;
-
             if($name eq "obj_lastsite") {
                $val = reconstitute($short,"","",short_hn(lastsite($obj)));
             } elsif($name eq "obj_created_by") {
@@ -4952,10 +5249,13 @@ sub list_attr
 
 sub cmd_ex
 {
-   my ($self,$prog,$txt,$switch) = (obj(shift),shift);
+   my ($self,$prog) = (obj(shift),shift);
    my ($sub,$target,$desc,@exit,@content,$atr,$out);
 
-   my ($txt,$atr) = besplit($self,$prog,shift,"/");
+   my ($txt,$atr) = bsplit($self,$prog,shift,"/");
+   my ($atr,$sub) = besplit($self,$prog,$atr,":");
+   my $txt = evaluate($self,$prog,$txt);
+
    my $switch = shift;
 
    verify_switches($self,$prog,$switch,"raw","command","detail") || return;
@@ -4973,7 +5273,7 @@ sub cmd_ex
       if($perm) {
          return necho(self   => $self,
                       prog   => $prog,
-                      source => [ "%s",list_attr($target,$atr,$switch)],
+                      source => [ "%s",list_attr($target,$atr,$sub,$switch)],
                      );
       }
       return err($self,$prog,"Permission denied.");
@@ -5037,7 +5337,7 @@ sub cmd_ex
    }
 
    if($perm) {                                             # show attributes
-      my $attr = list_attr($target,undef,$switch);
+      my $attr = list_attr($target,$atr,$sub,$switch);
       $out .= "\n" . $attr if($attr ne undef);
    }
 
@@ -5095,7 +5395,7 @@ sub cmd_ex
 
 sub cmd_inventory
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    my $out;
 
    my $inv = [ lcon($self) ];
@@ -5124,7 +5424,7 @@ sub cmd_inventory
 #
 sub cmd_look
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
    my ($flag,$desc,$target,@exit,@con,$out,$name,$attr);
    my $owner = owner_id($self);
    my $perm = hasflag($self,"WIZARD");
@@ -5223,7 +5523,7 @@ sub cmd_look
 
 sub cmd_pose
 {
-   my ($self,$prog,$txt,$switch,$flag) = @_;
+   my ($self,$prog,$txt,$switch,$flag) = (obj(shift),shift,shift,shift,shift);
 
    my $space = ($flag) ? "" : " ";
    my $pose = colorize($self,$prog,cf_convert(evaluate($self,$prog,$txt)));
@@ -5316,7 +5616,7 @@ sub cmd_set2
    my $flag = shift;
 
    my ($attr,$obj) = bsplit($self,$prog,$txt," ");
-   my ($attr,$sub) = besplit($self,$prog,$attr,".");
+   my ($attr,$sub) = besplit($self,$prog,$attr,":");
 
    if($sub ne undef) {
       # hash set
@@ -5420,11 +5720,14 @@ sub colorize
    my $out;
 
    for my $word (safe_split($txt," ",1)) {
-      my $target = find($self,$prog,remove_punctuation($word));
+      my $lookfor = trim(lc(ansi_remove(remove_punctuation($word))));
+      my $target = find($self,$prog,$lookfor);
 
-      if($target eq undef) {
+      # don't colorize non-connected players who haven't connected in a week.
+      if($target eq undef || (!hasflag($target,"CONNECTED") && 
+         time()-lasttime($target,1) > 604800)){
          $out .= (($out eq undef) ? "" : " ") . $word;
-      } elsif(lc(name($target,1)) eq trim(lc(remove_punctuation($word)))) {
+      } elsif(lc(name($target,1)) eq $lookfor) {
          my ($before,$after);
          $before = $1 if($word =~ /^(\s+)/);           # preserve spaces
          $after = $1 if($word =~ /([ :;.,"\(\)\[\]]+)$/);
@@ -5445,7 +5748,7 @@ sub colorize
 #
 sub cmd_say
 {
-   my ($self,$prog,$txt,$switch) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    my $out;
 
    verify_switches($self,$prog,$switch,"noeval","eval") || return;
@@ -5570,7 +5873,7 @@ sub reload_code
 #
 sub cmd_reload_code
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    my $count = 0;
 
    if(!hasflag($self,"GOD")) {
@@ -5676,7 +5979,7 @@ sub short_hn
 #
 sub cmd_who
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
 
    necho(self   => $self,
          prog   => $prog,
@@ -5686,7 +5989,7 @@ sub cmd_who
 
 sub cmd_DOING
 {
-   my ($self,$prog,$txt) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
 
    necho(self   => $self,
          prog   => $prog,
@@ -5696,7 +5999,7 @@ sub cmd_DOING
 
 sub who
 {
-   my ($self,$prog,$txt,$flag) = @_;
+   my ($self,$prog,$txt,$flag) = (obj(shift),shift,shift,shift);
    my ($max,$online,@who,$idle,$count,$out,$extra,$hasperm,$name) = (2,0);
 
    if(ref($self) eq "HASH") {
@@ -5807,7 +6110,7 @@ sub sweep_obj
 
 sub cmd_sweep
 {
-   my ($self,$prog) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    my @out;
 
    push(@out,"Sweeping location...");
@@ -5930,23 +6233,12 @@ sub name
       return get($target,"obj_name");
    } elsif(get($target,"obj_cname") ne undef) {
       return get($target,"obj_cname");
-   } elsif($prog ne undef) {
-      if(defined $$prog{hint}) {
-         if(defined @connected{$$prog{sock}}) {
-            printf("HINT1: '%s'\n",@connected{$$prog{sock}});
-         } else {
-            printf("HINT2: '%s'\n",$$prog{sock});
-         }
-      }
-      if(defined $$prog{cmd} && defined @{$$prog{cmd}}{prog} &&
-         defined @{@{$$prog{cmd}}{prog}}{hint} &&
-         @{@{$$prog{cmd}}{prog}}{hint} eq "WEB") {
-         printf("returning hostname: '%s'\n",@{$$prog{user}}{hostname});
-#         printf("%s\n",print_var($prog));
+   } elsif($prog ne undef && $$target{obj_id} eq conf("webuser")) {
+      # return the hostname of the webuser object when coming from a http call
+      if(defined $$prog{hint} && $$prog{hint} eq "WEB" &&
+         defined $$prog{user} && defined @{$$prog{user}}{hostname}) {
          return @{$$prog{user}}{hostname}
       } else {
-#      printf("%s\n",print_var($prog));
-#      printf("%s\n",code());
          return get($target,"obj_name");
       }
    } else {
@@ -6006,35 +6298,36 @@ sub owner
 #
 sub hasflag
 {
-   my ($target,$name) = (obj(shift),uc(shift));
+   my ($target,$name) = (obj(shift),shift);
    my $val;
 
-   if($name eq "CONNECTED") {                  # not in db, no need to cache
-      return (defined @connected_user{$$target{obj_id}}) ? 1 : 0;
-   } elsif(!valid_dbref($target)) {
+   if(!valid_dbref($target)) {
       return 0;
+   } elsif($name eq "CONNECTED" || $name eq "c") {        # not stored in db
+      return (defined @connected_user{$$target{obj_id}}) ? 1 : 0;
    }
 
    $target = owner($target) if($name eq "WIZARD" || $name eq "GOD");
 
    my $attr = mget($target,"obj_flag");
 
-   if(!defined $$attr{value}) {                        # no flags at all
-      return 0;
-   }
+   return 0 if(!defined $$attr{value});                   # no flags at all
 
    my $flag = $$attr{value};
 
-   if($name eq "WIZARD") {
-      if(defined $$flag{wizard}||defined $$flag{god}) {
-         return 1;
-      } else {
-         return 0;
+   if(uc($name) eq "WIZARD") {                        # all gods are wizards
+      return (defined $$flag{wizard}||defined $$flag{god}) ? 1 : 0;
+   } elsif(length($name) == 1) {                     # look for flag letter
+      for my $key (keys %$flag) {
+         if(defined @flag{uc($key)} && @{@flag{uc($key)}}{letter} eq $name) {
+            return 1;                                       # must match case
+         }
       }
-   } elsif(!defined $$flag{lc($name)}) {
       return 0;
-   } else {
+   } elsif(defined $$flag{lc($name)}) {                 # flag name match
       return 1;
+   } else {
+      return 0;
    }
 }
 
@@ -7180,8 +7473,7 @@ sub db_object
             $$attr{type} eq "list") {
             $out .= "   $name\:$$attr{created}:$$attr{modified}::L:" . 
                join(',',keys %{$$attr{value}}) . "\n";
-         } elsif(reserved($name) && defined $$attr{value} &&
-            $$attr{type} eq "hash") {
+         } elsif(defined $$attr{value} && $$attr{type} eq "hash") {
             $out .= "   $name\:$$attr{created}:$$attr{modified}::H:" . 
                hash_serialize($$attr{value},$name,$i)."\n";
          } else {
@@ -7377,7 +7669,9 @@ sub mush_command
 
    # search player's contents
    for my $obj (lcon($self)) {
-      run_obj_commands($self,$prog,$runas,$obj,$cmd) && return 1;
+      if(!hasflag($obj,"PLAYER")) {
+         run_obj_commands($self,$prog,$runas,$obj,$cmd) && return 1;
+      }
    }
 
    # don't search past the initial player if coming from web / websocket
@@ -7390,13 +7684,17 @@ sub mush_command
 
    if(conf("master_override") ne "no") {        # search master room
       for my $obj (lcon(conf("master"))) {             # but not twice
-         run_obj_commands($self,$prog,$runas,$obj,$cmd) && return 1;
+         if(!hasflag($obj,"PLAYER")) {
+            run_obj_commands($self,$prog,$runas,$obj,$cmd) && return 1;
+         }
       }
    }
 
    # search all objects in player's location's contents
    for my $obj (lcon(loc($self))) {
-      $match += run_obj_commands($self,$prog,$runas,$obj,$cmd);
+      if(!hasflag($obj,"PLAYER")) {
+         $match += run_obj_commands($self,$prog,$runas,$obj,$cmd);
+      }
    }
 
    return ($match) ? 1 : 0;
@@ -7586,8 +7884,8 @@ sub mushrun
    
 
    if(!defined @arg{invoker}) {              # handle who issued the command
-      if(defined $$prog{cmd_last} && defined @$prog{cmd_last}->{invoker}) {
-         @arg{invoker} = @$prog{cmd_last}->{invoker};
+      if(defined $$prog{cmd} && defined @$prog{cmd}->{invoker}) {
+         @arg{invoker} = @$prog{cmd}->{invoker};
 #         printf("     INVOKER1: '%s'\n",@arg{invoker});
       } elsif(defined $$prog{invoker}) {
          @arg{invoker} = $$prog{invoker};
@@ -7845,6 +8143,22 @@ sub spin
    }
 }
 
+sub show_verbose
+{
+   my ($prog,$command) = @_;
+
+   if(hasflag($$command{runas},"VERBOSE")) {
+      my $owner= owner($$command{runas});
+      necho(self   => $owner,
+            prog   => $prog,
+            target => [ $owner,
+                        "%s] %s", 
+                        name($$command{runas}),
+                        $$command{cmd}
+                      ]
+           );
+   }
+}
 
 #
 # run_internal
@@ -7853,7 +8167,7 @@ sub spin
 sub run_internal
 {
    my ($hash,$cmd,$command,$prog,$arg,$type) = @_;
-   my %switch;
+   my (%switch,$result);
 
    # The player is probably disconnected but there are commands in the queue.
    # These orphaned commands are being run against the not logged in commands
@@ -7879,20 +8193,7 @@ sub run_internal
 #          (length($cmd.$arg) > 60) ? "..." : ""
 #         );
  
-   if(hasflag($$command{runas},"VERBOSE")) {
-      my $owner= owner($$command{runas});
-      necho(self   => $owner,
-            prog   => $prog,
-            target => [ $owner,
-                        "%s] %s%s", 
-                        name($$command{runas}),
-                        $cmd,
-                        (($arg eq undef) ? "" : " " . $arg) 
-                      ]
-           );
-   }
-   
-
+   show_verbose($prog,$command);
    
    my $start = Time::HiRes::gettimeofday();
    $$prog{function_command} = 0;
@@ -7912,12 +8213,20 @@ sub run_internal
                              @{$$command{wild}}
                             );
       }
-         
-      my $result = &{@{$$hash{$cmd}}{fun}}($$command{runas},
+        
+      if(ref($$command{runas}) eq "HASH") {
+         $result = &{@{$$hash{$cmd}}{fun}}(@{$$command{runas}}{obj_id},
                                            $prog,
                                            trim($arg),
                                            $$command{switch}
                                           );
+      } else {
+         $result = &{@{$$hash{$cmd}}{fun}}($$command{runas},
+                                           $prog,
+                                           trim($arg),
+                                           $$command{switch}
+                                          );
+      }
       $$prog{command_duration} += Time::HiRes::gettimeofday() - $start;
       $$prog{command}++;
     #   $$prog{"command_$cmd"}++;
@@ -7947,97 +8256,92 @@ sub parse_switch
    return $cmd;
 }
 
+#
+# spin_run
+#    Run a command that came from spin() doing the following:
+#
+#    1. Determine which command set may be used.
+#    2. Handle %{variable} holding command / variable set
+#    3. Check/run internal command
+#    4. Check/run mushcoded command.
+#    5. Check/use exit
+#    6. Show huh message
+#
 sub spin_run
 {
-   my ($prog,$command,$foo) = @_;
-   my $self = $$command{runas};
-   my ($cmd,$hash,$arg,%switch);
-   $$prog{cmd_last} = $command;
-   $$prog{cmd} = $command;
+   my ($prog,$cmd,$foo) = @_;
+   my $self = $$cmd{runas};
+   my ($hash,$arg,%switch);
+   $$prog{cmd} = $cmd;
 
+   # determine which command set to use
    if($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") {
       if(defined $$prog{from} && $$prog{from} eq "ATTR") {
-         $hash = \%command;
+         $hash = \%command;                     # from attr, use all commands
       } else {
-         $hash = \%switch;                                      # no commands
+         $hash = \%switch;                             # no internal commands
       }
    } else {
-      $hash = \%command;
+      $hash = \%command;                              # all internal commands
    }
 
+   if($$cmd{cmd} =~ /^\s*$/) {
+      return;                                                 # empty command
+   } elsif($$cmd{cmd} =~ /^\s*%\{([^ ]+)\}/) {                # found variable
+      my ($var,$rest) = ($1,$');
 
-   if($$command{cmd} =~ /^\s*/) {
-      ($cmd,$arg) = balanced_split($'," ",4);
-      $arg = " " . $arg;
-
-      $cmd =~ s/^\\//g if($$command{source} == 0);
-
-      if($cmd =~ /^\s*%\{([^ ]+)\}\s*$/) {   # let a variable be used as a cmd.
-         if(defined $$prog{var} && defined @{$$prog{var}}{$1}) {
-            my $tmp_var = $1;
-            if(@{$$prog{var}}{$tmp_var} =~ /^\s*([^ ]+) /) {
-               $cmd = $1;
-               $arg = $' . " " . $arg
-            } else {
-               $cmd = @{$$prog{var}}{$tmp_var};
-            }
-         } else {
-            return &{@{@command{"huh"}}{fun}}($$command{runas},
-                                              $prog,
-                                              $$command{cmd});
-         }
-#         ($cmd,$arg) = ($1,$' . $arg) if($cmd =~ /^\s*([^ \/]+)\s*/s);
+      if($rest =~ /^\s*(=|\+=|-=|\*=|\/=|\+\+|\-\-)\s*/) { # variable operation
+         return cmd_var($$cmd{runas},$prog,$var,$rest);
+      } elsif(!defined $$prog{var} || !defined @{$$prog{var}}{$var}) {
+         return cmd_huh($$cmd{runas},$prog,$$cmd{cmd});         # invalid var
+      } else {                             
+         $$cmd{cmd} = @{$$prog{var}}{$var} . $rest;
       }
-      if(!defined @{$$hash{substr($cmd,0,1)}}{nsp}) {
-         $arg =~ s/^\s+//g;                           # remove extra spaces
-      }
-      $cmd = parse_switch($command,$cmd);                   # hand switches
-      $$command{mushcmd} = $cmd;
-   } else {
-      return;                                                 # only spaces
    }
 
-   # skip any @while command with an open socket without pending input
-   if(lc($cmd) eq "\@while" &&
+   $$cmd{cmd} =~ s/^\s+//g;                            # strip leading spaces
+   $$cmd{cmd} =~ s/^\\//g if($$cmd{source} == 0);          # fix for escape()
+   $$cmd{cmd} = parse_switch($cmd,$$cmd{cmd});
+   my ($first,$arg) = bsplit($$cmd{runas},$prog,$$cmd{cmd}," ");
+
+   if(lc($first) eq "\@while" &&                   # optimization for @while
       defined $$prog{socket_id} && 
       !defined $$prog{socket_closed} &&
       (!defined $$prog{socket_buffer} ||
        $#{$$prog{socket_buffer}} == -1)) {
       $$prog{idle} = 1;
       return "RUNNING";
-  } elsif(defined $$hash{lc($cmd)}) {                          # internal cmd
-      return run_internal($hash,lc($cmd),$command,$prog,$arg);
-  } elsif(defined $$hash{substr($cmd,0,1)} &&            # internal 1 char cmd
-     (defined $$hash{substr($cmd,0,1)}{nsp} ||
-      substr($cmd,1,1) eq " " ||
-      length($cmd) == 1
+  } elsif(defined $$hash{lc($first)}) {                         # internal cmd
+      return run_internal($hash,lc($first),$cmd,$prog,$arg);
+  } elsif(defined $$hash{substr($first,0,1)} &&          # internal 1 char cmd
+     (defined $$hash{substr($first,0,1)}{nsp} ||
+      substr($first,1,1) eq " " ||
+      length($first) == 1
      )) {
-      $$command{mushcmd} = substr($cmd,0,1);
+      $$cmd{mushcmd} = substr($first,0,1);
       return run_internal($hash,
-                          $$command{mushcmd},
-                          $command,
+                          $$cmd{mushcmd},
+                          $cmd,
                           $prog,
-                          substr($cmd,1) . $arg,
+                          substr($first,1) . " " . $arg,
                           {},
                           1
                          );
-   } elsif(find_exit($self,$prog,$$command{cmd})) {   # handle exit as command
-      return &{@{$$hash{"go"}}{fun}}($$command{runas},$prog,$$command{cmd});
-   } elsif(mush_command($self,
-                        $prog,
-                        $$command{runas},
-                        $$command{cmd},
-                        $$command{source})) {
+   } elsif(find_exit($self,$prog,$$cmd{cmd})) {   # handle exit as command
+      return &{@{$$hash{"go"}}{fun}}($$cmd{runas},$prog,$$cmd{cmd});
+   } elsif(mush_command($self,$prog,$$cmd{runas},$$cmd{cmd},$$cmd{source})) {
       return 1;                                   # mush_command runs command
    } else { # no match, show HUH?
-      return &{@{@command{"huh"}}{fun}}($$command{runas},
-                                        $prog,
-                                        $$command{cmd});
+      return cmd_huh($$cmd{runas},$prog,$$cmd{cmd});
    }
    return 1;
 }
 
 
+#
+# find_in_list
+#    given an @array, find $thing within the list using matching.
+#
 sub find_in_list
 {
    my ($thing,@list) = @_;
@@ -8065,12 +8369,12 @@ sub find_in_list
       }
    }
 
-   if($start_count == 1) {
+   if($start_count == 1) {                  # one match at begining of string
       return obj($start_obj);
-   } elsif($middle_count == 1) {
+   } elsif($middle_count == 1) {              # one match in middle of string
       return obj($middle_obj);
    } else {
-      return undef;
+      return undef;                               # too many matches, or none
    }
 }
 
@@ -8085,42 +8389,34 @@ sub find
    my $debug = 0;
 
    if(ansi_remove($thing) eq undef) {
-      printf("got here: 0\n") if $debug;
       return undef;
    } elsif($thing =~ /^\s*#(\d+)\s*$/) {
-      printf("got here: 1\n") if $debug;
       return valid_dbref($1) ? obj($1) : undef;
    } elsif($thing =~ /^\s*here\s*$/) {
-      printf("got here: 2\n") if $debug;
       return loc_obj($self);
    } elsif($thing =~ /^\s*%#\s*$/) {
-      printf("got here: 3\n") if $debug;
       return $$prog{created_by};
+   } elsif($thing =~ /^\s*#master\s*$/) {             # return master room
+      my $master = get(0,"conf.master");
+      return ($master =~ /^\s*#{0,1}(\d+)\s*/) ? obj($1) : undef;
    } elsif($thing =~ /^\s*me\s*$/) {
-      printf("got here: 4\n") if $debug;
       return $self;
    } elsif($thing =~ /^\s*\*/) {
        my $player = trim(ansi_remove(lc($')));
        if(defined @player{$player}) {
-      printf("got here: 5\n") if $debug;
           return obj(@player{$player});
        } else {
-      printf("got here: 6\n") if $debug;
           return undef
        }
    }
 
    # search in contents of object
    my $obj = find_in_list($thing,lcon($self));
-      printf("got here: 7 -> '$obj'\n") if $debug;
    return $obj if($obj ne undef);
-      printf("got here: 8\n") if $debug;
 
    # search around object
    my $obj = find_in_list($thing,lcon(loc($self)));
-      printf("got here: 9\n") if $debug;
    return $obj if($obj ne undef);
-      printf("got here: 10\n") if $debug;
 
    # search exits around object
    return find_exit($self,$prog,$thing);
@@ -8670,8 +8966,9 @@ sub initialize_functions
 {
    delete @fun{keys %fun};
    @fun{decode_entities} = sub { return &fun_decode_entities(@_); };
+   @fun{dump}      = sub { return &fun_dump(@_);                    };
    @fun{set}       = sub { return &fun_set(@_);                    };
-   @fun{EVAL}      = sub { return &fun_eval(@_);                   };
+   @fun{EVAL}      = sub { return &fun_u(@_);                      };
    @fun{html_strip}= sub { return &fun_html_strip(@_);             };
    @fun{tohex}     = sub { return &fun_tohex(@_);                  };
    @fun{foreach}   = sub { return &fun_foreach(@_);                };
@@ -8974,7 +9271,23 @@ sub ansi_compress
    return $result . $data;
 }
 
+sub fun_dump
+{
+   my ($self,$prog,$obj) = (obj(shift),shift,shift);
 
+
+   if(!hasflag($self,"WIZARD")) {
+      return "#-1 PERMISSION DENIED";
+   } elsif($obj =~ /^\s*#(\d+)\s*$/) {
+      $obj = $1;
+   } else {
+      return "#-1";
+   }
+
+   return "#-1" if(!valid_dbref($obj));
+
+   return db_object($obj);
+}
 sub fun_decode_entities
 {
    my ($self,$prog) = (obj(shift),shift);
@@ -9638,8 +9951,10 @@ sub fun_ansi
    my $code = evaluate($self,$prog,shift);
    my $txt = evaluate($self,$prog,shift);
 
-   for my $item (split(" ",$code)) {
+   my $item = $code;
+#   for my $item (split(" ",$code)) {
       if($item =~ /^\s*<\s*(\d+)\s+(\d+)\s+(\d+)\s*>\s*$/) {
+         printf("FOO: '%s' '%s' '%s'\n",$1,$2,$3);
          $out .= rgb2ansi($1,$2,$3);
       } elsif($item=~/^\s*#\s*([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})\s*$/i ||
          $item=~/^\s*<\s*#\s*([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})\s*>\s*$/i){
@@ -9651,7 +9966,7 @@ sub fun_ansi
       } elsif($code !~ /^\s*</) {
          $out .= color($code,undef,1);
       }
-   }
+#   }
 
    return $out . $txt . "\e[0m";
 }
@@ -9965,6 +10280,8 @@ sub fun_url
       return set_var($prog,"data","#-1 HTTPS DISABLED");
    } elsif(!$secure && @info{"url_http"} == -1) {
       return set_var($prog,"data","#-1 HTTP DISABLED");
+   } elsif(hasflag($self,"SOCKET_PUPPET") && find_socket($self,$prog) ne undef){
+      return set_var($prog,"data","#-1 CONNECTION ALREADY OPEN WITH \@TELNET");
    } elsif(defined $$prog{socket_id} && $$prog{socket_url} ne $txt && 
       !defined $$prog{socket_closed}) {
       return set_var($prog,"data","#-1 CONNECTION ALREADY OPEN");
@@ -10727,6 +11044,7 @@ sub fun_run
    } else {  
       return #-1 No command given to run;                       # only spaces
    } 
+   $$prog{nomushrun} = 1;
    my $cmd = { runas   => $self,
                source  => $$prog{source},
                invoker => invoker($prog,$self),
@@ -10743,6 +11061,7 @@ sub fun_run
    } else {
       $$prog{output} = $tmp;
    }
+   delete @$prog{nomushrun};
    return $output;
 }
 
@@ -11856,9 +12175,18 @@ sub fun_filter
 sub fun_u
 {
    my ($self,$prog) = (shift,shift);
+   my ($txt,$obj,$attr,@arg);
 
-   my $txt = evaluate($self,$prog,shift);
-   my ($obj,$attr,@arg);
+   if(defined $$prog{mush_function_name}) {
+      if(defined @info{mush_function} &&
+         defined @{@info{mush_function}}{$$prog{mush_function_name}}) {
+         $txt =  @{@info{mush_function}}{$$prog{mush_function_name}};
+      } else {
+         return "#-1 INVALID USER DEFINED FUNCTION";
+      }
+   } else {
+      $txt = evaluate($self,$prog,shift);
+   }
 
    for my $i (0 .. $#_) {
       @arg[$i] = evaluate($self,$prog,$_[$i]);
@@ -11954,10 +12282,10 @@ sub fun_get
    if($#_ == 0) {
       ($obj,$atr) = besplit($self,$prog,shift,"\/");
    } else {
-      ($obj,$atr) = (shift,shift);
+      ($obj,$atr) = (evaluate($self,$prog,shift),evaluate($self,$prog,shift));
    }
 
-   ($atr,$sub) = besplit($self,$prog,$atr,".");
+   ($atr,$sub) = besplit($self,$prog,$atr,":");
 
    my $target = find($self,$prog,$obj);
    $atr = "description" if($atr =~ /^\s*desc\s*$/);
@@ -12441,26 +12769,33 @@ sub fun_lattr
    my ($self,$prog) = (shift,shift);
    my ($obj,$atr,@list);
 
-   my $txt = evaluate($self,$prog,shift);
-   if($txt =~ /\s*\/\s*/) {                               # input has a slash 
-      ($obj,$atr) = ($`, $');
-   } elsif($txt =~ /^\s*$/) {                                      # no input
-      return "#-1 FUNCTION (LATTR) EXPECTS 1 ARGUMENTS";
-   } else {
-      $obj = $txt;                                        # only obj provided
-   }
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (LATTR) EXPECTS 1 ARGUMENT";
 
-   my $target = find($self,$prog,$obj);
-   return "#-1 Unknown object" if $target eq undef;  # oops, can't find object
+   my ($obj,$atr) = bsplit($self,$prog,shift,"/");
+
+   my ($atr,$sub) = besplit($self,$prog,$atr,":");
+
+   my $target = find($self,$prog,evaluate($self,$prog,$obj)) ||
+      return "#-1 Unknown object";
 
    if(!controls($self,$target) && !hasflag($target,"VISUAL")) {
-      return err($self,$prog,"#-1 Permission Denied.");
+      return "#-1 Permission Denied.";
    }
 
    my $pat = ($atr eq undef) ? undef : glob2re($atr);
+   my $spat = ($sub eq undef) ? undef : glob2re($sub);
 
    for my $attr (grep {!/^obj_/i} lattr($target)) {
-      push(@list,uc($attr)) if($pat eq undef || $attr =~ /$pat/i);
+      if(db_set_hashable($target,$attr)) {
+         for my $key (db_hash_keys($target,$attr)) {
+            if($spat eq undef || $key =~ /$spat/) {
+               push(@list,uc($attr) . ":" . uc($key));
+            }
+         }
+      } elsif($spat eq undef) {
+         push(@list,uc($attr)) if($pat eq undef || $attr =~ /$pat/i);
+      }
    }
    return join(' ',@list);
 }
@@ -12628,9 +12963,9 @@ sub fun_lookup
 
    if(defined @fun{lc($name)}) {
       return lc($name);
-   } elsif(defined @info{mush_function}) {
-      my $mush = @info{mush_function};
-      return "EVAL" if(defined $$mush{lc($name)});
+   } elsif(defined @info{mush_function} && 
+      defined @{@info{mush_function}}{lc($name)}) {
+      return "EVAL";
    }
    
    if(!$flag) {
@@ -12806,6 +13141,7 @@ sub meval
 sub evaluate
 {
    my ($self,$prog,$txt) = @_;
+   my $id = (ref($self) eq "HASH") ? $$self{obj_id} : $self;
    my $out;
 
    #
@@ -12822,7 +13158,7 @@ sub evaluate
 
             my $start = Time::HiRes::gettimeofday();
             $$prog{mush_function_name} = $1 if($fun eq "EVAL");
-            my $r=&{@fun{$fun}}($self,$prog,@$result);
+            my $r=&{@fun{$fun}}($id,$prog,@$result);
             delete @$prog{mush_function_name};
             $$prog{function_duration} +=Time::HiRes::gettimeofday()-$start;
             $$prog{"fun_$fun"}++;
@@ -12858,7 +13194,7 @@ sub evaluate
 
             my $start = Time::HiRes::gettimeofday();
             $$prog{mush_function_name} = $unmod if($fun eq "EVAL");
-            my $r = &{@fun{$fun}}($self,$prog,@$result);
+            my $r = &{@fun{$fun}}($id,$prog,@$result);
             delete @$prog{mush_function_name};
             $$prog{function_duration} +=Time::HiRes::gettimeofday()-$start;
 
@@ -13011,14 +13347,48 @@ sub http_error
    http_out($s,"Connection: close");
    http_out($s,"Content-Type: text/html; charset=ISO-8859-1");
    http_out($s,"");
+   http_out($s,"<html><meta name=\"viewport\" content=\"initial-scale=.5, maximum-scale=1\">");
    http_out($s,"<style>");
    http_out($s,".big {");
-   http_out($s,"   line-height: 0;");
+   http_out($s,"   line-height: .7;");
+   http_out($s,"   margin-bottom: 0px;");
    http_out($s,"   font-size: 100pt;");
+   http_out($s,"   color: hsl(0,100%,30%);");
+   http_out($s,"}");
+   http_out($s,"div.big2 {");
+#   http_out($s,"   border: 2px solid red;");
+   http_out($s,"   line-height: .2;");
+   http_out($s,"   display:inline-block;");
+   http_out($s,"   -webkit-transform:scale(2,1); /* Safari and Chrome */");
+   http_out($s,"   -moz-transform:scale(2,1); /* Firefox */");
+   http_out($s,"   -ms-transform:scale(2,1); /* IE 9 */");
+   http_out($s,"   -o-transform:scale(2,1); /* Opera */");
+   http_out($s,"   transform:scale(2,1); /* W3C */");
    http_out($s,"}");
    http_out($s,"</style>");
-   http_out($s,"<center><h1 class=big>404</h1><hr>#-1 Page Not Found</center>");
-   http_out($s,"<center>$fmt</center>",@args);
+   http_out($s,"<body>");
+   http_out($s,"<br>");
+   http_out($s,"<table width=100%>");
+   http_out($s,"   <tr>");
+   http_out($s,"      <td width=30px>");
+   http_out($s,"         <div class=\"big\">404</div><br>");
+   http_out($s,"         <center>");
+   http_out($s,"            <div class=\"big2\">Page not found</div>");
+   http_out($s,"         </center>");
+   http_out($s,"      </td>");
+   http_out($s,"      <td width=30px>");
+   http_out($s,"      </td>");
+   http_out($s,"      <td>");
+   http_out($s,"         <center><hr size=2>$fmt<hr></center>",@args);
+   http_out($s,"         <pre>%s</pre>\n",code("long"));
+   http_out($s,"      </td>");
+   http_out($s,"      </td>");
+   http_out($s,"      <td width=30px>");
+   http_out($s,"      </td>");
+   http_out($s,"   </tr>");
+   http_out($s,"</table>");
+   http_out($s,"</body>");
+   http_out($s,"</html>");
    http_disconnect($s);
 }
 
@@ -13157,20 +13527,18 @@ sub http_process_line
    } elsif($txt =~ /^([\w\-]+): /) {
       $$data{lc($1)} = $';
    } elsif($txt =~ /^\s*$/) {                               # end of request
-      my $msg =  uri_unescape($$data{get});
+      $$data{get} = uri_unescape($$data{get});
+      $$data{get} =~ s/\// /g;
+      $$data{get} =~ s/^\s+|\s+$//g;
+      $$data{get} = "default" if($$data{get} =~ /^\s*$/);
 
-      if($msg eq undef) {
+      if($$data{get} eq undef) {
          http_error($s,"Malformed Request");
       } else {
          my $id = conf("webuser");
          my $self = obj(conf("webuser"));
 
-         $$data{get} = uri_unescape($$data{get});
-         $$data{get} =~ s/\// /g;
-         $$data{get} =~ s/^\s+|\s+$//g;
-
          # run the $default mush command as the default webpage.
-         $$data{get} = "default" if($$data{get} =~ /^\s*$/);
 
          my $addr = @{@http{$s}}{hostname};
          $addr = @{@http{$s}}{ip} if($addr =~ /^\s*$/);
@@ -13181,7 +13549,17 @@ sub http_process_line
          @info{httpd_ban} = {} if(!defined @info{httpd_ban});
          # html/js/css should be a static file, so just return the file
 
-         if(($$data{get} =~ /_notemplate\.(html)$/i ||     # no template used
+         if($$data{get} eq "unban") {
+            delete @{@info{httpd_ban}}{$addr};
+            http_reply_simple($s,"html","%s","$addr has been unbanned.");
+         } elsif(banable_urls($data)) {
+            ban_add($s);
+            web("   %s %s\@web [BANNED-%s]\n",ts(),$addr,$$data{get});
+            http_error($s,"%s","BANNED for HACKING");
+         } elsif(defined @{@info{httpd_ban}}{$addr}) {
+            web("   %s %s\@web [BANNED-%s]\n",ts(),$addr,$$data{get});
+            http_error($s,"%s","BANNED for invalid requests");
+         } elsif(($$data{get} =~ /_notemplate\.(html)$/i ||  # no template used
             $$data{get} =~ /\.(js|css|ico)$/i) &&
             -e "txt/" . trim($$data{get})) {
             web("   %s %s\@web [%s]\n",ts(),$addr,$$data{get});
@@ -13197,13 +13575,6 @@ sub http_process_line
             $$prog{sock} = $s;
             web("   %s %s\@web [%s]\n",ts(),$addr,$$data{get});
             http_reply($prog,getfile(trim($$data{get})));
-         } elsif(banable_urls($data)) {
-            ban_add($s);
-            web("   %s %s\@web [BANNED-%s]\n",ts(),$addr,$$data{get});
-            http_error($s,"%s","BANNED for HACKING");
-         } elsif(defined @{@info{httpd_ban}}{$addr}) {
-            web("   %s %s\@web [BANNED-%s]\n",ts(),$addr,$$data{get});
-            http_error($s,"%s","BANNED for invalid requests");
          } elsif($$data{get} =~ /^pid$/) {
             web(" * %s %s\@web [%s]\n",ts(),$addr,$$data{get});
             if($addr eq "localhost" || $addr eq "127.0.0.1") {
@@ -13246,6 +13617,7 @@ sub http_process_line
                               );
              $$prog{get} = $$data{get};
              $$prog{head} = $$data{head} if defined $$data{head};
+             $$self{hostname} = $addr;
          }
       }
    } else {
@@ -13318,14 +13690,13 @@ sub load_db
    open($file,"< dumps/$fn") ||
       die("Unable to open database 'dumps/$fn'\n");
 
-   con("Opening database file: %s\n",$fn);
-
    while(<$file>) {
       db_process_line(\%state,$_);
    }
    close($file);
 
-   con("   Database Version %s -- %s bytes read\n",@state{ver},@state{chars});
+   con(" + Database: %s [%s Version, %s bytes]\n",
+      $fn,@state{ver},@state{chars});
 }
 
 sub generic_action
@@ -13534,7 +13905,7 @@ sub renumber_code
 #
 sub evaluate_substitutions
 {
-   my ($self,$prog,$t) = @_;
+   my ($self,$prog,$t) = (obj(shift),shift,shift);
    my ($out,$seq,$debug);
 
    my $orig = $t;
@@ -13595,9 +13966,9 @@ sub evaluate_substitutions
          }
       } elsif(lc($seq) eq "%n" || lc($seq) eq "%k") {         # current name 
          if(!defined $$prog{cmd}) {
-            $out .= name($self,undef);
+            $out .= name($self,undef,$self,$prog);
          } else {
-            $out .= name(@{@{$$prog{cmd}}{invoker}}{obj_id});
+            $out .= name(@{@{$$prog{cmd}}{invoker}}{obj_id},undef,$self,$prog);
          }
       } elsif($seq =~ /^%q([0-9a-z])$/i) {
          if(defined $$prog{var}) {
@@ -13696,7 +14067,7 @@ sub handle_socket_listener
 
 sub handle_directed_listen
 {
-   my ($self,$prog,$target,$msg) = @_;
+   my ($self,$prog,$target,$msg) = (obj(shift),shift,obj(shift),shift);
 
    if($$target{obj_id} == $$self{obj_id} ||
       !hasflag($target,"LISTENER")) {
@@ -13952,7 +14323,7 @@ sub necho
 {
    my %arg = @_;
    my $prog = $arg{prog};
-   my $self = $arg{self};
+   my $self = obj($arg{self});
    my $loc;
 
 #   if($arg{self} eq undef) {
@@ -14589,8 +14960,10 @@ sub pget
 sub conf
 {
    my $attr;
-   
-   if(hasattr(obj(0),"conf.$_[0]")) {
+
+   if($_[0] eq "version") {
+      return version();
+   } elsif(hasattr(obj(0),"conf.$_[0]")) {
       $attr = get(obj(0),"conf." . $_[0]);
    } elsif(defined @default{lc($_[0])}) {             # use @defaults?
       $attr = @default{lc($_[0])};
@@ -14777,11 +15150,11 @@ sub lastsite
       my $last = (sort {$a <=> $b} keys %$list)[-1];
 #      printf("%s\n",print_var($$attr{value}));
 
-      for my $key (keys %$list) {
-         if($$list{$key} =~ /^(\d+),/) {
-            printf("diff: '%s' - '%s' = '%s'\n",$1,$key,$1 - $key);
-         }
-      }
+#      for my $key (keys %$list) {
+#         if($$list{$key} =~ /^(\d+),/) {
+#            printf("diff: '%s' - '%s' = '%s'\n",$1,$key,$1 - $key);
+#         }
+#      }
 
       if($$list{$last} =~ /^\d+,\d+,(.*)$/) {
          return $1;
@@ -14796,17 +15169,21 @@ sub lasttime
 {
    my ($target,$flag) = (obj(shift),shift);
 
-   my $attr = mget($target,"obj_lastsite");
-
-   if($attr eq undef) {
+   if(!hasflag($target,"PLAYER")) {
       return undef;
    } else {
-      my $list = $$attr{value};
-
-      if($flag) {
-         return (sort keys %$list)[-1];
+      my $attr = mget($target,"obj_lastsite");
+   
+      if($attr eq undef) {
+         return undef;
       } else {
-         return scalar localtime((sort keys %$list)[-1]);
+         my $list = $$attr{value};
+   
+         if($flag) {
+            return (sort keys %$list)[-1];
+         } else {
+            return scalar localtime((sort keys %$list)[-1]);
+         }
       }
    }
 }
@@ -15417,6 +15794,9 @@ sub get_free_port
 #
 sub server_handle_sockets
 {
+   if(!defined @info{server_start} || @info{server_start} =~ /^\s*$/) {
+      @info{server_start} = time();
+   }
    eval {
          local $SIG{__DIE__} = sub {
             con("----- [ Crash Report@ %s ]-----\n",scalar localtime());
@@ -15427,10 +15807,6 @@ sub server_handle_sockets
       # wait for IO or 1 second
       my ($sockets) = IO::Select->select($readable,undef,undef,.1);
       my $buf;
-
-      if(!defined @info{server_start} || @info{server_start} =~ /^\s*$/) {
-         @info{server_start} = time();
-      }
 
       # process any IO
       foreach my $s (@$sockets) {      # loop through active sockets [if any]
@@ -15467,7 +15843,7 @@ sub server_handle_sockets
                   }
                   server_disconnect(@{@connected{$new}}{sock});
                } elsif(!defined conf("login")) {
-                  printf($new "Welcome to %s\r\n\r\n",@info{"version"});
+                  printf($new "Welcome to %s\r\n\r\n",conf("version"));
                } else {
                   printf($new "%s\r\n",conf("login"));    #  show login
                }
@@ -15487,7 +15863,7 @@ sub server_handle_sockets
                server_process_line(@connected{$s},$`);         # process line
 
            
-               # store last transaction in @info{connected_raw_socket} 
+#               # store last transaction in @info{connected_raw_socket} 
 #               if(defined @connected{$s} && @{@connected{$s}}{raw} > 0) {
 #                  if(@info{connected_raw_socket} ne $s) {
 #                     delete @info{connected_raw};
@@ -15614,16 +15990,21 @@ sub server_disconnect
 #
 sub server_start
 {
-   con("TeenyMUSH listening on port %s\n",conf("port"));
+   my @port;
+
    $listener = IO::Socket::INET->new(LocalPort => conf("port"),
                                      Listen    => 1,
                                      Reuse     => 1
                                     ) ||
       die("   Port already in use.");
+   push(@port,conf("port") . "{Mush}");
 
-   if(conf("httpd") ne undef && conf("httpd") > 0) {
+   # uri_escape is required for httpd
+   if(@info{"uri_escape"} == -1 && conf("httpd") > 0) {
+      con("httpd disabled because of missing URI::Escape module");
+   } elsif(@info{"uri_escape"} == 1 && conf("httpd") > 0) {
       if(conf("httpd") =~ /^\s*(\d+)\s*$/) {
-         con("HTTP listening on port %s\n",conf("httpd"));
+         push(@port,conf("httpd") . "{httpd}");
 
          $web = IO::Socket::INET->new(LocalPort => conf("httpd"),
                                       Listen    =>1,
@@ -15636,7 +16017,7 @@ sub server_start
 
    if(conf("websocket") ne undef && conf("websocket") > 0) {
       if(conf("websocket") =~ /^\s*(\d+)\s*$/) {
-         con("Websocket listening on port %s\n",conf("websocket"));
+         push(@port,conf("websocket") . "{websocket}");
          websock_init();
       } else {
          con("Invalid websocket port number specified in #0/conf.websocket");
@@ -15655,6 +16036,7 @@ sub server_start
       $ws->{select_readable}->add($web);
    }
    $readable = $ws->{select_readable};
+   printf(" + Listening on ports: %s\n",join(',',@port));
 
    # main loop;
    @info{run} = 1;
@@ -15808,7 +16190,7 @@ sub ws_process
    if($msg =~ /^#M# /) {
       web("   %s %s\@ws [%s]\n",ts(),@{$ws->{conns}{$conn->{socket}}}{ip},$');
       @{$ws->{conns}{$conn->{socket}}}{type} = "NON_INTERACTIVE";
-      my $self = fetch(conf("webuser"));
+      my $self = conf("webuser");
 
       my $prog = mushrun(self   => $self,
                          runas  => $self,

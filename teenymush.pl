@@ -2031,7 +2031,7 @@ sub cmd_huh
          $$prog{huh} = 1;
       }
    }
-   printf("HUH: '%s' -> '%s'\n",$$self{obj_id},@{$$prog{cmd}}{cmd});
+#   printf("HUH: '%s' -> '%s'\n",$$self{obj_id},@{$$prog{cmd}}{cmd});
 #   printf("%s\n",code("long"));
    if(hasflag($self,"VERBOSE")) {
       necho(self   => owner($self),
@@ -5252,7 +5252,7 @@ sub cmd_ex
    my ($self,$prog) = (obj(shift),shift);
    my ($sub,$target,$desc,@exit,@content,$atr,$out);
 
-   my ($txt,$atr) = bsplit($self,$prog,shift,"/");
+   my ($txt,$atr) = bsplit(shift,"/");
    my ($atr,$sub) = besplit($self,$prog,$atr,":");
    my $txt = evaluate($self,$prog,$txt);
 
@@ -5591,8 +5591,7 @@ sub besplit
 
 sub bsplit
 {
-   my ($self,$prog,$txt,$delim) = @_;
-   return balanced_split($txt,$delim,4);
+   return balanced_split($_[0],$_[1],4);
 }
 
 #
@@ -5607,7 +5606,7 @@ sub cmd_set2
    hasflag($self,"GUEST") &&                    # don't let guests modify
       return err($self,$prog,"Permission denied");
 
-   my ($txt,$value) = bsplit($self,$prog,shift,"=");
+   my ($txt,$value) = bsplit(shift,"=");
 
    my $switch = shift;
 
@@ -5615,7 +5614,7 @@ sub cmd_set2
 
    my $flag = shift;
 
-   my ($attr,$obj) = bsplit($self,$prog,$txt," ");
+   my ($attr,$obj) = bsplit($txt," ");
    my ($attr,$sub) = besplit($self,$prog,$attr,":");
 
    if($sub ne undef) {
@@ -7759,20 +7758,22 @@ sub mushrun_add_cmd
                    mdigits => $$arg{match},
                  };
 
-#       #
-#       # Extra Debuging to trace calls back to the begining, when needed.
-#       # useful for code_history()
-#       if(defined $$data{invoker} && ref($$data{invoker}) eq "HASH") {
-#          $invoker = @{$$data{invoker}}{obj_id};
-#       } else {
-#          $invoker = "N/A";
-#       }
-#       if(defined $$prog{cmd} && defined @{$$prog{cmd}}{stack}) {
-#          $$data{stack} = [ join("-#-",@{@{$$prog{cmd}}{stack}}), $invoker . 
-#             "->" . code() ];
-#       } else {
-#          $$data{stack} = [ $invoker . ":" . code() ];
-#       }
+      if(conf("debug") == 1) {
+         #
+         # Extra Debuging to trace calls back to the begining, when needed.
+         # useful for code_history()
+         if(defined $$data{invoker} && ref($$data{invoker}) eq "HASH") {
+            $invoker = @{$$data{invoker}}{obj_id};
+         } else {
+            $invoker = "N/A";
+         }
+         if(defined $$prog{cmd} && defined @{$$prog{cmd}}{stack}) {
+            $$data{stack} = [ join("-#-",@{@{$$prog{cmd}}{stack}}), $invoker . 
+               "->" . code() ];
+         } else {
+            $$data{stack} = [ $invoker . ":" . code() ];
+         }
+      }
 
       $$data{wild} = $$arg{wild} if(defined $$arg{wild});
       if($$arg{child} == 1) {                         # add to top of stack
@@ -8244,16 +8245,21 @@ sub parse_switch
    my ($count,$name);
 
    return $txt if($txt =~ /^("|;|&)/);
+
+   my ($txt,$args)= bsplit($txt," ");
+   $args = " " . $args if($args ne undef);
+
    $$command{switch} = {};
    my ($cmd,$rest) = balanced_split($txt,"/",4);
-   return $txt if($rest eq undef);
+   return $cmd . $args if($rest eq undef);
 
    while($rest ne undef) { 
       ($name,$rest) = balanced_split($rest,"/",4);
       @{$$command{switch}}{lc($name)} = 1;
-      return $cmd if($count++ > 20); # no infinite loops / more then 20 switches
+      return $cmd . $args if($count++ > 20);     # no more  then 20 switches
    }
-   return $cmd;
+
+   return $cmd . $args;
 }
 
 #
@@ -8302,7 +8308,8 @@ sub spin_run
    $$cmd{cmd} =~ s/^\s+//g;                            # strip leading spaces
    $$cmd{cmd} =~ s/^\\//g if($$cmd{source} == 0);          # fix for escape()
    $$cmd{cmd} = parse_switch($cmd,$$cmd{cmd});
-   my ($first,$arg) = bsplit($$cmd{runas},$prog,$$cmd{cmd}," ");
+   my ($first,$arg) = bsplit($$cmd{cmd}," ");
+   $$cmd{mushcmd} = $first;
 
    if(lc($first) eq "\@while" &&                   # optimization for @while
       defined $$prog{socket_id} && 
@@ -12772,7 +12779,7 @@ sub fun_lattr
    good_args($#_,1) ||
       return "#-1 FUNCTION (LATTR) EXPECTS 1 ARGUMENT";
 
-   my ($obj,$atr) = bsplit($self,$prog,shift,"/");
+   my ($obj,$atr) = bsplit(shift,"/");
 
    my ($atr,$sub) = besplit($self,$prog,$atr,":");
 
@@ -14387,7 +14394,7 @@ sub necho
       }
 
 
-      my ($target,$fmt) = (shift(@{$arg{$type}}), shift(@{$arg{$type}}));
+      my ($target,$fmt) = (obj(shift(@{$arg{$type}})), shift(@{$arg{$type}}));
       my $msg = filter_chars(sprintf($fmt,@{$arg{$type}}));
 
       handle_directed_listen($self,$prog,$target,$msg);
@@ -14396,10 +14403,10 @@ sub necho
        if(defined $$prog{output}) {
           my $stack = $$prog{output};
 
-          if(@{$$prog{created_by}}{obj_id} == $$target{obj_id} ||
+          if(@{obj($$prog{created_by})}{obj_id} == $$target{obj_id} ||
              (defined $$prog{capture} && 
                  $$target{obj_id} == @{@{$$prog{capture}}{self}}{obj_id}) ||
-             @{$$prog{created_by}}{obj_id} == loc($target)) {
+             @{obj($$prog{created_by})}{obj_id} == loc($target)) {
              if(defined $$prog{capture}) {
                 my $h = $$prog{capture};
                 if($$h{type} eq "all" ||

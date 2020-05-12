@@ -620,7 +620,7 @@ sub initialize_commands
    @command{";"}            ={ fun => sub { return &cmd_pose(@_,1); },nsp=>1};
    @command{"emote"}        ={ fun => sub { return &cmd_pose(@_,1); },nsp=>1};
    @command{"\\"}           ={ fun => sub { return &cmd_slash(@_,1);},nsp=>1};
-   @command{who}            ={ fun => sub { return &cmd_who(@_); }          };
+   @command{who}            ={ fun => sub { return &cmd_who(@_);  }         };
    @command{whisper}        ={ fun => sub { return &cmd_whisper(@_); }      };
    @command{w}              ={ fun => sub { return &cmd_whisper(@_); }      };
    @command{doing}          ={ fun => sub { return &cmd_DOING(@_); }        };
@@ -1725,6 +1725,16 @@ sub cmd_imc
    return "RUNNING";
 }
 
+
+sub inlist
+{
+   my ($item,@list) = @_;
+
+   for my $i (@list) {
+      return 1 if(trim($item) eq trim($i));
+   }
+   return 0;
+}
 
 sub member
 {
@@ -2995,6 +3005,10 @@ sub cmd_dump
               );
       }
       con("**** Dump Complete: Exiting ******\n") if($type eq "CRASH");
+
+      $$prog{command} = 1;                 # delete cost of running command
+                                           # so it doesn't show in console
+                                           # as expensive command
       return;
    } else {
       return "RUNNING";                                       # still running
@@ -3507,14 +3521,22 @@ sub code_history
 
 sub cmd_switch
 {
+#    printf("SWITCH: '%s'\n",$_[2]);
+#    for my $i (balanced_split($_[2],',',3)) {
+#       printf("#  '%s'\n",$i);
+#    }
     my ($self,$prog,@list) = (obj(shift),shift,balanced_split(shift,',',3));
     my $switch = shift;
     my (%last, $pat,$done);
+#    for my $i (0 .. $#list) {
+#       printf("$i : '%s'\n",@list[$i]);
+#    }
 
 
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission denied.");
-
+#
+#    printf("FIRST: '%s'\n",@list[0]);
     my ($first,$second) = (get_segment2(shift(@list),"="));
 #    printf("FIRST: '%s'\n",$first);
     $first = trim(ansi_remove(evaluate($self,$prog,$first)));
@@ -3528,12 +3550,17 @@ sub cmd_switch
           shift(@list);
        }
        if($#list >= 1) {
+#          printf("1BEFORE_TXT: '%s'\n",@list[0]);
+#          printf("2BEFORE_TXT: '%s'\n",evaluate($self,$prog,@list[0]));
           my $txt=ansi_remove(single_line(evaluate($self,$prog,shift(@list))));
+#          printf("TXT: '%s'\n",$txt);
 
           if(defined $$switch{regexp}) {   
              $pat = $txt;
           } else {
              $pat = glob2re($txt);
+#             printf("PAT1: '%s'\n",$pat);
+#             printf("PAT2: '%s'\n",$txt);
           }
           my $cmd = shift(@list);
           $cmd =~ s/^[\s\n]+//g;
@@ -3553,6 +3580,8 @@ sub cmd_switch
           } else {
              eval {                    # assume $pat could be a bad regexp
                 if($first =~ /$pat/) {
+#                   printf("PAT:   '%s'\n",$pat);
+#                   printf("First: '%s'\n",$first);
                    $cmd =~ s/\\,/,/g;
                    mushrun(self   => $self,
                            prog   => $prog,
@@ -5068,42 +5097,33 @@ sub calculate_login_stats
    my $add = shift;
    my $count = 0;
 
+   #---[ make timestamp ]------------------------------------------------#
    my ($hour,$mday,$mon,$year) = (localtime())[2..5];  # make timestamps
    $mon++;
    $year = $year % 100;
    my $tsday = sprintf("%02d/%02d/%02d",$mon,$mday,$year);
 
-   for my $key (keys %connected) {                            # count players
-      $count++ if @connected{$key}->{raw} == 0;
-   }
-
-   #---[ clean up old data > 9 days ]------------------------------------#
-   if(defined @info{minstat}) {
-      for my $i (keys %{@info{minstat}}) {
-         delete @info{minstat}->{$i} if(time() - fuzzy($i) >  86400 * 9);
+   #---[ count players ]-------------------------------------------------#
+   for my $key (keys %connected) {                        # count players
+      if(@connected{$key}->{raw} == 0 && @connected{$key}->{loggedin} == 1) {
+         $count++;
       }
    }
-   if(defined @info{maxstat}) {
-      for my $i (keys %{@info{maxstat}}) {
+
+   my $attr = mget(0,"stat_login");
+
+   #---[ clean up old data > 9 days ]------------------------------------#
+   if($attr ne undef) {
+      for my $i (keys %{$$attr{value}}) {
          if(time() - fuzzy($i) > 86400 * 9) {
-            printf("Deleteing $i..%s -> %s\n",fuzzy($i),time() - fuzzy($i));
-            delete @info{maxstat}->{$i} if(time() - fuzzy($i) > 86400 * 9);
+            delete @$attr{$i} if(time() - fuzzy($i) > 86400 * 9);
          }
       }
    }
 
    #---[ Caculate max logged in for day ]------------------------------#
-   @info{maxstat} = {} if(!defined @info{maxstat});
-   if(!defined @info{maxstat}->{$tsday} || @info{maxstat}->{$tsday} < $count){
-      @info{maxstat}->{$tsday} = $count;
-   }
-
-   #---[ Caculate min logged in for day ]------------------------------#
-   @info{minstat} = {} if(!defined @info{minstat});
-   if(!defined @info{minstat}->{$tsday} || 
-      @info{minstat}->{$tsday} > $count ||
-      @info{minstat}->{$tsday} == 0) {
-      @info{minstat}->{$tsday} = $count;
+   if($attr ne undef || $$attr{value}->{$tsday} < $count) {
+      db_set_hash(0,"stat_login",$tsday,$count);
    }
 }
 
@@ -6217,7 +6237,7 @@ sub who
          if(($txt ne undef && 
             lc(substr(name($hash,1),0,length($txt))) eq lc($txt)) ||
             $txt eq undef) {
-            if(length(loc($hash)) > length($max) + 1) {
+            if(length(loc($hash)) + 1 > $max) {
                $max = length(loc($hash)) + 1;
             }
             push(@who,$hash);
@@ -6971,6 +6991,37 @@ sub ansi_wrap
    }
 
    return $out;
+}
+
+#
+# ansi_trim
+#    Remove leading and trailing spaces from any string while ignoring
+#    vt100 escape codes.
+#
+sub ansi_trim
+{
+   my ($start, $end);
+   my $txt = (ref($_) eq "HASH") ? shift : ansi_init(shift);
+
+   for my $i ( 0 .. $#{$$txt{ch}}) {                   # find leading spaces
+      if(@{$$txt{ch}}[$i] ne " ") {
+         $start = $i;
+         last;
+      }
+   }
+
+   for my $i ( reverse 0 .. $#{$$txt{ch}}) {          # find trailing spaces
+      if(@{$$txt{ch}}[$i] ne " ") {
+         $end = $i;
+         last;
+      }
+   }
+
+   if($start eq undef || $end eq undef) {
+      return undef;
+   } else {
+      return ansi_substr($txt,$start,$end);    # let ansi_substr do the work
+   }
 }
 
 
@@ -8569,6 +8620,7 @@ sub spin_run
       length($first) == 1
      )) {
       $$cmd{mushcmd} = substr($first,0,1);
+         
       return run_internal($hash,
                           $$cmd{mushcmd},
                           $cmd,
@@ -9379,7 +9431,7 @@ sub initialize_functions
    @fun{conf}       = sub { return &fun_conf(@_);                  };
    @fun{help}       = sub { return &fun_help(@_);                  };
    @fun{graph}      = sub { return &fun_graph(@_);                 };
-   @fun{db}         = sub { return &fun_db(@_);                    };
+   @fun{strcat}     = sub { return &fun_strcat(@_);                };
 }
 
 
@@ -9533,9 +9585,16 @@ sub ansi_compress
    return $result . $data;
 }
 
-sub fun_db
+sub fun_strcat
 {
-   
+   my ($self,$prog) = (obj(shift),shift);
+   my $result;
+
+   for my $i (0 .. $#_) {
+      $result .= trim(evaluate($self,$prog,shift));
+   }
+
+   return $result;
 }
 sub fun_info
 {
@@ -10649,8 +10708,8 @@ sub fun_url
    hasflag($self,"SOCKET_INPUT") ||
       return set_var($prog,"data","#-1 PERMISSION DENIED");
 
-   my $txt = evaluate($self,$prog,shift);
-   my $accept = evaluate($self,$prog,shift);
+   my $txt = ansi_remove(evaluate($self,$prog,shift));
+   my $accept = ansi_remove(evaluate($self,$prog,shift));
 
    $accept = "*/*" if($accept =~ /^\s*$/);
 
@@ -11114,8 +11173,8 @@ sub fun_base64
    good_args($#_,2) ||
      return "#-1 FUNCTION (BASE64) EXPECTS 2 ARGUMENT ($#_)";
 
-   my $type = evaluate($self,$prog,shift);
-   my $txt = evaluate($self,$prog,shift);
+   my $type = ansi_remove(evaluate($self,$prog,shift));
+   my $txt = ansi_remove(evaluate($self,$prog,shift));
 
    if(length($type) == 0) {
       return "#-1 FIRST ARGUMENT MUST BE Encode OR DECODE";
@@ -11342,6 +11401,8 @@ sub age
    return sprintf("%d",(time() - $date) / 86400);
 }
 
+   my $attr = mget(0,"stat_login");
+
 sub graph_connected
 {
    my ($size_x,$size_y) = @_;
@@ -11349,14 +11410,19 @@ sub graph_connected
 
    $size_y = 8 if($size_y eq undef || $size_y < 8);
 
-    for my $key (keys %{@info{maxstat}}) {
-       @all{age(fuzzy($key))} = @info{maxstat}->{$key};
-       $max = @info{maxstat}->{$key} if @info{maxstat}->{$key} > $max;
-       if(@info{maxstat}->{$key} < $max || $max eq undef) {
-          $min = @info{maxstat}->{$key};
-       }
-    }
-    $min = 1 if $min == 0;
+   my $attr = mget(0,"stat_login");
+
+   if($attr ne undef) {
+      my $hash = $$attr{value};
+      for my $key (keys %$hash) {
+         @all{age(fuzzy($key))} = $$hash{$key};
+         $max = $$hash{$key} if $$hash{$key} > $max;
+         if($$hash{$key} < $max || $max eq undef) {
+            $min = $$hash{$key};
+         }
+      }
+   }
+   $min = 1 if $min == 0;
   
     # build the graph from the data within @all
     for my $x ( 1 .. $size_x ){
@@ -11451,6 +11517,7 @@ sub safe_split
    my ($txt,$delim,$flag) = @_;
    my ($start,$pos,@result) = (0,0);
    my $orig = $txt;
+   $delim = ansi_remove($delim);
 
    if($delim =~ /^\s*\n\s*/m) {
       $delim = "\n";
@@ -11478,7 +11545,8 @@ sub safe_split
    for(;$pos < $size;$pos++) {
       if(ansi_remove(ansi_substr($txt,$pos,$dsize)) eq $delim) {
          if($delim eq " ") {
-            for($pos++;$pos < $size && $$ch[$pos] eq " ";$pos++) {};
+            for($pos++;$pos < $size && 
+               ansi_remove(ansi_substr($txt,$pos,1)) eq " ";$pos++) {};
             $pos-- if($$ch[$pos] ne " ");
          }
          push(@result,ansi_substr($txt,$start,$pos-$start));
@@ -12590,7 +12658,11 @@ sub fun_u
 
    my $prev = get_digit_variables($prog);                   # save %0 .. %9
    set_digit_variables($self,$prog,"",@arg);          # update to new values
-
+#   printf("---[ start ]-----\n");
+#   for my $i (0 .. $#arg) {
+#      printf("$i : '%s'\n",@arg[$i]);
+#   }
+#   printf("---[  end  ]-----\n");
    my $result = evaluate($obj,$prog,single_line(pget($obj,$attr)));
 
    set_digit_variables($self,$prog,"",$prev);            # restore %0 .. %9
@@ -12836,8 +12908,12 @@ sub fun_extract
    }
 
    if($idelim eq " ") {
+#   printf("1Extract: %s,%s,%s,%s='%s'\n",$txt,$first,$length,$idelim,$odelim,
+#       trim(join($odelim,@list[$first .. ($first+$length)])));
       return trim(join($odelim,@list[$first .. ($first+$length)]));
    } else {
+#   printf("2Extract: %s,%s,%s,%s='%s'\n",$txt,$first,$length,$idelim,$odelim,
+#      join($odelim,@list[$first .. ($first+$length)]));
       return join($odelim,@list[$first .. ($first+$length)]);
    }
 }
@@ -12931,7 +13007,7 @@ sub fun_strlen
    good_args($#_,1) ||
       return "#-1 FUNCTION (STRLEN) EXPECTS 1 ARGUMENTS";
    
-   return ansi_length(evaluate($self,$prog,shift));
+   return ansi_length(ansi_trim(evaluate($self,$prog,shift)));
 }
 
 
@@ -13297,6 +13373,7 @@ sub fun_iter
    $idelim = " " if($idelim eq undef || $idelim eq "\@\@");
    my $odelim = evaluate($self,$prog,$_[3]);
 
+
    if($odelim eq "\@\@") {
       $odelim = "";
    } elsif($argc < 3 && $odelim eq undef) {
@@ -13512,6 +13589,7 @@ sub balanced_split
          $i += length("x$1$2");                       # move 1 char short
 	 $buf .= "\e\[$1$2";
       } elsif($ch eq "\\" && $#depth == -1) {
+	 $buf .= $ch;
 	 $escape = 1;
       } elsif($escape) {
 	 $buf .= $ch;
@@ -14533,10 +14611,9 @@ sub evaluate_substitutions
    my ($out,$seq,$debug);
 
    my $orig = $t;
-   while($t =~ /(\[|\\|%m[0-9]|%q[0-9a-z]|%i[0-9]|%[!pbrtnk#0-9%]|%(v|w)[a-zA-Z]|%=<[^>]+>|%\{[^}]+\}|##|#@)/i) {
+   while($t =~ /(\\|%m[0-9]|%q[0-9a-z]|%i[0-9]|%[!pbrtnk#0-9%]|%(v|w)[a-zA-Z]|%=<[^>]+>|%\{[^}]+\}|##|#@)/i) {
       ($seq,$t)=($1,$');                                   # store variables
       $out .= $`;
-
       if($seq eq "\\") {                               # skip over next char
          $out .= ansi_substr($t,0,1);
          $t = ansi_substr($t,1,ansi_length($t));
@@ -14554,7 +14631,7 @@ sub evaluate_substitutions
          } else {
             $out .= @{@{$$prog{iter_stack}}[-1]}{pos};
          }
-      } elsif($seq eq "[") {
+      } elsif($seq eq "[") { # remove this later?
          $out .= "[" if(ord(substr($`,-1)) == 27);       # escape sequence?
 #      } elsif($seq eq "]") {                           # removed for compat
 #         printf("FOUND: ']'\n");
@@ -15526,7 +15603,7 @@ sub good_atr_name
 
    if(reserved($attr) && !$flag) {                     # don't set that!
       return 0;
-   } elsif($attr =~ /^\s*([#a-z0-9\_\-\.]+)\s*$/i) {
+   } elsif($attr =~ /^\s*([#a-z0-9\_\-\.\/]+)\s*$/i) {
       return 1;
    } else {
       return 0;
@@ -16371,6 +16448,9 @@ sub server_process_line
                               cmd    => $input,
                              );
             } else {
+               if(conf("show_offline_cmd")) {
+                  con("[%s:%s] %s <Offline>\n",ts(),$$hash{hostname},$input);
+               }
                my ($cmd,$arg) = lookup_command($data,\%offline,$1,$',0);
                &{@offline{$cmd}}($hash,prog($user,$user),$arg);  # invoke cmd
             }
@@ -16489,7 +16569,12 @@ sub server_handle_sockets
                add_site_restriction($hash);
                @connected{$new} = $hash;
 
-               con("# Connect from: %s [%s]\n",$$hash{hostname},ts());
+
+               my $ignore = get(0,"conf.host_filter");
+               if($ignore eq undef || 
+                  !inlist($$hash{hostname},split(/,/,$ignore))) {
+                  con("# Connect from: %s [%s]\n",$$hash{hostname},ts());
+               }
                if($$hash{site_restriction} <= 2) {                  # banned
                   con("   BANNED   [Booted]\n");
                   if($$hash{site_restriction} == 2) {

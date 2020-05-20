@@ -182,6 +182,7 @@ sub load_defaults
    @default{function_limit}           = 2500;
    @default{weblog}                   = "yes";
    @default{conlog}                   = "yes";
+   @default{auditlog}                 = "yes";
    @default{httpd_invalid}            = 3;
    @default{login}                    = "Welcome to TeenyMUSH\r\n\r\n" .
                                         "   Type the below command to " .
@@ -1039,6 +1040,8 @@ sub cmd_shutdown
       return err("Permission denied.");
 
    cmd_wall($self,$prog,$_[0]) if($_[0] !~ /^\s*/);
+
+   audit($self,$prog,"\@shutdown");
 
    for my $key (keys %connected) {
       my $hash = @connected{$key};
@@ -1962,6 +1965,7 @@ sub cmd_perl
    my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    if(hasflag($self,"GOD")) {
+      audit($self,$prog,"\@perl");
       eval ( $txt );  
       necho(self   => $self,
             prog   => $prog,
@@ -2513,6 +2517,7 @@ sub cmd_boot
                   prog   => $prog,
                   source => [ "You \@booted port %s off!", $$hash{port} ],
                  );
+            audit($self,$prog,"Port $$hash{port} \@booted");
          } else {
             necho(self   => $self,
                   target => $hash,
@@ -2521,6 +2526,7 @@ sub cmd_boot
                   source => [ "You \@booted %s off!", obj_name($self,$hash)],
                   room   => [ $hash, "%s has been \@booted.",name($hash) ],
                  );
+            audit($self,$prog,"%s \@booted",obj_name($target,$target));
          }
          
          my $sock=$$hash{sock};
@@ -3840,6 +3846,9 @@ sub cmd_force
 #               hint   => "INTERNAL"
 #              );
 
+       if(owner_id($self) != owner_id($target)) {
+          audit($self,$prog,"%s \@forced",obj_name($target,$target));
+       }
        mushrun(self     => $target,
                prog     => $prog,
                runas    => $target,
@@ -4038,6 +4047,7 @@ sub cmd_toad
       $$cmd{toad_name2} = name($target,1);
       $$cmd{toad_objname} = obj_name($self,$target);
       $$cmd{toad_loc} = loc($target);
+      audit($self,$prog,"%s \@toaded",obj_name($target,$target));
 
       if(hasflag($target,"CONNECTED")) {
          cmd_boot($self,$prog,"#" . $$target{obj_id});
@@ -5302,7 +5312,7 @@ sub reconstitute
 {
    my ($name,$type,$pattern,$value,$flag,$switch) = @_;
 
-   $value =~ s/\r|\n//g;
+#   $value =~ s/\r|\n//g if !defined $$switch{raw};
 #   printf("###GOT HERE###\n");
 #   if($type eq undef && defined $$switch{command}) {
 #      printf("###GOT HERE 2###\n");
@@ -5391,6 +5401,8 @@ sub viewable
       return 0;                   # hide conf. attrs on #0 without a pattern
    } elsif($name eq "description") {
       return ($pat ne undef) ? 1 : 0;
+   } elsif($name eq "obj_last") {
+      return 1;
    } elsif($name eq "obj_lastsite") {
       return 1;
    } elsif($name eq "obj_created_by" && hasflag($obj,"PLAYER")) {
@@ -5413,10 +5425,11 @@ sub list_attr
    $pat = glob2re($pattern) if($pattern ne undef);
    $spat = glob2re($subpat) if($subpat ne undef);
 
-   for my $name (lattr($obj)) {
+   for my $name (lattr($obj), "last") {
       my $short = $name;
       $short =~ s/^obj_//;
-      next if($pat ne undef && $short !~ /$pat/i);
+      next if($pat ne undef && $short !~ /$pat/i || ($name eq "last" && $pat eq undef));
+      
 
       if(viewable($obj,$name,$pat)) {
          my $attr = mget($obj,$name);
@@ -5437,6 +5450,8 @@ sub list_attr
                $val = reconstitute($short,"","",short_hn(lastsite($obj)));
             } elsif($name eq "obj_created_by") {
                $val = reconstitute("first","","",short_hn($$attr{value}));
+            } elsif($name eq "last" && $pat ) {
+               $val = reconstitute($short,"","",lasttime($obj));
             } else {
                $val = reconstitute($short,
                                    $$attr{type},
@@ -5794,7 +5809,7 @@ sub cmd_set
    } else {                                                  # standard flag
       necho(self   => $self,
             prog   => $prog,
-            source => [ set_flag($self,$prog,$target,$value,$switch) ]
+            source => [ set_flag($self,$prog,$target,$value,0,$switch) ]
            );
    }
 }
@@ -6789,9 +6804,11 @@ sub ansi_string
 # ansi_substr
 #    Do a substr on a string while preserving the escape codes.
 #
+#    no-ansi flag : do not copy over escape sequences
+#
 sub ansi_substr
 {
-   my ($txt,$start,$count) = @_;
+   my ($txt,$start,$count,$noansi) = @_;
    my ($result,$data,$last);
    # foo
 
@@ -6812,9 +6829,12 @@ sub ansi_substr
 
    # loop through each "character" w/attached ansi codes
    for(my $i = $start;$i < $count && $i <= $#{$$data{ch}};$i++) {
-
-      my $code=join('',@{@{$$data{($i == $start) ? "snap" : "code"}}[$i]});
-      $result .= $code . @{$$data{ch}}[$i];
+      if(!$noansi) {
+         my $code=join('',@{@{$$data{($i == $start) ? "snap" : "code"}}[$i]});
+         $result .= $code . @{$$data{ch}}[$i];
+      } else {
+         $result .= @{$$data{ch}}[$i];
+      }
       $last = $#{@{$$data{snap}}[$i]};
    }
 
@@ -7054,16 +7074,30 @@ sub ansi_trim
 #printf("SUB:%s\n",ansi_substr($a,11,1));
 
 # flag definitions
-#    flag name, 1 character flag name, who can set it, if its an 
-#    attribute flag (2), or an object flag (1).
+#    letter      => 1 letter unique abbrivation for flag
+#    perm        => flags required to set this flag
+#    type        => 1 for object flag, 2 for attribute flag
+#    ord         => display flag order for vague compt w/tinymush.
+#    target_type => object must have these flags to get the flag
+#                   i.e. objects can not be set wizard, but players can.
 #
 sub initialize_flags
 {
    delete @flag{keys %flag};
 
    @flag{ANYONE}       ={ letter => "+",                   type => 1, ord=>99 };
-   @flag{GOD}          ={ letter => "G", perm => "GOD",    type => 1, ord=>5  };
-   @flag{WIZARD}       ={ letter => "W", perm => "GOD",    type => 1, ord=>6  };
+   @flag{GOD}          ={ letter      => "G",
+                          perm        => "GOD",
+                          type        => 1,
+                          ord         => 5,
+                          target_type => "PLAYER"
+                        };
+   @flag{WIZARD}       ={ letter      => "W", 
+                          perm        => "GOD",
+                          type        => 1,
+                          ord         => 6,
+                          target_type => "PLAYER"
+                        };
    @flag{PLAYER}       ={ letter => "P", perm => "GOD",    type => 1, ord=>1  };
    @flag{ROOM}         ={ letter => "R", perm => "GOD",    type => 1, ord=>2  };
    @flag{EXIT}         ={ letter => "e", perm => "GOD",    type => 1, ord=>3  };
@@ -7299,12 +7333,19 @@ sub can_set_flag
    $flag = trim($') if($flag =~ /^\s*!/);
 
    if(!defined @flag{uc($flag)}) {                          # not a flag
+      printf("can_set: 0\n");
       return 0;
    } 
 
    my $hash = @flag{uc($flag)};
 
-   if($$hash{perm} =~ /^!/) {       # can't have this perm flag and set flag
+   if(defined $$hash{target_type} && $$hash{target_type} =~ /^!/ &&
+           hasflag($obj,$')) {
+      return 0;
+   } elsif(defined $$hash{target_type} && $$hash{target_type} !~ /^!/ &&
+           !hasflag($obj,$$hash{target_type})) {
+      return 0;
+   } elsif($$hash{perm} =~ /^!/) {     # can't have this perm flag and set flag
       return (!hasflag($self,$')) ? 1 : 0;
    } else {                              # has to have this flag to set flag
       return (hasflag($self,$$hash{perm})) ? 1 : 0;
@@ -11538,15 +11579,15 @@ sub safe_split
 
    if($delim eq " " && !$flag) {                      # exclude inital spaces
       for(;$pos < $size;$pos++) {                     # when delim is a space
-          last if(ansi_remove(ansi_substr($txt,$pos,$dsize)) ne $delim);
+          last if(ansi_substr($txt,$pos,$dsize,1) ne $delim);
       }
    }
 
    for(;$pos < $size;$pos++) {
-      if(ansi_remove(ansi_substr($txt,$pos,$dsize)) eq $delim) {
+      if(ansi_substr($txt,$pos,$dsize,1) eq $delim) {
          if($delim eq " ") {
             for($pos++;$pos < $size && 
-               ansi_remove(ansi_substr($txt,$pos,1)) eq " ";$pos++) {};
+                ansi_substr($txt,$pos,1,1) eq " ";$pos++) {};
             $pos-- if($$ch[$pos] ne " ");
          }
          push(@result,ansi_substr($txt,$start,$pos-$start));
@@ -14954,6 +14995,8 @@ sub logit
 
    if($type eq "weblog") {
       $fn = "teenymush.web.log";
+   } elsif($type eq "auditlog") {
+      $fn = "teenymush.audit.log";
    } else {
       $fn = "teenymush.log";
    }
@@ -14975,7 +15018,7 @@ sub logit
 
    my $txt = sprintf("$fmt",@args);
 #   $txt =~ s/[^[::ascii::]]//g;
-   printf($fd "%s", $txt) if($fd ne undef);
+   printf($fd "%s", ansi_remove($txt)) if($fd ne undef);
 }
 
 sub web
@@ -14986,6 +15029,42 @@ sub web
 sub con
 {
    logit("conlog",@_) if(lc(conf("conlog")) eq "yes");
+}
+
+sub audit
+{
+   my ($self,$prog,$fmt,@args) = @_;
+   return if(lc(conf("auditlog")) ne "yes");
+
+   my $info = sprintf("[%s] $fmt by " . obj_name($self,$self),ts(),@args);
+
+   # add actual command issued
+   if(defined $$prog{created_by} &&
+      defined $$prog{created_by}->{last} &&
+      defined $$prog{created_by}->{last}->{cmd}) {
+      $info .= ", cmd: '" . $$prog{created_by}->{last}->{cmd} . "'";
+   } elsif(defined $$prog{user} &&
+      defined $$prog{user}->{last} &&
+      defined $$prog{user}->{last}->{cmd}) {
+      $info .= ", cmd: '" . $$prog{user}->{last}->{cmd} . "'";
+   }
+
+   # add hostname / ip information
+   if(defined $$prog{created_by} &&
+      defined $$prog{created_by}->{hostname}) {
+      $info .= ", Host: " . $$prog{created_by}->{hostname};
+   } elsif(defined $$prog{created_by} &&
+      defined $$prog{created_by}->{ip}) {
+      $info .= ", Host: " . $$prog{created_by}->{ip};
+   } elsif(defined $$prog{user} &&
+      defined $$prog{user}->{hostname}) {
+      $info .= ", Host: '" . $$prog{user}->{hostname};
+   } elsif(defined $$prog{user} &&
+      defined $$prog{user}->{ip}) {
+      $info .= ", Host: '" . $$prog{user}->{ip};
+   }
+
+   logit("auditlog","%s",$info);
 }
 
 
@@ -15297,6 +15376,7 @@ sub set_flag
    if(!is_flag($flag)) {
       return "I don't understand that flag. " . code();
    }
+
    if($flag =~ /^\s*!\s*/) {
       $remove = 1;
       $flag = trim($');
@@ -15305,9 +15385,15 @@ sub set_flag
    if(!$override && !can_set_flag($self,$obj,$flag)) {
       return "Permission DeNied";
    } elsif($remove) {                  # remove, don't check if set or not
+      if(($flag eq "WIZARD" || $flag eq "GOD") && hasflag($obj,$flag)) {
+         audit($self,$prog,"%s set !%s",obj_name($obj,$obj),$flag);
+      }
       db_remove_list($obj,"obj_flag",$flag);       # to mimic original mush
       return "Cleared.";
    } else {
+      if(($flag eq "WIZARD" || $flag eq "GOD") && !hasflag($obj,$flag)) {
+         audit($self,$prog,"%s set %s",obj_name($obj,$obj),$flag);
+      }
       db_set_list($obj,"obj_flag",$flag);
       return "Set.";
    }

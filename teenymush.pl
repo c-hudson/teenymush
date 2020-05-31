@@ -721,6 +721,7 @@ sub initialize_commands
    @command{"\@shutdown"}   ={ fun => sub { cmd_shutdown(@_); }             };
    @command{"train"}        ={ fun => sub { cmd_train(@_); }                };
    @command{"\@restore"}    ={ fun => sub { cmd_restore(@_); }              };
+   @command{"\@ping"}       ={ fun => sub { cmd_ping(@_); }                 };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -833,6 +834,18 @@ sub restore_process_line
    }
 }
 
+sub cmd_ping
+{
+   my ($self,$prog,$cmd) = @_;
+
+   mushrun(self   => obj($self),
+           prog   => $prog,
+           runas  => obj($self),
+           source => 0,
+           cmd    => $cmd,
+           ping   => 1
+          );
+}
 sub cmd_restore
 {
    my ($self,$prog) = (obj(shift),shift);
@@ -4106,9 +4119,13 @@ sub cmd_toad
 
 sub cmd_think
 {
-   my ($self,$prog,$txt) = (obj(shift),shift,shift);
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
 
-   my $txt = evaluate($self,$prog,$txt);
+   verify_switches($self,$prog,$switch,"noeval") || return;
+
+   if(!$$switch{noeval}) {
+      $txt = evaluate($self,$prog,$txt);
+   }
 
    if($txt !~ /^\s*$/) {
       necho(self   => $self,
@@ -5286,7 +5303,9 @@ sub cmd_doing
                    source => [ "Set." ]
                   );
    } elsif($txt =~ /^\s*$/) {
-      delete $connected{$$self{sock}}{obj_doing};
+      for my $s (keys %{@connected_user{$$self{obj_id}}}) {
+         delete @connected{$s}->{obj_doing};
+      }
       necho(self   => $self,
             prog   => $prog,
             source => [ "Removed." ]
@@ -5916,17 +5935,21 @@ sub cf_convert
    my $txt = shift;
    my $out;
 
-   while($txt =~ /(\-{0,1})(\d+)(\.?)(\d*)\s*(F|C)/ && myisnum("$1$2$3$4")) {
-       $out .= $`;
-       $txt = $';
-      if($5 eq "F") {
+   while($txt =~ /(\-{0,1})(\d+)(\.?)(\d*)(\s*)(F|C)/ && myisnum("$1$2$3$4")) {
+      $out .= $`;
+      $txt = $';
+      if (!(substr($`,-1) eq " " || $` eq undef)) {
+         $out .= "$1$2$3$4$5$6";
+         next;
+      }
+      if($6 eq "F") {
          my $value = sprintf("%s%s%s%s%s (%.1fC)",
-            $1,$2,$3,$4,$5,("$1$2$3$4" - 32) * .5556);
+            $1,$2,$3,$4,$6,("$1$2$3$4" - 32) * .5556);
          $value =~ s/\.0//g;
          $out .= $value;
       } else {
          my $value = sprintf("%s%s%s%s%s (%.1fF)",
-            $1,$2,$3,$4,$5,"$1$2$3$4" * 1.8 + 32);
+            $1,$2,$3,$4,$6,"$1$2$3$4" * 1.8 + 32);
          $value =~ s/\.0$//g;
          $out .= $value;
       }
@@ -6233,6 +6256,7 @@ sub who
 {
    my ($self,$prog,$txt,$flag) = (obj(shift),shift,shift,shift);
    my ($max,$online,@who,$idle,$count,$out,$extra,$hasperm,$name) = (2,0);
+   my ($nomushrun,$readonly) = (0,0);
 
    if(ref($self) eq "HASH") {
       $hasperm = ($flag || !hasflag($self,"WIZARD")) ? 0 : 1;
@@ -6242,6 +6266,11 @@ sub who
 
    # query the database for connected user, location, and socket
    # details.
+   $readonly = 1 if(defined $$prog{read_only});
+   $nomushrun = 1 if(defined $$prog{nomushrun});
+   $$prog{read_only} = 1;
+   $$prog{nomushrun} = 1;
+
    for my $key (sort {@{@connected{$b}}{start} <=> @{@connected{$a}}{start}} 
                 keys %connected) {
       my $hash = @connected{$key};
@@ -6311,12 +6340,16 @@ sub who
              ($$hash{site_restriction} == 69) ? " [HoneyPoted]" : ""
             );
       } elsif($$hash{site_restriction} != 69) {
+         my $doing = evaluate($self,$prog,$$hash{obj_doing});
+         $doing =~ s/\r|\n//g;
          $out .= sprintf("%s%4s %02d:%02d %4s  %s\r\n",$name,$extra,
              $$online{h},$$online{m},$$idle{max_val} . $$idle{max_abr},
-             $$hash{obj_doing});
+             ansi_substr($doing,0,44));
       }
    }
    $out .= sprintf("%d Players logged in\r\n",$online);        # show totals
+   delete @$prog{read_only} if !$readonly;
+   delete @$prog{nomushrun} if !$nomushrun;
    return $out;
 }
 
@@ -6812,20 +6845,19 @@ sub ansi_substr
    my ($result,$data,$last);
    # foo
 
-   $start = 0 if($start !~ /^\s*\d+\s*$/);                  # sanity checks
-   if($count !~ /^\s*\d+\s*$/) {
-      $count = $start;
-   } else {
-      $count += $start;
-   }
-   return undef if($start < 0);                         # no starting point
-
-
    if(ref($txt) eq "HASH") {
       $data = $txt;
    } else {
       $data = ansi_init($txt);
    }
+
+   $start = 0 if($start !~ /^\s*\d+\s*$/);                  # sanity checks
+   if($count !~ /^\s*\d+\s*$/) {
+      $count = ansi_length($txt);
+   } else {
+      $count += $start;
+   }
+   return undef if($start < 0);                         # no starting point
 
    # loop through each "character" w/attached ansi codes
    for(my $i = $start;$i < $count && $i <= $#{$$data{ch}};$i++) {
@@ -7224,6 +7256,24 @@ sub mget
    }
 }
 
+
+#
+# db_readonly
+#
+#   There are some situations where the program shouldn't modify the
+#   database. Determine what those are.
+#
+sub db_readonly
+{
+   return 0 if !defined @info{prog};            # no program info, assume RW
+
+   if(defined @info{prog}->{read_only}) {                # program is set RO
+      return 1;
+   } else {
+      return 0;                                                 # Read/Write
+   }
+}
+
 #
 # db_delete
 #    Clean up an object if needed. This could cause problems if
@@ -7236,6 +7286,8 @@ sub db_delete
 {
    my $obj = obj(shift);
   
+   return if db_readonly();
+
    if(defined @info{backup_mode} && @info{backup_mode}) {  # in backup mode
       delete @delta[$$obj{obj_id}] if(defined @delta[$$obj{obj_id}]);
       @deleted{$$obj{obj_id}} = 1;
@@ -7368,6 +7420,18 @@ sub flag_letter
    } else {
       return undef;
    }
+}
+
+sub get_flag_by_letter
+{
+   my $letter = trim(shift);
+
+   for my $key (keys %flag) {
+      if(@flag{$key}->{letter} eq $letter) {
+         return $key;
+      }
+   }
+   return undef;
 }
 
 #
@@ -7542,6 +7606,8 @@ sub db_set
    my ($id,$key,$value,$created,$modified)=
        (obj(shift),lc(shift),shift,shift,shift);
 
+   return if db_readonly();
+
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
 
    my $obj = dbref_mutate($id);
@@ -7586,6 +7652,8 @@ sub db_set_flag
 {
    my ($id,$key,$flag,$value) = (obj(shift),lc(shift),shift,shift);
 
+   return if db_readonly();
+
    return if $flag eq undef;
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
    $id = $$id{obj_id} if(ref($id) eq "HASH");
@@ -7609,6 +7677,8 @@ sub db_set_list
 {
    my ($id,$key,$value,$created,$modified) = 
       (obj(shift),lc(shift),lc(shift),shift,shift);
+
+   return if db_readonly();
 
    return if $value eq undef;
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
@@ -7639,6 +7709,8 @@ sub db_set_list
 sub db_remove_list
 {
    my ($id,$key,$value) = (obj(shift),lc(shift),lc(shift));
+
+   return if db_readonly();
 
    return if $value eq undef;
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
@@ -7703,6 +7775,8 @@ sub db_set_hash
    my ($id,$key,$value,$sub,$created,$modified) = 
        (obj(shift),lc(shift),lc(shift),shift,shift,shift);
 
+   return if db_readonly();
+
    return if $value eq undef;
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
 
@@ -7732,6 +7806,8 @@ sub db_set_hash
 sub db_remove_hash
 {
    my ($id,$key,$value,$clean) = (obj(shift),lc(shift),lc(shift),shift);
+
+   return if db_readonly();
 
    return if $value eq undef;
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
@@ -7910,7 +7986,15 @@ sub run_obj_commands
                @{$$prog{attr}}{atr_name} eq $$hash{atr_name})) {
 
                # http head request requires just find the command, no run
-               if(!defined $$prog{head}) {
+               if(defined $$prog{ping} && $$prog{ping}) {
+                   necho(self   => $self,
+                         prog   => $prog,
+                         source => [ "PONG: \$command : %s/%s in %s",
+                                     obj_name($obj,$obj),
+                                     $$hash{atr_name},
+                                     obj_name(loc($obj),loc($obj)) ]
+                        );
+               } elsif(!defined $$prog{head}) {
                    mushrun(self   => $self,
                            prog   => $prog,
                            runas  => $obj,
@@ -8070,13 +8154,14 @@ sub mushrun_add_cmd
    # add to command stack or program stack
    my $prog = @$arg{prog};
    my $stack = $$prog{stack};
+   $$prog{ping} = @$arg{ping};
 
    for my $i (0 .. $#cmd) {
       my $data = { runas   => $$arg{runas},
                    source  => $$arg{source},
                    invoker => $$arg{invoker},
                    prog    => $$arg{prog},
-                   mdigits => $$arg{match},
+                   mdigits => $$arg{match}
                  };
 
       if(conf("debug") == 1) {
@@ -8162,7 +8247,7 @@ sub in_run_function
 {
    my $prog = shift;
 
-   if(defined $$prog{output} && defined $$prog{nomushrun} && $$prog{nomushrun}){
+   if(defined $$prog{nomushrun} && $$prog{nomushrun}){
       return 1;
    } else {
       return 0;
@@ -8317,7 +8402,9 @@ sub mushrun_done
    my $cost = ($$prog{command} + ($$prog{function} / 10)) / 128;
    my $attr;
 
-   
+#   if(defined $$prog{attr}) {
+#      printf("%s\n",print_var($prog));
+#   }
    if(defined $$prog{capture} && ref($$prog{capture}) eq "HASH") {                    # nope, not actually done
       return if mini_trigger($prog);       # handle trigger part of @capture
    }
@@ -8421,6 +8508,7 @@ sub spin
          my $stack = $$prog{stack};
          my $pos = 0;
          $count = 0;
+         @info{prog} = @engine{$pid};
 
          # run 100 commands, backgrounded command are excluded because 
          # someone could put 100 waits in for far in the furture, the code
@@ -8436,7 +8524,6 @@ sub spin
 
             # optimization for sleeping process
             last if(defined $$cmd{sleep} && $$cmd{sleep} > time());
-
             my $result = spin_run($prog,$cmd);
 
             if($result eq "BACKGROUNDED") {
@@ -8465,6 +8552,7 @@ sub spin
          }
    
          mushrun_done($prog) if($#$stack == -1);            # program is done
+         delete @info{prog};
       }
       ualarm(0);
    };
@@ -8547,7 +8635,12 @@ sub run_internal
                             );
       }
         
-      if(ref($$command{runas}) eq "HASH") {
+      if(defined $$prog{ping} && $$prog{ping}) {
+         necho(self   => $$command{created_by},
+               prog   => $prog,
+               source => [ "PONG: \@command : Internal Command" ]
+              );;
+      } elsif(ref($$command{runas}) eq "HASH") {
          $result = &{@{$$hash{$cmd}}{fun}}(@{$$command{runas}}{obj_id},
                                            $prog,
                                            trim($arg),
@@ -8626,6 +8719,7 @@ sub spin_run
    }
 
    $$cmd{origcmd} = $$cmd{cmd};
+#   printf("PING: '%s'\n",$$prog{ping});
    if($$cmd{cmd} =~ /^\s*$/) {
       return;                                                 # empty command
    } elsif($$cmd{cmd} =~ /^\s*%\{([^ ]+)\}/) {                # found variable
@@ -9310,138 +9404,145 @@ sub pretty
 sub initialize_functions
 {
    delete @fun{keys %fun};
-   @fun{info}      = sub { return &fun_info(@_);                   };
-   @fun{dump}      = sub { return &fun_dump(@_);                   };
-   @fun{variables} = sub { return &fun_variables(@_);              };
-   @fun{lvariable} = sub { return &fun_lvariable(@_);              };
-   @fun{password}  = sub { return &fun_password(@_);               };
-   @fun{s}         = sub { return &fun_s(@_);                      };
-   @fun{set}       = sub { return &fun_set(@_);                    };
-   @fun{EVAL}      = sub { return &fun_u(@_);                      };
-   @fun{html_strip}= sub { return &fun_html_strip(@_);             };
-   @fun{tohex}     = sub { return &fun_tohex(@_);                  };
-   @fun{foreach}   = sub { return &fun_foreach(@_);                };
-   @fun{itext}     = sub { return &fun_itext(@_);                  };
-   @fun{inum}      = sub { return &fun_inum(@_);                   };
-   @fun{ilev}      = sub { return &fun_ilev(@_);                   };
-   @fun{pack}      = sub { return &fun_pack(@_);                   };
-   @fun{unpack}    = sub { return &fun_unpack(@_);                 };
-   @fun{round}     = sub { return &fun_round(@_);                  };
-   @fun{if}        = sub { return &fun_if(@_);                     };
-   @fun{ifelse}    = sub { return &fun_if(@_);                     };
-   @fun{pid}       = sub { return &fun_pid(@_);                    };
-   @fun{lpid}      = sub { return &fun_lpid(@_);                   };
-   @fun{null}      = sub { return &fun_null(@_);                   };
-   @fun{args}      = sub { return &fun_args(@_);                   };
-   @fun{shift}     = sub { return &fun_shift(@_);                  };
-   @fun{unshift}   = sub { return &fun_unshift(@_);                };
-   @fun{pop}       = sub { return &fun_pop(@_);                    };
-   @fun{push}      = sub { return &fun_push(@_);                   };
-   @fun{asc}       = sub { return &fun_ord(@_);                    };
-   @fun{ord}       = sub { return &fun_ord(@_);                    };
-   @fun{chr}       = sub { return &fun_chr(@_);                    };
-   @fun{escape}    = sub { return &fun_escape(@_);                 };
-   @fun{trim}      = sub { return &fun_trim(@_);                   };
-   @fun{ansi}      = sub { return &fun_ansi(@_);                   };
-   @fun{ansi_remove}=sub { return &fun_ansi_remove(@_);            };
-   @fun{colors}    = sub { return &fun_colors(@_);                 };
-   @fun{ansi_debug}= sub { return &fun_ansi_debug(@_);             };
-   @fun{substr}    = sub { return &fun_substr(@_);                 };
-   @fun{mul}       = sub { return &fun_mul(@_);                    };
-   @fun{file}      = sub { return &fun_file(@_);                   };
-   @fun{cat}       = sub { return &fun_cat(@_);                    };
-   @fun{space}     = sub { return &fun_space(@_);                  };
-   @fun{repeat}    = sub { return &fun_repeat(@_);                 };
-   @fun{time}      = sub { return &fun_time(@_);                   };
-   @fun{keys}      = sub { return &fun_keys(@_);                   };
-   @fun{timezone}  = sub { return &fun_timezone(@_);               };
-   @fun{flags}     = sub { return &fun_flags(@_);                  };
-   @fun{quota}     = sub { return &fun_quota_left(@_);             };
-   @fun{input}     = sub { return &fun_input(@_);                  };
-   @fun{has_input} = sub { return &fun_has_input(@_);              };
-   @fun{strlen}    = sub { return &fun_strlen(@_);                 };
-   @fun{right}     = sub { return &fun_right(@_);                  };
-   @fun{left}      = sub { return &fun_left(@_);                   };
-   @fun{lattr}     = sub { return &fun_lattr(@_);                  };
-   @fun{iter}      = sub { return &fun_iter(@_);                   };
-   @fun{list}      = sub { return &fun_list(@_);                   };
-   @fun{citer}     = sub { return &fun_citer(@_);                  };
-   @fun{parse}     = sub { return &fun_iter(@_);                   };
-   @fun{huh}       = sub { return "#-1 Undefined function";        };
-   @fun{ljust}     = sub { return &fun_ljust(@_);                  };
-   @fun{rjust}     = sub { return &fun_rjust(@_);                  };
-   @fun{loc}       = sub { return &fun_loc(@_);                    };
-   @fun{extract}   = sub { return &fun_extract(@_);                };
-   @fun{lwho}      = sub { return &fun_lwho(@_);                   };
-   @fun{remove}    = sub { return &fun_remove(@_);                 };
-   @fun{get}       = sub { return &fun_get(@_);                    };
-   @fun{eval}      = sub { return &fun_eval(@_);                   };
-   @fun{edit}      = sub { return &fun_edit(@_);                   };
-   @fun{add}       = sub { return &fun_add(@_);                    };
-   @fun{sub}       = sub { return &fun_sub(@_);                    };
-   @fun{div}       = sub { return &fun_div(@_);                    };
-   @fun{fdiv}      = sub { return &fun_fdiv(@_);                   };
-   @fun{secs}      = sub { return &fun_secs(@_);                   };
-   @fun{loadavg}   = sub { return &fun_loadavg(@_);                };
-   @fun{after}     = sub { return &fun_after(@_);                  };
-   @fun{before}    = sub { return &fun_before(@_);                 };
-   @fun{member}    = sub { return &fun_member(@_);                 };
-   @fun{index}     = sub { return &fun_index(@_);                  };
-   @fun{replace}   = sub { return &fun_replace(@_);                };
-   @fun{num}       = sub { return &fun_num(@_);                    };
-   @fun{lnum}      = sub { return &fun_lnum(@_);                   };
-   @fun{name}      = sub { return &fun_name(0,@_);                 };
-   @fun{fullname}  = sub { return &fun_name(1,@_);                 };
-   @fun{type}      = sub { return &fun_type(@_);                   };
-   @fun{u}         = sub { return &fun_u(@_);                      };
-   @fun{v}         = sub { return &fun_v(@_);                      };
-   @fun{r}         = sub { return &fun_r(@_);                      };
-   @fun{setq}      = sub { return &fun_setq(@_);                   };
-   @fun{setr}      = sub { return &fun_setr(@_);                   };
-   @fun{mid}       = sub { return &fun_substr(@_);                 };
-   @fun{center}    = sub { return &fun_center(@_);                 };
-   @fun{rest}      = sub { return &fun_rest(@_);                   };
-   @fun{first}     = sub { return &fun_first(@_);                  };
-   @fun{last}      = sub { return &fun_last(@_);                   };
-   @fun{switch}    = sub { return &fun_switch(@_);                 };
-   @fun{words}     = sub { return &fun_words(@_);                  };
-   @fun{eq}        = sub { return &fun_eq(@_);                     };
-   @fun{not}       = sub { return &fun_not(@_);                    };
-   @fun{match}     = sub { return &fun_match(@_);                  };
-   @fun{strmatch}  = sub { return &fun_strmatch(@_);               };
-   @fun{isnum}     = sub { return &fun_isnum(@_);                  };
-   @fun{gt}        = sub { return &fun_gt(@_);                     };
-   @fun{gte}       = sub { return &fun_gte(@_);                    };
-   @fun{lt}        = sub { return &fun_lt(@_);                     };
-   @fun{lte}       = sub { return &fun_lte(@_);                    };
-   @fun{or}        = sub { return &fun_or(@_);                     };
-   @fun{owner}     = sub { return &fun_owner(@_);                  };
-   @fun{and}       = sub { return &fun_and(@_);                    };
-   @fun{hasflag}   = sub { return &fun_hasflag(@_);                };
-   @fun{squish}    = sub { return &fun_squish(@_);                 };
-   @fun{capstr}    = sub { return &fun_capstr(@_);                 };
-   @fun{lcstr}     = sub { return &fun_lcstr(@_);                  };
-   @fun{ucstr}     = sub { return &fun_ucstr(@_);                  };
-   @fun{setinter}  = sub { return &fun_setinter(@_);               };
-   @fun{listinter} = sub { return &fun_listinter(@_);              };
-   @fun{sort}      = sub { return &fun_sort(@_);                   };
-   @fun{mudname}   = sub { return &fun_mudname(@_);                };
-   @fun{version}   = sub { return &fun_version(@_);                };
-   @fun{inuse}     = sub { return &inuse_player_name(@_);          };
-   @fun{web}       = sub { return &fun_web(@_);                    };
-   @fun{run}       = sub { return &fun_run(@_);                    };
-   @fun{lexits}    = sub { return &fun_lexits(@_);                 };
-   @fun{lcon}      = sub { return &fun_lcon(@_);                   };
-   @fun{home}      = sub { return &fun_home(@_);                   };
-   @fun{rand}      = sub { return &fun_rand(@_);                   };
-   @fun{lrand}     = sub { return &fun_lrand(@_);                  };
-   @fun{reverse}   = sub { return &fun_reverse(@_);                };
-   @fun{base64}    = sub { return &fun_base64(@_);                 };
-   @fun{compress}  = sub { return &fun_compress(@_);               };
-   @fun{uncompress}  = sub { return &fun_uncompress(@_);           };
-   @fun{revwords}  = sub { return &fun_revwords(@_);               };
-   @fun{idle}      = sub { return &fun_idle(@_);                   };
-   @fun{fold}      = sub { return &fun_fold(@_);                   };
+   @fun{info}       = sub { return &fun_info(@_);                  };
+   @fun{dump}       = sub { return &fun_dump(@_);                  };
+   @fun{variables}  = sub { return &fun_variables(@_);             };
+   @fun{lvariable}  = sub { return &fun_lvariable(@_);             };
+   @fun{password}   = sub { return &fun_password(@_);              };
+   @fun{s}          = sub { return &fun_s(@_);                     };
+   @fun{set}        = sub { return &fun_set(@_);                   };
+   @fun{EVAL}       = sub { return &fun_u(@_);                     };
+   @fun{html_strip} = sub { return &fun_html_strip(@_);            };
+   @fun{tohex}      = sub { return &fun_tohex(@_);                 };
+   @fun{foreach}    = sub { return &fun_foreach(@_);               };
+   @fun{itext}      = sub { return &fun_itext(@_);                 };
+   @fun{inum}       = sub { return &fun_inum(@_);                  };
+   @fun{ilev}       = sub { return &fun_ilev(@_);                  };
+   @fun{pack}       = sub { return &fun_pack(@_);                  };
+   @fun{unpack}     = sub { return &fun_unpack(@_);                };
+   @fun{round}      = sub { return &fun_round(@_);                 };
+   @fun{if}         = sub { return &fun_if(@_);                    };
+   @fun{ifelse}     = sub { return &fun_if(@_);                    };
+   @fun{pid}        = sub { return &fun_pid(@_);                   };
+   @fun{lpid}       = sub { return &fun_lpid(@_);                  };
+   @fun{null}       = sub { return &fun_null(@_);                  };
+   @fun{args}       = sub { return &fun_args(@_);                  };
+   @fun{shift}      = sub { return &fun_shift(@_);                 };
+   @fun{unshift}    = sub { return &fun_unshift(@_);               };
+   @fun{pop}        = sub { return &fun_pop(@_);                   };
+   @fun{push}       = sub { return &fun_push(@_);                  };
+   @fun{asc}        = sub { return &fun_ord(@_);                   };
+   @fun{ord}        = sub { return &fun_ord(@_);                   };
+   @fun{chr}        = sub { return &fun_chr(@_);                   };
+   @fun{escape}     = sub { return &fun_escape(@_);                };
+   @fun{trim}       = sub { return &fun_trim(@_);                  };
+   @fun{ansi}       = sub { return &fun_ansi(@_);                  };
+   @fun{ansi_remove}= sub { return &fun_ansi_remove(@_);           };
+   @fun{colors}     = sub { return &fun_colors(@_);                };
+   @fun{ansi_debug} = sub { return &fun_ansi_debug(@_);            };
+   @fun{substr}     = sub { return &fun_substr(@_);                };
+   @fun{mul}        = sub { return &fun_mul(@_);                   };
+   @fun{file}       = sub { return &fun_file(@_);                  };
+   @fun{cat}        = sub { return &fun_cat(@_);                   };
+   @fun{space}      = sub { return &fun_space(@_);                 };
+   @fun{repeat}     = sub { return &fun_repeat(@_);                };
+   @fun{time}       = sub { return &fun_time(@_);                  };
+   @fun{keys}       = sub { return &fun_keys(@_);                  };
+   @fun{timezone}   = sub { return &fun_timezone(@_);              };
+   @fun{flags}      = sub { return &fun_flags(@_);                 };
+   @fun{quota}      = sub { return &fun_quota_left(@_);            };
+   @fun{input}      = sub { return &fun_input(@_);                 };
+   @fun{has_input}  = sub { return &fun_has_input(@_);             };
+   @fun{strlen}     = sub { return &fun_strlen(@_);                };
+   @fun{right}      = sub { return &fun_right(@_);                 };
+   @fun{left}       = sub { return &fun_left(@_);                  };
+   @fun{lattr}      = sub { return &fun_lattr(@_);                 };
+   @fun{iter}       = sub { return &fun_iter(@_);                  };
+   @fun{list}       = sub { return &fun_list(@_);                  };
+   @fun{citer}      = sub { return &fun_citer(@_);                 };
+   @fun{parse}      = sub { return &fun_iter(@_);                  };
+   @fun{huh}        = sub { return "#-1 Undefined function";       };
+   @fun{ljust}      = sub { return &fun_ljust(@_);                 };
+   @fun{rjust}      = sub { return &fun_rjust(@_);                 };
+   @fun{loc}        = sub { return &fun_loc(@_);                   };
+   @fun{extract}    = sub { return &fun_extract(@_);               };
+   @fun{lwho}       = sub { return &fun_lwho(@_);                  };
+   @fun{remove}     = sub { return &fun_remove(@_);                };
+   @fun{get}        = sub { return &fun_get(@_);                   };
+   @fun{default}    = sub { return &fun_default(@_);               };
+   @fun{eval}       = sub { return &fun_eval(@_);                  };
+   @fun{edit}       = sub { return &fun_edit(@_);                  };
+   @fun{add}        = sub { return &fun_add(@_);                   };
+   @fun{sub}        = sub { return &fun_sub(@_);                   };
+   @fun{div}        = sub { return &fun_div(@_);                   };
+   @fun{fdiv}       = sub { return &fun_fdiv(@_);                  };
+   @fun{secs}       = sub { return &fun_secs(@_);                  };
+   @fun{loadavg}    = sub { return &fun_loadavg(@_);               };
+   @fun{after}      = sub { return &fun_after(@_);                 };
+   @fun{before}     = sub { return &fun_before(@_);                };
+   @fun{member}     = sub { return &fun_member(@_);                };
+   @fun{index}      = sub { return &fun_index(@_);                 };
+   @fun{replace}    = sub { return &fun_replace(@_);               };
+   @fun{num}        = sub { return &fun_num(@_);                   };
+   @fun{lnum}       = sub { return &fun_lnum(@_);                  };
+   @fun{name}       = sub { return &fun_name(0,@_);                };
+   @fun{fullname}   = sub { return &fun_name(1,@_);                };
+   @fun{type}       = sub { return &fun_type(@_);                  };
+   @fun{u}          = sub { return &fun_u(@_);                     };
+   @fun{v}          = sub { return &fun_v(@_);                     };
+   @fun{r}          = sub { return &fun_r(@_);                     };
+   @fun{setq}       = sub { return &fun_setq(@_);                  };
+   @fun{setr}       = sub { return &fun_setr(@_);                  };
+   @fun{mid}        = sub { return &fun_substr(@_);                };
+   @fun{strtrunc}   = sub { return &fun_strtrunc(@_);              };
+   @fun{center}     = sub { return &fun_center(@_);                };
+   @fun{inc}        = sub { return &fun_inc(@_);                   };
+   @fun{dec}        = sub { return &fun_dec(@_);                   };
+   @fun{rest}       = sub { return &fun_rest(@_);                  };
+   @fun{first}      = sub { return &fun_first(@_);                 };
+   @fun{last}       = sub { return &fun_last(@_);                  };
+   @fun{switch}     = sub { return &fun_switch(@_);                };
+   @fun{words}      = sub { return &fun_words(@_);                 };
+   @fun{eq}         = sub { return &fun_eq(@_);                    };
+   @fun{not}        = sub { return &fun_not(@_);                   };
+   @fun{match}      = sub { return &fun_match(@_);                 };
+   @fun{strmatch}   = sub { return &fun_strmatch(@_);              };
+   @fun{isnum}      = sub { return &fun_isnum(@_);                 };
+   @fun{gt}         = sub { return &fun_gt(@_);                    };
+   @fun{gte}        = sub { return &fun_gte(@_);                   };
+   @fun{lt}         = sub { return &fun_lt(@_);                    };
+   @fun{lte}        = sub { return &fun_lte(@_);                   };
+   @fun{or}         = sub { return &fun_or(@_);                    };
+   @fun{bor}        = sub { return &fun_bor(@_);                   };
+   @fun{owner}      = sub { return &fun_owner(@_);                 };
+   @fun{and}        = sub { return &fun_and(@_);                   };
+   @fun{hasflag}    = sub { return &fun_hasflag(@_);               };
+   @fun{orflags}    = sub { return &fun_orflags(@_);               };
+   @fun{squish}     = sub { return &fun_squish(@_);                };
+   @fun{capstr}     = sub { return &fun_capstr(@_);                };
+   @fun{lcstr}      = sub { return &fun_lcstr(@_);                 };
+   @fun{ucstr}      = sub { return &fun_ucstr(@_);                 };
+   @fun{setinter}   = sub { return &fun_setinter(@_);              };
+   @fun{listinter}  = sub { return &fun_listinter(@_);             };
+   @fun{sort}       = sub { return &fun_sort(@_);                  };
+   @fun{mudname}    = sub { return &fun_mudname(@_);               };
+   @fun{version}    = sub { return &fun_version(@_);               };
+   @fun{inuse}      = sub { return &inuse_player_name(@_);         };
+   @fun{web}        = sub { return &fun_web(@_);                   };
+   @fun{run}        = sub { return &fun_run(@_);                   };
+   @fun{lexits}     = sub { return &fun_lexits(@_);                };
+   @fun{lcon}       = sub { return &fun_lcon(@_);                  };
+   @fun{home}       = sub { return &fun_home(@_);                  };
+   @fun{rand}       = sub { return &fun_rand(@_);                  };
+   @fun{lrand}      = sub { return &fun_lrand(@_);                 };
+   @fun{reverse}    = sub { return &fun_reverse(@_);               };
+   @fun{base64}     = sub { return &fun_base64(@_);                };
+   @fun{compress}   = sub { return &fun_compress(@_);              };
+   @fun{uncompress} = sub { return &fun_uncompress(@_);            };
+   @fun{revwords}   = sub { return &fun_revwords(@_);              };
+   @fun{idle}       = sub { return &fun_idle(@_);                  };
+   @fun{conn}       = sub { return &fun_conn(@_);                  };
+   @fun{fold}       = sub { return &fun_fold(@_);                  };
    @fun{telnet_open}= sub { return &fun_telnet(@_);                };
    @fun{min}        = sub { return &fun_min(@_);                   };
    @fun{find}       = sub { return &fun_find(@_);                  };
@@ -9473,6 +9574,15 @@ sub initialize_functions
    @fun{help}       = sub { return &fun_help(@_);                  };
    @fun{graph}      = sub { return &fun_graph(@_);                 };
    @fun{strcat}     = sub { return &fun_strcat(@_);                };
+   @fun{readonly}   = sub { return &fun_readonly(@_);              };
+   @fun{encrypt}    = sub { return &fun_encrypt(@_);               };
+   @fun{decrypt}    = sub { return &fun_decrypt(@_);               };
+   @fun{haspower}   = sub { return &fun_haspower(@_);              };
+   @fun{zone}       = sub { return &fun_zone(@_);                  };
+   @fun{starttime}  = sub { return &fun_starttime(@_);             };
+   @fun{delete}     = sub { return &fun_delete(@_);                };
+   @fun{findable}   = sub { return &fun_findable(@_);              };
+   @fun{power}      = sub { return &fun_power(@_);                 };
 }
 
 
@@ -9626,6 +9736,115 @@ sub ansi_compress
    return $result . $data;
 }
 
+#
+# crypt_code
+#    This is a port of the C code in TinyMUSH/Rhost to perl. It is
+#    functionally the same.
+#
+sub crypt_code
+{
+   my ($self,$prog,$txt,$pass,$type) = @_;
+   my $txt = evaluate($self,$prog,$txt);
+   my $out;
+
+   for(my ($x,$y)=(0,0);$x < length($txt);$x++,$y++) {
+      $y = 0 if $y >= length($pass);
+      my $ch = ord(substr($txt,$x,1));
+      my $p  = ord(substr($pass,$y,1));
+
+      $out .= ($type) ? chr(($ch-32+$p-32)%95+32) : chr(($ch-$p+190)%95+32);
+   }  
+   return $out;
+}
+
+#
+# fun_haspower
+#    Place holder for when powers are implimented.
+#
+sub fun_haspower
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,2) ||
+     return "#-1 FUNCTION (ZONE) EXPECTS 2 ARGUMENTS";
+
+   return 0;
+}
+
+#
+# fun_zone
+#    Place holder for when powers are implimented.
+#
+sub fun_zone
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (ENCRYPT) EXPECTS 1 ARGUMENT";
+
+   return 0;
+}
+
+sub fun_starttime
+{
+   my ($self,$prog) = (obj(shift),shift);
+   
+   good_args($#_,0) ||
+     return "#-1 FUNCTION (STARTTIME) EXPECTS 0 ARGUMENTS";
+
+   return scalar localtime(@info{server_start});
+}
+
+sub fun_encrypt
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,2) ||
+     return "#-1 FUNCTION (ENCRYPT) EXPECTS 2 ARGUMENTS";
+
+   my $text = evaluate($self,$prog,shift);
+   my $pass = evaluate($self,$prog,shift);
+
+   return crypt_code($self,$prog,$text,$pass,1);
+}
+
+sub fun_decrypt
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,2) ||
+     return "#-1 FUNCTION (DECRYPT) EXPECTS 2 ARGUMENTS";
+
+   my $text = evaluate($self,$prog,shift);
+   my $pass = evaluate($self,$prog,shift);
+
+   return crypt_code($self,$prog,$text,$pass,0);
+}
+
+sub fun_readonly
+{
+   my ($self,$prog) = @_;
+
+   $$prog{read_only} = 1;
+   return undef;
+}
+
+sub fun_power
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,2) ||
+     return "#-1 FUNCTION (POWER) EXPECTS 2 ARGUMENTS";
+
+   my $num = evaluate($self,$prog,shift);
+   my $pow = evaluate($self,$prog,shift);
+
+   $num = 1 if(!looks_like_number($num));
+   $pow = 1 if(!looks_like_number($pow));
+
+   return $num ** $pow;
+}
+      
 sub fun_strcat
 {
    my ($self,$prog) = (obj(shift),shift);
@@ -11181,6 +11400,38 @@ sub fun_idle
    }
 }
 
+sub fun_conn
+{
+   my ($self,$prog,$txt) = (obj(shift),shift);
+   my ($result,$target,$port) = (-1);
+
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (CONN) EXPECTS 1 ARGUMENT";
+
+   my $lookfor = evaluate($self,$prog,shift);
+
+   if(isint($lookfor)) {
+      $port = $lookfor;
+   } else {
+     $target = find_player($self,$prog,$lookfor) ||
+        return -1;
+   }
+
+   for my $key (keys %connected) {
+      my $hash = @connected{$key};
+
+      if(!hasflag($hash,"DARK")) {
+         if(($port eq undef && $$target{obj_id} == $$hash{obj_id}) ||
+            ($port ne undef && $$hash{port} == $port)) {
+
+            my $onfor = time() - $$hash{start};
+            $result = $onfor if($onfor > $result);
+         }
+      }
+   }
+   return $result;
+}
+
 #
 # lowercase the provided string(s)
 #
@@ -11524,6 +11775,9 @@ sub fun_run
    good_args($#_,1) ||
       return "#-1 FUNCTION (RUN) REQUIRES 1 ARGUMENT";
 
+   in_run_function($prog) &&
+      return "#-1 Function run cannot be called recursively or not allowed.";
+
    my $txt = evaluate($self,$prog,shift);
 
    my $command = { runas => $self };
@@ -11684,7 +11938,8 @@ sub fun_lwho
       return "#-1 ARGUMENT 1 SHOULD BE EITHER 0 OR 1"; 
    }
    
-   for my $key (keys %connected) {
+   for my $key (sort {@{@connected{$b}}{start} <=> @{@connected{$a}}{start}} 
+                keys %connected) {
       my $hash = @connected{$key};
       if($$hash{raw} != 0||!defined $$hash{obj_id}||$$hash{obj_id} eq undef) {
          next;
@@ -11836,9 +12091,8 @@ sub fun_loc
    my ($self,$prog) = (obj(shift),shift);
 
    good_args($#_,1) ||
-      return "#-1 FUNCTION (LOC) EXPECTS 1 ARGUMENT $#_";
+      return "#-1 FUNCTION (LOC) EXPECTS 1 ARGUMENT";
 
-   my $foo = $_[0];
    my $target = find($self,$prog,evaluate($self,$prog,shift));
 
    if($target eq undef) {
@@ -11852,9 +12106,57 @@ sub fun_loc
       } else {
          return "#" . dest($target);
       }
+   } elsif(controls($self,$target)) {
+      return "#" . loc($target);
+   } elsif(hasflag($target,"UNFINDABLE") || hasflag($target,"DARK")) {
+      return "#-1";
    } else {
       return "#" . loc($target);
    }
+}
+
+sub fun_findable
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,2) ||
+      return "#-1 FUNCTION (FINDABLE) EXPECTS 2 ARGUMENTS";
+
+   my $obj = find($self,$prog,evaluate($self,$prog,shift)) ||
+      return "#-1 NOT FOUND";
+
+   my $target = find($self,$prog,evaluate($self,$prog,shift)) ||
+      return "#-1 NOT FOUND";
+
+   return "#-1 PERMISSION DENIED" if(!readonly($self,$obj));
+
+   my $loc = fun_loc($obj,$prog,"#" . $$target{obj_id});
+
+   if($loc =~ /^#-/) {
+      return 0;
+   } else {
+      return 1;
+   }
+}
+
+sub fun_orflags
+{
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,2) ||
+      return "#-1 FUNCTION (HASFLAG) EXPECTS 2 ARGUMENTS";
+
+   my $target = find($self,$prog,evaluate($self,$prog,shift)) ||
+      return "#-1 NOT FOUND";
+
+   my $flags = shift;
+   $flags =~ s/ //g;
+
+   for my $i (split(//,$flags)) {
+      my $flag = get_flag_by_letter($i);
+      return 1 if($flag ne undef && hasflag($target,$flag));
+   }
+   return 0;
 }
 
 sub fun_hasflag
@@ -11932,6 +12234,25 @@ sub fun_or
       return 1 if($val);
    }
    return 0;
+}
+
+sub fun_bor
+{
+   my ($self,$prog) = (shift,shift);
+   my $result = 0;
+
+   good_args($#_,1 .. 100) ||
+      return "#-1 FUNCTION (BOR) EXPECTS 1 AND 100 ARGUMENTS";
+
+   for my $i (@_) {
+      my $value = evaluate($self,$prog,$i);
+      if(isint($value)) {
+         $result |= $value;
+      } else {
+         return "#-1 ARGUMENTS MUST BE INTEGERS"
+      }
+   }
+   return $result;
 }
 
 
@@ -12065,22 +12386,56 @@ sub fun_strmatch
    return ($txt =~ /^$pat$/i) ? 1 : 0;
 }
 
+sub fun_inc
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,0,1) ||
+      return "#-1 FUNCTION (INC) EXPECTS 0 OR 1 ARGUMENTS";
+
+   my $number = evaluate($self,$prog,shift);
+
+   if($number =~ /^\s*(\d+)\s*$/) {
+      return sprintf("%d",$1 + 1);
+   } else {
+      return 1;
+   }
+}
+
+sub fun_dec
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,0,1) ||
+      return "#-1 FUNCTION (DEC) EXPECTS 0 OR 1 ARGUMENTS";
+
+   my $number = evaluate($self,$prog,shift);
+
+   if($number =~ /^\s*(\d+)\s*$/) {
+      return sprintf("%d",$1 - 1);
+   } else {
+      return -1;
+   }
+}
+
 sub fun_center
 {
    my ($self,$prog) = (shift,shift);
 
-   my ($txt,$size) = @_;
-
-   if(!good_args($#_,2,3)) {
+   good_args($#_,2,3) ||
       return "#-1 FUNCTION (CENTER) EXPECTS 2 OR 3 ARGUMENTS";
-   } elsif($size !~ /^\s*\d+\s*$/) {
-      return "#-1 SECOND ARGUMENT MUST BE NUMERIC";
-   } elsif($size eq 0) { 
-      return "#-1 SECOND ARGUMENT MUST NOT BE ZERO";
-   }
+
    my $txt = evaluate($self,$prog,shift);
    my $size = evaluate($self,$prog,shift);
    my $fill = evaluate($self,$prog,shift);
+
+   if($size !~ /^\s*\d+\s*$/) {
+      return "#-1 SECOND ARGUMENT MUST BE NUMERIC - '$size'";
+   } elsif($size eq 0) { 
+      return "#-1 SECOND ARGUMENT MUST NOT BE ZERO";
+   } elsif($size >= 8000) {
+      return "#-1 OUT OF RANGE";
+   }
 
    $fill = " " if($fill eq undef);
 
@@ -12667,6 +13022,8 @@ sub fun_u
    my ($self,$prog) = (shift,shift);
    my ($txt,$obj,$attr,@arg);
 
+#   stack_print();
+
    if(defined $$prog{mush_function_name}) {
       if(defined @info{mush_function} &&
          defined @{@info{mush_function}}{$$prog{mush_function_name}}) {
@@ -12737,7 +13094,7 @@ sub fun_keys
    my ($obj,$atr,$sub);
 
    good_args($#_,1,2) ||
-      return "#-1 FUNCTION (FILTER) EXPECTS BETWEEN 1 and 2 ARGUMENTS";
+      return "#-1 FUNCTION (KEYS) EXPECTS BETWEEN 1 and 2 ARGUMENTS";
 
    if($#_ == 0) {
       ($obj,$atr) = besplit($self,$prog,shift,"\/");
@@ -12767,7 +13124,7 @@ sub fun_keys
 
 sub fun_get
 {
-   my ($self,$prog) = (shift,shift);
+   my ($self,$prog) = (obj(shift),shift);
    my ($obj,$atr,$sub);
 
    good_args($#_,1,2) ||
@@ -12787,8 +13144,9 @@ sub fun_get
    if($target eq undef ) {
       return "#-1 Unknown object";
    } elsif(!(controls($self,$target) ||
-      hasflag($target,"VISUAL") || atr_hasflag($target,$atr,"VISUAL"))) {
-      return "#-1 Permission Denied ($$self{obj_id} -> $$target{obj_id}/$atr)";
+      hasflag($target,"VISUAL") || atr_hasflag($target,$atr,"VISUAL") ||
+      hasflag($target,"WIZARD"))) {
+      return "#-1 Permission Denied";
    } 
 
    if($sub ne undef) {
@@ -12805,7 +13163,7 @@ sub fun_get
 
 sub fun_default
 {
-   my ($self,$prog) = (shift,shift);
+   my ($self,$prog) = (obj(shift),shift);
    my ($obj,$atr,$sub);
 
    good_args($#_,2) ||
@@ -12819,16 +13177,17 @@ sub fun_default
    if($target eq undef ) {
       return "#-1 Unknown object";
    } elsif(!(controls($self,$target) ||
-      hasflag($target,"VISUAL") || atr_hasflag($target,$atr,"VISUAL"))) {
+      hasflag($target,"VISUAL") || atr_hasflag($target,$atr,"VISUAL") ||
+      hasflag($self,"WIZARD"))) {
       return "#-1 Permission Denied ($$self{obj_id} -> $$target{obj_id}/$atr)";
    } 
 
    if(hasattr($target,$atr)) {                             # has attribute
-      return mget($target,$atr);
+      return get($target,$atr);
    } elsif(hasattr($target,$atr,"PARENT")) {                        # parent
-      return mget(parent($target),$atr);
+      return get(parent($target),$atr);
    } else {
-      return evaulate($self,$prog,shift);
+      return evaluate($self,$prog,shift);
    }
 }
 
@@ -12836,14 +13195,16 @@ sub fun_eval
 {
    my ($self,$prog,$txt) = (shift,shift,shift);
 
+#   printf("EVAL: '%s' -> '%s'\n",$txt,evaluate($self,$prog,evaluate($self,$prog,evaluate($self,$prog,$txt))));
    if($#_ == 0) {
       return evaluate($self,$prog,fun_get($self,$prog,$txt . "/" . $_));
    } elsif($txt =~ /\//) {
       return evaluate($self,$prog,fun_get($self,$prog,$txt));
    } else {
-      return evaluate($self,$prog,$txt);
+      return evaluate($self,$prog,evaluate($self,$prog,evaluate($self,$prog,$txt)));
    }
 }
+
 
 
 #
@@ -12871,7 +13232,6 @@ sub fun_setq
    } else {
       @{$$prog{var}}{$register} = evaluate($self,$prog,shift);
    }
-
    return undef;
 }
 
@@ -12959,6 +13319,28 @@ sub fun_extract
    }
 }
 
+sub fun_delete
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,2,3) ||
+      return "#-1 FUNCTION (DELETE) EXPECTS 3 OR 4 ARGUMENTS";
+
+   my $txt = shift;
+   my $first = ansi_remove(evaluate($self,$prog,shift));
+   my $len   = ansi_remove(evaluate($self,$prog,shift));
+
+   if($first !~ /^\s*(\d+)\s*$/) {                    # compat with TinyMUSH
+      return $txt;
+   } elsif($first !~ /^\s*(\d+)\s*$/) {               # compat with TinyMUSH
+      return $txt;
+   }
+
+   $txt   = ansi_init(evaluate($self,$prog,$txt));
+   return ansi_substr($txt,0,trim($first)) . ansi_substr($txt,$first + $len)
+   
+}
+
 sub fun_remove
 {
    my ($self,$prog) = (shift,shift);
@@ -13012,6 +13394,8 @@ sub fun_rjust
       return $txt;
    } elsif($size !~ /^\s*(\d+)\s*$/) {
       return "#-1 rjust expects a numeric value for the second argument";
+   } elsif($size <= 0 || $size >= 8000) {
+      return "#-1 OUT OF RANGE";
    } else {
       return ($fill x ($size - length(substr($txt,0,$size)))) .
              substr($txt,0,$size);
@@ -13021,7 +13405,6 @@ sub fun_rjust
 sub fun_ljust
 {
    my ($self,$prog) = (shift,shift);
-
 
    good_args($#_,2,3) ||
       return "#-1 FUNCTION (LJUST) EXPECTS 2 OR 3 ARGUMENTS";
@@ -13035,6 +13418,8 @@ sub fun_ljust
       return $txt;
    } elsif($size !~ /^\s*(\d+)\s*$/) {
       return "#-1 ljust expects a numeric value for the second argument";
+   } elsif($size <= 0 || $size >= 8000) {
+      return "#-1 OUT OF RANGE";
    } else {
       my $sub = ansi_substr($txt,0,$size);
       return $sub . ($fill x ($size - ansi_length($sub)));
@@ -13052,6 +13437,15 @@ sub fun_strlen
 }
 
 
+sub fun_strtrunc
+{
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,2,3) ||
+      return "#-1 FUNCTION (STRTRUNC) EXPECTS 2 arguments";
+
+   return fun_substr($self,$prog,shift,0,shift);
+}
 #
 # fun_substr
 #   substring function
@@ -13099,7 +13493,7 @@ sub fun_left
    my ($self,$prog) = (obj(shift),shift);
 
    good_args($#_,2) ||
-     return "#-1 FUNCTION (RIGHT) EXPECTS 2 ARGUMENT";
+     return "#-1 FUNCTION (LEFT) EXPECTS 2 ARGUMENT";
 
    my $txt = evaluate($self,$prog,shift);
    my $size = evaluate($self,$prog,shift);
@@ -13239,7 +13633,12 @@ sub fun_repeat
     if($count !~ /^\s*\d+\s*/) {
        return "#-1 Repeat expects numeric value for the second arguement";
     }
-    return $txt x $count;
+ 
+    if($count > 1000 && $count * length($txt) > 1000) {
+       return undef;
+    } else {
+       return $txt x $count;
+    }
 }
 
 #
@@ -13397,6 +13796,28 @@ sub fun_ilev
    return $#{$$prog{iter_stack}};
 }
 
+sub stack_print
+{
+   my $count = 0;
+   my $sub = "N/A";
+
+   for my $line (split(/\n/,Carp::shortmess)) {
+      if($line =~ /^\s*main::([^ \(]+).* at ([^ ]+) line (\d+)/) {
+         if(++$count == 2) {
+            $sub = $1;
+            last;
+         }
+      } elsif($count > 3) {
+         last;
+      }
+   }
+   printf("---[ start: $sub ]---\n");
+   for my $i (0 .. $#_) {
+      printf("%-3s : '%s'\n",$i,$_[$i]);
+   }
+   printf("---[ End ]---\n");
+}
+
 #
 # fun_iter
 #
@@ -13442,8 +13863,8 @@ sub fun_iter
 #
 sub fun_list
 {
-   my ($self,$prog) = (shift,shift);
-   my $count = 0;
+   my ($self,$prog) = (obj(shift),shift);
+   my ($count,$target) = (0);
 
    good_args($#_,2 .. 4) ||
      return "#-1 FUNCTION (LIST) EXPECTS 2 AND 4 ARGUMENTS";
@@ -13457,13 +13878,23 @@ sub fun_list
 
    $$prog{iter_stack} = [] if(!defined $$prog{iter_stack});
    my $loc = $#{$$prog{iter_stack}} + 1;
+
+   if(defined $$prog{cmd} && defined @{$$prog{cmd}}{invoker}) {
+      $target = @{$$prog{cmd}}{invoker};
+   } else {
+      $target = $self;
+   }
+
    for my $item (safe_split(evaluate($self,$prog,$list),$idelim)) {
+#      printf("LIST: '%s'\n",$item);
       $item = trim($item) if ($idelim eq " ");
       @{$$prog{iter_stack}}[$loc] = { val => evaluate($self,$prog,$item), 
-                                       pos => ++$count };
+                                      pos => ++$count };
+      my $result = evaluate($self,$prog,$txt);
+#      printf("   # '%s'\n",$result);
       necho(self   => $self,
             prog   => $prog,
-            source => [ "%s", evaluate($self,$prog,$txt)  ],
+            target => [ $target, "%s", $result ],
       );
    }
    delete @{$$prog{iter_stack}}[$loc .. $#{$$prog{iter_stack}}];
@@ -14099,7 +14530,6 @@ sub http_reply
                            );
 
    if(defined $$prog{var} && defined $$prog{var}->{cookie}) {
-      printf("Set-Cookie: %s\n",$$prog{var}->{cookie});
       http_out($s,"Set-Cookie: %s",$$prog{var}->{cookie});
    }
    http_out($s,"");
@@ -16843,7 +17273,6 @@ sub server_start
    }
 
    if(conf("websocket") ne undef && conf("websocket") > 0) {
-      printf("WEB: '%s'\n",conf("websocket"));
       if(conf("websocket") =~ /^\s*(\d+)\s*$/) {
          push(@port,conf("websocket") . "{websocket}");
          websock_init();

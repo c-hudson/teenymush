@@ -1521,3 +1521,281 @@ TRAIN
   
   See Also: @emit, pose, @pemit, think
 
+& s()
+  Function: s(string)
+
+  This function works like eval() in that it evaluates the string doing full
+  pronoun substitution and function evaluation and then returns that string.
+  As usually, %n is the name, %s the subjective pronoun, %o the objective,
+  %p the possessive, and %a the absolute possessive.  It is important to
+  note that the pronoun is that of the triggering object.
+
+  So, if the ve of an object were: "[s(This is %n)], and I were to
+  type @trigger <object>/ve, it would return "This is <myname>", but
+  if vf were @trigger me/ve, then triggering the vf makes the ve
+  return "This is <object>"
+
+  As stated, this will also evaluate functions as well. 
+
+  Example:
+    > @sex me=male
+    Set.
+    > s(this [add(1,1)] %p)
+    You say "this 2 his"
+    > eval(this [add(1,1)] %p)
+    You say "this 2 his"
+    > subeval(this [add(1,1)] %p)
+    You say "this [add(1,1)] his"
+
+  See Also: SUBSTITUTIONS, eval(), u(), v()
+
+
+& list()
+  FUNCTION: list(<list>, <eval>[, <delim>])
+
+  This function is exactly like iter() but serves a specialized purpose:
+  MUX has a buffer limit, and for things like lists of players, iter() can
+  quickly become inadequate, since the output is cut off before the listing
+  is finished. The normal way to handle this is to use a @dolist/@pemit
+  combination, but that takes many queue cycles. list() takes <list>,
+  <eval>, and an optional delimiter, and evaluates them exactly like
+  iter(). The difference is the output: iter() produces a space-separated
+  list, while list() outputs each list item on a new row of the screen.
+
+  NOTE: This is a side effect function. It does not return anything,
+  instead, it prints its output directly to the screen of the player causing
+  the function to be evaluated. Since it does this, it is not hampered by
+  the buffer limit.
+
+  Related Topics: iter(), @dolist, parse().
+
+& lconf()
+  FUNCTION: lconf()
+
+  This function will list the configuration options that TeenyMUSH uses.
+  This is dynamically generated, so could be missing some entries if
+  a particular peice of code has not been exercised.
+
+& lvariable()
+  FUNCTION: lvariable(<pattern>)
+
+  Returns a list of all variables defined in the currently running
+  Mushcode or just those that match the pattern.
+
+  ex: think # [run(@var foobar=biz)][run(@var funky=mama)][lvariable()]
+  # FOOBAR FUNKY
+
+  ex: think # [run(@var foobar=biz)][run(@var funky=mama)][lvariable(fo*)]
+  # FOOBAR
+
+& @restore
+
+  COMMAND: @restore <object>
+           @restore <object>/<attribute>
+
+  This command will restore a full object or an attribute from a
+  previous backup in the dumps folder.
+
+  When restoring an object, the newest version of the object found in the
+  dump folder will be used.
+
+  When restoring an attribute, all unique versions of the attribute will
+  be restored. To help limit the number of copies, spacing will not be
+  considered when determining if the attribute's contents are unique.
+  The attribute will be saved to the original object as the attribute
+  named followed by a "_" and the modification time in seconds since
+  the EPOC.
+& strcat
+  Function: strcat(<string>[,<string2>,...,<stringx>])
+
+  Returns the strings concatinated with no spaces between them.
+
+  Example:
+    > say strcat(this,is,a,test)
+    You say "thisisatest"
+    > say strcat(one,2,three,4)
+    You say "one2three4"
+& @ping
+
+  COMMAND: @ping <command>
+
+  This command helps find whats command will run the specified command.
+  If an object would run the command via a $command then the object name,
+  attribute name, and where the object is located is displayed.
+
+& readonly()
+  FUNCTION: readonly()
+
+  Places the command in readonly mode. No modifications to the DB may be
+  made afterwards. Useful for sandboxing?
+
+  > think [readonly()][run(&foo me=bar)]
+  Set.
+  > ex me/foo
+  No matching attributes.
+  > think [run(&foo me=bar)]
+  Set.
+& encrypt()
+  Function: encrypt(<string>,<seed>)
+
+  Returns an encrypted string based on the given seed.  The longer the seed,
+  the better the password.
+
+  Example:
+    > say encrypt(this is a test,a)
+    You say "VJKUaKUaCaVGUV"
+
+  See Also: decrypt(), base64()
+& decrypt
+  Function: decrypt(<string>,<seed>)
+
+  Returns a decrypted string based on the given seed and encrypted string.
+  You have to match the seed (case sensitive) to be able to decrypt the
+  string properly.
+
+  Example:
+    > say encrypt(VJKUaKUaCaVGUV,a)
+    You say "this is a test"
+
+  See Also: encrypt(), encode64(), base64()
+& default()
+  Function:  default(<obj>/<attr>,<default case>)
+
+  This function returns the value of <obj>/<attr>, as if retrieved via
+  the get() function, if the attribute exists and is readable by you.
+  Otherwise, it evaluates the default case, and returns that.
+  Note that the default case is only evaluated if the attribute does
+  not exist or cannot be read.
+
+  This is useful for code that needs to return the value of an attribute,
+  or an error message or default case, if that attribute does not exist.
+
+  Examples:
+    > &TEST me=apple orange banana
+    > say default(me/Test, No fruits!)
+    You say "apple orange banana"
+    > &TEST ME
+    > say default(me/Test, No fruits!)
+    You say "No fruits!"
+
+  See Also: get(), u()
+
+& inc()
+  FUNCTION: inc(<number>)
+
+  Returns <number> plus 1. Faster and more efficient than
+  add(<number>,1). Decimal places are truncated.
+
+  Related Topics: add(), dec(), sub().
+& dec()
+  FUNCTION: dec(<number>)
+
+  Returns <number> minus 1. Faster and more efficient than
+  sub(<number>,1). Decimal places will be truncated.
+
+  Related Topics: sub(), add(), inc().
+& startime()
+  FUNCTION: starttime()
+
+  Returns a string which is the time the MUX last rebooted.  The time
+  is in the same format as the TIME() function returns.
+
+  Example:
+    > say starttime()
+    You say, "Sat Dec  7 00:09:13 1991
+
+  Related Topics: convtime().
+& orflags()
+  FUNCTION: orflags(<object>,<list of flags>)
+
+  This function returns 1 if <object> has at least one of the flags in
+  a specified list, and 0 if it does not. The list is specified with a
+  single letter standing for each flag, like the output of the FLAGS()
+  function. A '!' preceding a flag letter means "not flag".
+
+  Thus, ORFLAGS(me,WZ) would return 1 if I were set WIZARD or ROYALTY.
+  ORFLAGS(me,D!c) would return 1 if I were DARK or not CONNECTED.
+
+  If a letter does not correspond to any flag, <object> doesn't have
+  it, so it is simply ignored. There can be an arbitrary number of
+  flags. Do not put spaces between flag letters.
+
+  Related Topics: flags()
+& strtrunc()
+  FUNCTION: strtrunc(<string>,<number>)
+
+  This function returns <string> truncated if it is longer than <number>. If
+  <number> is greater than the length of <string>, it just returns <string>.
+  Much more efficient than the equivalent mid().
+
+  Related Topics: mid(), ljust().
+& findable()
+  FUNCTION: findable(<object>,<victim>)
+
+  Returns 1 if <object> can locate <victim>, or 0 otherwise. This checks
+  wizard status of <object>, UNFINDABLE status of <victim>, and other
+  related factors. If <object> would not be able to see <victim> were
+  they in the same location a 0 will be returned.
+& power()
+  FUNCTION: power(<number>, <power>)
+
+  Returns the result of raising <number> to the <power>'th power.
+  <number> may not be negative.  <number> and <power> may be floating point
+  numbers, and a floating point result is returned.
+
+  Examples:
+    > say power(2,3)
+    You say, "8"
+    > say power(9, 0.5)
+    You say, "3"
+    > say power(5, 0)
+    You say, "1"
+    > say power(0, 0)
+    You say, "1"
+    > say power(2,-3)
+    You say, "0.125"
+& conn()
+  FUNCTION: conn(<player|port>)
+
+  Returns the number of seconds that <player|port> has been connected.  If
+  <player|port> is not connected then -1 is returned.
+
+  If <player|port> is numeric, it's taken as a port number (as shown in
+  SESSION).  Otherwise, it's treated as a player name.  If the named player is
+  connected more than once, the longest connect time is returned.
+
+  Example:
+    > WHO
+    Player Name          On For Idle  Doing
+    Wizard                00:04   1m
+    Mortal                00:11   0s
+    Evinar                00:12   6m  Idle. :)
+    3 Players logged in.
+    > say conn(wiz)
+    You say, "251"
+    > say conn(e)
+    You say, "770"
+    > say conn(frobozz)
+    You say, "-1"
+
+  Related Topics: WHO, idle(), lwho().
+& bor()
+  FUNCTION: bor(<number>[, <number>[, ...]])
+
+  Arguments must be an integer and are treated as a bit-field.  It performs a
+  bitwise logical OR which has the effect of forcing certain bits on in the
+  result.
+
+     > think bor(922,785)
+     923
+
+  In the above example, 922 in base 10 is equivalent to 39A in base 16 or
+  0011 1001 1010 in base 2. Likewise, 785 in base 10 is the same as 311 in
+  base 16 and or 0011 0001 0001 in base 2.
+
+         0011 1001 1010 (922)
+  (BOR)  0011 0001 0001 (785)
+         --------------
+         0011 1001 1011 (923)
+
+  The result may be expressed as 39B in base 16 or 923 in base 10.

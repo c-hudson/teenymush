@@ -1799,3 +1799,33 @@ TRAIN
          0011 1001 1011 (923)
 
   The result may be expressed as 39B in base 16 or 923 in base 10.
+& convtime()
+  Function: convtime(<time string>)
+
+  This functions converts a time string to the number of seconds since
+  Jan 1, 1970. A time string is of the format: Ddd MMM DD HH:MM:SS YYYY
+  where Ddd is the day of the week, MMM is the month, DD is the day
+  of the month, HH is the hour in 24-hour time, MM is the minutes,
+  SS is the seconds, and YYYY is the year.
+  If you supply an incorrectly formatted string, it will return -1.
+
+  Example:
+    > say time()
+    You say "Wed Jun 24 10:22:54 1992"
+    > say convtime(Wed Jun 24 10:22:54 1992)
+    You say "709395774"
+
+  See Also: convsecs(), secs(), time()
+& convsecs()
+  Function: convsecs(<seconds>)
+
+  This function converts seconds to a time string, based on how many
+  seconds the number is after Jan 1, 1970.
+
+  Example:
+    > say secs()
+    You say "709395750"
+    > say convsecs(709395750)
+    You say "Wed Jun 24 10:22:54 1992"
+
+  See Also: convtime(), secs(), time()

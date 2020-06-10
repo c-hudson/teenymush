@@ -5454,14 +5454,18 @@ sub list_attr
          my $attr = mget($obj,$name);
          if($name !~ /^obj_/ && db_set_ishash($obj,$name)) {
             next if($pattern ne undef && $short !~ /$pat/i);
-#            next if($subpat ne undef && $key !~ /$spat/i);
 
-            my $count = 0;
-            for my $key (db_hash_keys($obj,$name)) {
-               if($subpat eq undef || $key =~ /$spat/i) {
-                  push(@out,color("h",$name)) if($count++ == 0);
-                  push(@out," + " . color("h","$key") .  " : " . 
-                     @{$$attr{value}}{$key});
+            if($pattern eq undef) {
+               my $hash = db_hash_keys($obj,$name);
+               push(@out,color("h",$name) . ": [ " . $hash . " hash entries ]");
+            } else {
+               my $count = 0;
+               for my $key (db_hash_keys($obj,$name)) {
+                  if($subpat eq undef || $key =~ /$spat/i) {
+                     push(@out,color("h",$name)) if($count++ == 0);
+                     push(@out," + " . color("h","$key") .  " : " . 
+                        @{$$attr{value}}{$key});
+                  }
                }
             }
          } else {
@@ -5755,18 +5759,43 @@ sub cmd_look
          source => ["%s",$out ]
         );
 
-   if(!conf("safemode") &&($desc = get($target,"ADESCRIBE")) && $desc ne undef){
-#      my $hint = $$prog{hint};
-#      delete @$prog{hint};
-      return mushrun(self   => $self,           # handle adesc
-                     prog   => $prog,
-                     runas  => $target,
-                     invoker=> $self,
-                     source => 0,
-                     cmd    => $desc
-                     );
-#      @$prog{hint} = $hint;
+   run_attr($self,$prog,$target,"ADESCRIBE");
+}
+
+sub is_true
+{
+   my $txt = shift;
+
+   if($txt =~ /^\s*(yes|ye|y|1)\s*$/) {
+      return 1;
+   } else {
+      return 0;
    }
+}
+
+#
+# generic function to run attributes if they exist
+#
+sub run_attr
+{
+   my ($self,$prog,$target,$attr) = (obj(shift),shift,obj(shift),shift);
+   my @args = @_;
+   my $txt;
+
+   return 0 if(is_true(conf("safemode")));         # nothing runs in safemode
+
+   $txt = get($target,$attr) ||
+      return 0;
+
+   mushrun(self   => $self,           # handle adesc
+           prog   => $prog,
+           runas  => $target,
+           invoker=> $self,
+           source => 0,
+           wild   => [ @args ],
+           cmd    => $txt
+          );
+   return 1;
 }
 
 
@@ -8598,27 +8627,13 @@ sub run_internal
    return if(!valid_dbref($$command{runas}));
 
    $$prog{cmd} = $command;
-#   if(length($cmd) ne 1) {
-#      while($arg =~ /^\s*\/([^ =\/]+) */) {                  # find switches
-#         printf("FOUND: '%s'\n",$1);
-#         @switch{lc($1)} = 1;
-#         $arg = $';
-#      }
-#   }
-
-#   con("RUN(%s->%s): '%s%s'\n",
-#         @{$$prog{created_by}}{obj_id},
-#          @{$$command{runas}}{obj_id},
-#          substr($cmd.$arg,0,60),
-#          (length($cmd.$arg) > 60) ? "..." : ""
-#         );
-#   printf("RUN: '%s'\n",$$command{cmd});
  
    show_verbose($prog,$command);
    
    my $start = Time::HiRes::gettimeofday();
    $$prog{function_command} = 0;
 
+   # handle cost of running commands
    my $cost = sprintf("%d",($$prog{command} + ($$prog{function} / 10)) / 128);
    if($cost != 0 && $$prog{cost} != $cost && 
       !hasflag($$command{runas},"WIZARD")) {
@@ -8635,24 +8650,22 @@ sub run_internal
                             );
       }
         
+      # command is just a @ping, echo to user but do not run.
       if(defined $$prog{ping} && $$prog{ping}) {
          necho(self   => $$command{created_by},
                prog   => $prog,
                source => [ "PONG: \@command : Internal Command" ]
-              );;
-      } elsif(ref($$command{runas}) eq "HASH") {
-         $result = &{@{$$hash{$cmd}}{fun}}(@{$$command{runas}}{obj_id},
-                                           $prog,
-                                           trim($arg),
-                                           $$command{switch}
-                                          );
-      } else {
-         $result = &{@{$$hash{$cmd}}{fun}}($$command{runas},
-                                           $prog,
-                                           trim($arg),
-                                           $$command{switch}
-                                          );
+              );
+         return;
       }
+
+      my $target = $$command{runas};
+      $target = $$target{obj_id} if(ref($target) eq "HASH");
+      $result = &{@{$$hash{$cmd}}{fun}}($target,
+                                        $prog,
+                                        trim($arg),
+                                        $$command{switch}
+                                       );
       $$prog{command_duration} += Time::HiRes::gettimeofday() - $start;
       $$prog{command}++;
     #   $$prog{"command_$cmd"}++;
@@ -9547,6 +9560,7 @@ sub initialize_functions
    @fun{min}        = sub { return &fun_min(@_);                   };
    @fun{find}       = sub { return &fun_find(@_);                  };
    @fun{convsecs}   = sub { return &fun_convsecs(@_);              };
+   @fun{convtime}   = sub { return &fun_convtime(@_);              };
    @fun{max}        = sub { return &fun_max(@_);                   };
    @fun{controls}   = sub { return &fun_controls(@_);              };
    @fun{invocation} = sub { return &fun_invocation(@_);            };
@@ -11291,6 +11305,23 @@ sub fun_convsecs
     } else {
        return "#-1 INVALID SECONDS";
     }
+}
+
+#
+# convtime
+#    Convert a time string to epoch time. TinyMUSH's version only converts a
+#    specific format. This function taps into a function that already exists
+#    that tries to convert a timestring of almost any format.
+#    
+#
+sub fun_convtime
+{
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (CONVTIME) EXPECTS 1 ARGUMENTS";
+
+  return fuzzy(evaluate($self,$prog,shift));
 }
 
 sub fun_find
@@ -17297,6 +17328,8 @@ sub server_start
 
    # main loop;
    @info{run} = 1;
+
+   run_attr(0,{},0,"conf.startup");
 
    if(!conf("safemode")) {
       for my $obj (lcon(conf("master"))) {             # handle astartup

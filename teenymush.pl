@@ -193,6 +193,7 @@ sub load_defaults
    @default{httpd_template}           = "<pre>";
    @default{mudname}                  = "TeenyMUSH";
    @default{port}                     = "4096";
+   @default{starting_quota}           = 5;
 }
 
 #
@@ -218,7 +219,7 @@ sub process_commandline
    my $hit  = 0;
    my $value;
 
-   if(conf("safemode") eq 1) {
+   if(conf_true("safemode")) {
       set(obj(0),{},0,"conf.safemode");
    }
 
@@ -634,94 +635,95 @@ sub initialize_commands
    @command{"\@parent"}     ={ fun => sub { return &cmd_parent(@_); }       };
    @command{"look"}         ={ fun => sub { return &cmd_look(@_); }         };
    @command{"l"}            ={ fun => sub { return &cmd_look(@_); }         };
-   @command{quit}           ={ fun => sub { return cmd_quit(@_); }          };
-   @command{"\@trigger"}    ={ fun => sub { return cmd_trigger(@_); }       };
-   @command{"\@set"}        ={ fun => sub { return cmd_set(@_); }           };
-   @command{"\@cls"}        ={ fun => sub { return cmd_clear(@_); }         };
-   @command{"\@create"}     ={ fun => sub { return cmd_create(@_); }        };
-   @command{"print"}        ={ fun => sub { return cmd_print(@_); }         };
-   @command{"go"}           ={ fun => sub { return cmd_go(@_); }            };
-   @command{"home"}         ={ fun => sub { return cmd_home(@_); }          };
-   @command{"examine"}      ={ fun => sub { return cmd_ex(@_); }            };
-   @command{"ex"}           ={ fun => sub { return cmd_ex(@_); }            };
-   @command{"e"}            ={ fun => sub { return cmd_ex(@_); }            };
-   @command{"\@last"}       ={ fun => sub { return cmd_last(@_); }          };
-   @command{page}           ={ fun => sub { cmd_page(@_); }                 };
-   @command{p}              ={ fun => sub { cmd_page(@_); }                 };
-   @command{take}           ={ fun => sub { cmd_take(@_); }                 };
-   @command{get}            ={ fun => sub { cmd_take(@_); }                 };
-   @command{drop}           ={ fun => sub { cmd_drop(@_); }                 };
-   @command{"\@force"}      ={ fun => sub { cmd_force(@_); }                };
-   @command{inventory}      ={ fun => sub { cmd_inventory(@_); }            };
-   @command{i}              ={ fun => sub { cmd_inventory(@_); }            };
-   @command{enter}          ={ fun => sub { cmd_enter(@_); }                };
-   @command{leave}          ={ fun => sub { cmd_leave(@_); }                };
-   @command{"\@name"}       ={ fun => sub { cmd_name(@_); }                 };
-   @command{"\@moniker"}    ={ fun => sub { cmd_name(@_); }                 };
-   @command{"\@describe"}   ={ fun => sub { cmd_generic_set(@_); }          };
-   @command{"\@pemit"}      ={ fun => sub { cmd_pemit(@_); }                };
-   @command{"\@emit"}       ={ fun => sub { cmd_emit(@_); }                 };
-   @command{"think"}        ={ fun => sub { cmd_think(@_); }                };
-   @command{"version"}      ={ fun => sub { cmd_version(@_); }              };
-   @command{"\@version"}    ={ fun => sub { cmd_version(@_); }              };
-   @command{"\@link"}       ={ fun => sub { cmd_link(@_); }                 };
-   @command{"\@teleport"}   ={ fun => sub { cmd_teleport(@_); }             };
-   @command{"\@tel"}        ={ fun => sub { cmd_teleport(@_); }             };
-   @command{"\@open"}       ={ fun => sub { cmd_open(@_); }                 };
-   @command{"\@uptime"}     ={ fun => sub { cmd_uptime(@_); }               };
-   @command{"\@destroy"}    ={ fun => sub { cmd_destroy(@_); }              };
-   @command{"\@wipe"}       ={ fun => sub { cmd_wipe(@_); }                 };
-   @command{"\@toad"}       ={ fun => sub { cmd_toad(@_); }                 };
-   @command{"\@sleep"}      ={ fun => sub { cmd_sleep(@_); }                };
-   @command{"\@wait"}       ={ fun => sub { cmd_wait(@_); }                 };
-   @command{"\@sweep"}      ={ fun => sub { cmd_sweep(@_); }                };
-   @command{"\@list"}       ={ fun => sub { cmd_list(@_); }                 };
-   @command{"\@mail"}       ={ fun => sub { cmd_mail(@_); }                 };
-   @command{"score"}        ={ fun => sub { cmd_score(@_); }                };
-   @command{"\@telnet"}     ={ fun => sub { cmd_telnet(@_); }               };
-   @command{"\@close"}      ={ fun => sub { cmd_close(@_); }                };
-   @command{"\@reset"}      ={ fun => sub { cmd_reset(@_); }                };
-   @command{"\@send"}       ={ fun => sub { cmd_send(@_); }                 };
-   @command{"\@password"}   ={ fun => sub { cmd_password(@_); }             };
-   @command{"\@newpassword"}={ fun => sub { cmd_newpassword(@_); }          };
-   @command{"\@switch"}     ={ fun => sub { cmd_switch(@_); }               };
-   @command{"\@select"}     ={ fun => sub { cmd_switch(@_); }               };
-   @command{"\@ps"}         ={ fun => sub { cmd_ps(@_); }                   };
-   @command{"\@kill"}       ={ fun => sub { cmd_killpid(@_); }              };
-   @command{"\@var"}        ={ fun => sub { cmd_var(@_); }                  };
-   @command{"\@dolist"}     ={ fun => sub { cmd_dolist(@_); }               };
-   @command{"\@notify"}     ={ fun => sub { cmd_notify(@_); }               };
-   @command{"\@drain"}      ={ fun => sub { cmd_drain(@_); }                };
-   @command{"\@while"}      ={ fun => sub { cmd_while(@_); }                };
-   @command{"\@crash"}      ={ fun => sub { cmd_crash(@_); }                };
-   @command{"\@\@"}         ={ fun => sub { return;}                        };
-   @command{"\@lock"}       ={ fun => sub { cmd_lock(@_);}                  };
-   @command{"\@boot"}       ={ fun => sub { cmd_boot(@_);}                  };
-   @command{"\@halt"}       ={ fun => sub { cmd_halt(@_);}                  };
-   @command{"\@sex"}        ={ fun => sub { cmd_generic_set(@_);}           };
-   @command{"\@apay"}       ={ fun => sub { cmd_generic_set(@_);}           };
-   @command{"\@opay"}       ={ fun => sub { cmd_generic_set(@_);}           };
-   @command{"\@pay"}        ={ fun => sub { cmd_generic_set(@_);}           };
-   @command{"give"}         ={ fun => sub { cmd_give(@_);}                  };
-   @command{"\@squish"}     ={ fun => sub { cmd_squish(@_);}                };
-   @command{"\@split"}      ={ fun => sub { cmd_split(@_); }                };
-   @command{"\@websocket"}  ={ fun => sub { cmd_websocket(@_); }            };
-   @command{"\@find"}       ={ fun => sub { cmd_find(@_); }                 };
-   @command{"\@bad"}        ={ fun => sub { cmd_bad(@_); }                  };
-   @command{"\@dump"}       ={ fun => sub { cmd_dump(@_); }                 };
-   @command{"\@import"}     ={ fun => sub { cmd_import(@_); }               };
-   @command{"\@stat"}       ={ fun => sub { cmd_stat(@_); }                 };
-   @command{"\@cost"}       ={ fun => sub { cmd_generic_set(@_); }          };
-   @command{"\@quota"}      ={ fun => sub { cmd_quota(@_); }                };
-   @command{"\@player"}     ={ fun => sub { cmd_player(@_); }               };
-   @command{"\@big"}        ={ fun => sub { cmd_big(@_); }                  };
-   @command{"huh"}          ={ fun => sub { cmd_huh(@_); }                  };
-   @command{"\@capture"}    ={ fun => sub { cmd_capture(@_); }              };
-   @command{"\@\@"}         ={ fun => sub { return 1; }                     };
-   @command{"\@shutdown"}   ={ fun => sub { cmd_shutdown(@_); }             };
-   @command{"train"}        ={ fun => sub { cmd_train(@_); }                };
-   @command{"\@restore"}    ={ fun => sub { cmd_restore(@_); }              };
-   @command{"\@ping"}       ={ fun => sub { cmd_ping(@_); }                 };
+   @command{quit}           ={ fun => sub { return &cmd_quit(@_); }          };
+   @command{"\@trigger"}    ={ fun => sub { return &cmd_trigger(@_); }       };
+   @command{"\@set"}        ={ fun => sub { return &cmd_set(@_); }           };
+   @command{"\@cls"}        ={ fun => sub { return &cmd_clear(@_); }         };
+   @command{"\@create"}     ={ fun => sub { return &cmd_create(@_); }        };
+   @command{"print"}        ={ fun => sub { return &cmd_print(@_); }         };
+   @command{"go"}           ={ fun => sub { return &cmd_go(@_); }            };
+   @command{"home"}         ={ fun => sub { return &cmd_home(@_); }          };
+   @command{"examine"}      ={ fun => sub { return &cmd_ex(@_); }            };
+   @command{"ex"}           ={ fun => sub { return &cmd_ex(@_); }            };
+   @command{"e"}            ={ fun => sub { return &cmd_ex(@_); }            };
+   @command{"\@last"}       ={ fun => sub { return &cmd_last(@_); }          };
+   @command{page}           ={ fun => sub { return &cmd_page(@_); }          };
+   @command{p}              ={ fun => sub { return &cmd_page(@_); }          };
+   @command{take}           ={ fun => sub { return &cmd_take(@_); }          };
+   @command{get}            ={ fun => sub { return &cmd_take(@_); }          };
+   @command{drop}           ={ fun => sub { return &cmd_drop(@_); }          };
+   @command{"\@force"}      ={ fun => sub { return &cmd_force(@_); }         };
+   @command{inventory}      ={ fun => sub { return &cmd_inventory(@_); }     };
+   @command{i}              ={ fun => sub { return &cmd_inventory(@_); }     };
+   @command{enter}          ={ fun => sub { return &cmd_enter(@_); }         };
+   @command{leave}          ={ fun => sub { return &cmd_leave(@_); }         };
+   @command{"\@name"}       ={ fun => sub { return &cmd_name(@_); }          };
+   @command{"\@moniker"}    ={ fun => sub { return &cmd_name(@_); }          };
+   @command{"\@describe"}   ={ fun => sub { return &cmd_generic_set(@_); }   };
+   @command{"\@pemit"}      ={ fun => sub { return &cmd_pemit(@_); }         };
+   @command{"\@emit"}       ={ fun => sub { return &cmd_emit(@_); }          };
+   @command{"think"}        ={ fun => sub { return &cmd_think(@_); }         };
+   @command{"version"}      ={ fun => sub { return &cmd_version(@_); }       };
+   @command{"\@version"}    ={ fun => sub { return &cmd_version(@_); }       };
+   @command{"\@link"}       ={ fun => sub { return &cmd_link(@_); }          };
+   @command{"\@teleport"}   ={ fun => sub { return &cmd_teleport(@_); }      };
+   @command{"\@tel"}        ={ fun => sub { return &cmd_teleport(@_); }      };
+   @command{"\@open"}       ={ fun => sub { return &cmd_open(@_); }          };
+   @command{"\@uptime"}     ={ fun => sub { return &cmd_uptime(@_); }        };
+   @command{"\@destroy"}    ={ fun => sub { return &cmd_destroy(@_); }       };
+   @command{"\@wipe"}       ={ fun => sub { return &cmd_wipe(@_); }          };
+   @command{"\@toad"}       ={ fun => sub { return &cmd_toad(@_); }          };
+   @command{"\@sleep"}      ={ fun => sub { return &cmd_sleep(@_); }         };
+   @command{"\@wait"}       ={ fun => sub { return &cmd_wait(@_); }          };
+   @command{"\@sweep"}      ={ fun => sub { return &cmd_sweep(@_); }         };
+   @command{"\@list"}       ={ fun => sub { return &cmd_list(@_); }          };
+   @command{"\@mail"}       ={ fun => sub { return &cmd_mail(@_); }          };
+   @command{"score"}        ={ fun => sub { return &cmd_score(@_); }         };
+   @command{"\@telnet"}     ={ fun => sub { return &cmd_telnet(@_); }        };
+   @command{"\@close"}      ={ fun => sub { return &cmd_close(@_); }         };
+   @command{"\@reset"}      ={ fun => sub { return &cmd_reset(@_); }         };
+   @command{"\@send"}       ={ fun => sub { return &cmd_send(@_); }          };
+   @command{"\@password"}   ={ fun => sub { return &cmd_password(@_); }      };
+   @command{"\@newpassword"}={ fun => sub { return &cmd_newpassword(@_); }   };
+   @command{"\@switch"}     ={ fun => sub { return &cmd_switch(@_); }        };
+   @command{"\@select"}     ={ fun => sub { return &cmd_switch(@_); }        };
+   @command{"\@ps"}         ={ fun => sub { return &cmd_ps(@_); }            };
+   @command{"\@kill"}       ={ fun => sub { return &cmd_killpid(@_); }       };
+   @command{"\@var"}        ={ fun => sub { return &cmd_var(@_); }           };
+   @command{"\@dolist"}     ={ fun => sub { return &cmd_dolist(@_); }        };
+   @command{"\@notify"}     ={ fun => sub { return &cmd_notify(@_); }        };
+   @command{"\@drain"}      ={ fun => sub { return &cmd_drain(@_); }         };
+   @command{"\@while"}      ={ fun => sub { return &cmd_while(@_); }         };
+   @command{"\@crash"}      ={ fun => sub { return &cmd_crash(@_); }         };
+   @command{"\@\@"}         ={ fun => sub { return;}                         };
+   @command{"\@lock"}       ={ fun => sub { return &cmd_lock(@_);}           };
+   @command{"\@boot"}       ={ fun => sub { return &cmd_boot(@_);}           };
+   @command{"\@halt"}       ={ fun => sub { return &cmd_halt(@_);}           };
+   @command{"\@sex"}        ={ fun => sub { return &cmd_generic_set(@_);}    };
+   @command{"\@apay"}       ={ fun => sub { return &cmd_generic_set(@_);}    };
+   @command{"\@opay"}       ={ fun => sub { return &cmd_generic_set(@_);}    };
+   @command{"\@pay"}        ={ fun => sub { return &cmd_generic_set(@_);}    };
+   @command{"give"}         ={ fun => sub { return &cmd_give(@_);}           };
+   @command{"\@squish"}     ={ fun => sub { return &cmd_squish(@_);}         };
+   @command{"\@split"}      ={ fun => sub { return &cmd_split(@_); }         };
+   @command{"\@websocket"}  ={ fun => sub { return &cmd_websocket(@_); }     };
+   @command{"\@find"}       ={ fun => sub { return &cmd_find(@_); }          };
+   @command{"\@bad"}        ={ fun => sub { return &cmd_bad(@_); }           };
+   @command{"\@dump"}       ={ fun => sub { return &cmd_dump(@_); }          };
+   @command{"\@import"}     ={ fun => sub { return &cmd_import(@_); }        };
+   @command{"\@stat"}       ={ fun => sub { return &cmd_stat(@_); }          };
+   @command{"\@cost"}       ={ fun => sub { return &cmd_generic_set(@_); }   };
+   @command{"\@quota"}      ={ fun => sub { return &cmd_quota(@_); }         };
+   @command{"\@player"}     ={ fun => sub { return &cmd_player(@_); }        };
+   @command{"\@big"}        ={ fun => sub { return &cmd_big(@_); }           };
+   @command{"huh"}          ={ fun => sub { return &cmd_huh(@_); }           };
+   @command{"\@capture"}    ={ fun => sub { return &cmd_capture(@_); }       };
+   @command{"\@\@"}         ={ fun => sub { return 1; }                      };
+   @command{"\@shutdown"}   ={ fun => sub { return &cmd_shutdown(@_); }      };
+   @command{"train"}        ={ fun => sub { return &cmd_train(@_); }         };
+   @command{"teach"}        ={ fun => sub { return &cmd_train(@_); }         };
+   @command{"\@restore"}    ={ fun => sub { return &cmd_restore(@_); }       };
+   @command{"\@ping"}       ={ fun => sub { return &cmd_ping(@_); }          };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -837,14 +839,21 @@ sub restore_process_line
 sub cmd_ping
 {
    my ($self,$prog,$cmd) = @_;
+   my $tmp = $$prog{ping};            # save ping variable if already set?
 
-   mushrun(self   => obj($self),
-           prog   => $prog,
-           runas  => obj($self),
-           source => 0,
-           cmd    => $cmd,
-           ping   => 1
-          );
+   $$prog{ping} = 1; # tell mush command is just a ping
+   my $fake = {
+      runas => $self,
+      created_by => $self,
+      cmd => $cmd,
+   };
+   spin_run($prog,$fake);
+
+   if($tmp eq undef) {
+      delete @$prog{tmp};
+   } else {
+      $$prog{ping} = $tmp;
+   }
 }
 sub cmd_restore
 {
@@ -1300,39 +1309,45 @@ sub cmd_big
    }
 }
 
+sub list_user_functions
+{
+   my $out;
+
+   if(!defined @info{mush_function} || ref(@info{mush_function}) ne "HASH") {
+      return "No user functions defined.";
+   }
+
+   $out  = sprintf("%-28s  %-10s  %s\n","Function Name","Dbref","Attribute");
+   $out .= sprintf("%s  %s  %s\n","-" x 28,"-" x 10,"-" x 30);
+   for my $key (keys %{@info{mush_function}}) {
+      if(@info{mush_function}->{$key} =~ /\//) {
+         $out .= sprintf("%-28s  %-10s  %s\n",
+                         $key,
+                         $`,
+                         $'
+                        )
+      }
+   }
+   $out .= sprintf("%s  %s  %s\n","-" x 28,"-" x 10,"-" x 30);
+}
+
 sub cmd_function
 {
-   my ($self,$prog) = (obj(shift),shift);
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
 
    hasflag($self,"WIZARD") ||
       return err($self,$prog,"Permission denied.");
 
-   if($_[0] =~ /^\s*$/) {
-      my @out;
-      if(!defined @info{mush_function} || ref(@info{mush_function}) ne "HASH") {
-         push(@out,"No user functions have been defined.");
-      } else {
-         my $max = 8;
-         for my $key (keys %{@info{mush_function}}) {
-            $max = length($key) if length($key) > $max;
-         }
-         push(@out,sprintf("%*s | %s",$max,"Function","Location"));
-         push(@out,sprintf("%s=|=%s","=" x $max,"=" x 40));
-         for my $key (keys %{@info{mush_function}}) {
-            push(@out,sprintf("%*s | %s",
-                              $max,
-                              $key,
-                              @info{mush_function}->{$key}
-                             )
-                );
-         }
-      }
+   verify_switches($self,$prog,$switch,"list") || return;
+
+   if(defined $$switch{list} || $txt =~ /^\s*$/) {
       necho(self   => $self,                                    # notify user
             prog   => $prog,
-            source => [ join("\n",@out) ]
+            source => [ list_user_functions() ]
            );
       return;
    }
+
    my ($name,$atr) = besplit($self,$prog,shift,"=");
 
    if($name =~ /^\s*([a-z])([a-z0-9_]*)\s*$/) {
@@ -1376,21 +1391,18 @@ sub cmd_quota
       if(!hasflag($self,"WIZARD")) {
          return err($self,$prog,"Permission denied.");
       } elsif($value =~ /^\s*(\d+)\s*$/) {
-         db_set($target,"obj_quota",$1);
-         db_set($target,"obj_total_quota",$1);
+         printf("RESULT: '%s'\n",set_quota($target,"max",$1));
       } else {
          return err($self,$prog,"Invalid number ($value).");
       }
    }
 
-   my $total = nvl(get($target,"obj_total_quota"),0);
-   my $left = nvl(get($target,"obj_quota"),0);
    necho(self   => $self,                                    # notify user
          prog   => $prog,
          source => [ "%s Quota: %9s  Used: %9s",
-                     name($target),
-                     $total,
-                     $total - $left
+                     obj_name($target),
+                     quota($target,"max"),
+                     quota($target,"used"),
                    ]
         );
 }
@@ -1792,12 +1804,17 @@ sub cmd_bad
 
    my $cmd = $$prog{cmd};
    $$cmd{bad_pos} = 0 if(!defined $$cmd{bad_pos});     # initialize "loop"
+   $$cmd{quota} = {} if(!defined $$cmd{quota});
+   my $quota = $$cmd{quota};
 
    for($start=$$cmd{bad_pos};                   # loop for 100 objects
           $$cmd{bad_pos} < $#db &&
           $$cmd{bad_pos} - $start < 100;
           $$cmd{bad_pos}++) {
       if(valid_dbref($$cmd{bad_pos})) {              # does object match?
+         if(!hasflag($$cmd{bad_pos},"PLAYER")) {
+            $$quota{owner_id($$cmd{bad_pos})}++;
+         }
          if(bad_object($$cmd{bad_pos})) {
             push(@out,"#" . $$cmd{bad_pos} . " is corrupted, deleting.");
             db_delete($$cmd{bad_pos});
@@ -1810,26 +1827,27 @@ sub cmd_bad
                   type($self,$prog,$$cmd{bad_pos}) . "'");
             }
 
-            if(hasflag($$cmd{bad_pos},"PLAYER")) {
-               my $total = get($$cmd{bad_pos},"obj_total_quota");
-               my $left = get($$cmd{bad_pos},"obj_quota");
+            # arbitrarly choose exit over object due to previous bug.
+            if(and_hasflag($$cmd{bad_pos},"EXIT","OBJECT")) {
+               db_remove_list($$cmd{bad_pos},"obj_flag","OBJECT");
+            }
+            my $count += hasflag($$cmd{bad_pos},"PLAYER");
+            $count += hasflag($$cmd{bad_pos},"OBJECT");
+            $count += hasflag($$cmd{bad_pos},"EXIT");
+            $count += hasflag($$cmd{bad_pos},"ROOM");
 
-               if($total eq undef && $left eq undef) {
-                  ($total,$left) = (0,0);
-               } elsif($left ne undef && $total eq undef) {
-                  $total = $left;
-               } elsif($total ne undef && $left eq undef) {
-                  $left = $total;
-               }
-               db_set($$cmd{bad_pos},"obj_total_quota",$total);
-               db_set($$cmd{bad_pos},"obj_quota",$left);
+            if($count != 1) {
+               push(@out,obj_name($$cmd{bad_pos}) ." has $count types.");
             }
 
             if(hasflag($$cmd{bad_pos},"EXIT") && 
-               !hasflag(loc($$cmd{bad_pos}),"ROOM")) {
+               hasflag(loc($$cmd{bad_pos}),"EXIT")) {
                my $loc = loc($$cmd{bad_pos});
-               push(@out,"#" . obj_name($self,$$cmd{bad_pos}) ." not in a room, is in " .
-                  (($loc eq undef) ? "N/A" : obj_name($self,$loc)));
+               push(@out,
+                    "#" . obj_name($self,$$cmd{bad_pos}) .
+                    " not in a room, is in " .
+                    (($loc eq undef) ? "N/A" : obj_name($self,$loc))
+                   );
             }
 
             if(hasflag($$cmd{bad_pos},"PLAYER") && 
@@ -1905,9 +1923,21 @@ sub cmd_bad
    }
    if($$cmd{bad_pos} >= $#db) {                          # search is done
       delete @$cmd{bad_pos};
+      my $hash = $$cmd{quota};
+
+      for(my $obj=0;$obj < $#db;$obj++) {
+         if(valid_dbref($obj) && hasflag($obj,"PLAYER")) {
+            if(quota($obj,"used") != $$hash{$obj}) {
+               push(@out,"#" . obj_name($obj) .
+                    "'s used quota updated to " . $$hash{$obj} .
+                    " from " .  quota($obj,"left"));
+               set_quota($obj,"used",$$hash{$obj});
+            }
+         }
+      }
       necho(self   => $self,
             prog   => $prog,
-            source => [ "**End of List***" ]
+            source => [ join("\n",@out) . "\n**End of List***" ]
         );
       delete @$cmd{bad_pos};
    } else {
@@ -2066,7 +2096,7 @@ sub cmd_give
       return err($self,$prog,"You look through your pockets. Nope, no " .
                  pennies("negative") . ".");
    } elsif($amount > money($self) && !hasflag($self,"WIZARD")) {
-      return err($self,$prog,"You don't have %s to give!",pennies($amount));
+      return err($self,$prog,"You don't have %s to give!");
    }
 
    if(($apay = get($target,"APAY")) ne undef && # handle @pay/@apay
@@ -2437,6 +2467,7 @@ sub cmd_var
          ($var,$rest) = (trim($`),$1 . $');
       }
    }
+   $var = evaluate($self,$prog,$var);
 
    show_verbose($prog,$$prog{cmd});   # doesn't hit verbose code, so run it
    $$prog{var} = {} if !defined $$prog{var};
@@ -3346,43 +3377,33 @@ sub cmd_wait
    return "BACKGROUNDED";
 }
 
+#
+# cmd_sleep
+#    Let a program sleep for X seconds
+#
 sub cmd_sleep
 {
    my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
-   hasflag($self,"GUEST") &&
+   hasflag($self,"GUEST") &&                     # no sleeping for guests
       return err($self,$prog,"Permission denied.");
 
-   in_run_function($prog) &&
+   in_run_function($prog) &&      # sleep can not be called from inside run()
       return out($prog,"#-1 \@SLEEP can not be called from RUN function");
 
    my $cmd = $$prog{cmd};
 
-   if(!defined $$cmd{sleep}) {
-      if($txt =~ /^\s*(\d+)\s*$/) {
-         if($1 > 5400 || $1 < 1) {
-            necho(self   => $self,
-                  prog   => $prog,
-                  source => [ "\@sleep range must be between 1 and 5400." ],
-                );
-            return;
-         } else {
-            $$cmd{sleep} = time() + $1;
-         }
-      } else {
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "usage: \@sleep <seconds>" ],
-              );
-         return;
-      }
+   if(defined $$cmd{sleep}) {   # spin() will not run this command again
+      delete @$cmd{sleep};      # until the sleep is done.
+   } elsif(!isint($txt) || $txt > 5400) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "\@sleep is limited to 5400 seconds." ],
+           );
+   } elsif($txt > 0) {
+      $$cmd{sleep} = time() + $txt;                # signal spin() to wait.
+      return "RUNNING";
    }
-
-   if($$cmd{sleep} >= time()) {
-       $$prog{idle} = 1;
-       return "RUNNING";
-   }
-   return "DONE";
 }
 
 
@@ -3916,14 +3937,24 @@ sub cmd_list
             source => [ "%s", motd($self,$prog) ]
            );
    } elsif($txt =~ /^\s*functions\s*$/i) {
+       my $user;
        $Text::Wrap::columns=75;
+       if(!defined @info{mush_function}||ref(@info{mush_function}) ne "HASH") {
+          $user = "N/A"
+       } else {
+          $user = uc(join(' ',keys %{@info{mush_function}}));
+       }
        necho(self   => $self,
              prog   => $prog,
-             source => [ "%s",
-                         wrap("Functions: ",
-                              "           ",
+             source => [ "%s\n%s",
+                         wrap("Functions:     x",
+                              "                ",
                               uc(list_functions())
-                             )
+                             ),
+                         wrap("User-Functions: ",
+                              "                ",
+                              $user
+                             ),
                        ]
             );
    } elsif($txt =~ /^\s*commands\s*$/i) {
@@ -4019,9 +4050,12 @@ sub cmd_destroy
    }
 
    my $name = name($target);
-   my $objname = obj_name($self,$target);
    my $loc = loc($target);
 
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ "Destroyed %s", obj_name($target) ],
+        );
    destroy_object($self,$prog,$target);
 }
 
@@ -4539,7 +4573,10 @@ sub cmd_page
 sub cmd_last
 {
    my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
-   my ($target,$extra, $hostname, $count,$out);
+   my ($target,$extra, $hostname, $count,$out, $h);
+   my $max = 0;
+
+   verify_switches($self,$prog,$switch,"full") || return;
 
    if($txt =~ /^\s*$/) {
       if(hasflag($self,"PLAYER")) {
@@ -4552,6 +4589,10 @@ sub cmd_last
          return err($self,$prog,"I couldn't find that player.");
    }
 
+   if($$switch{full} && !hasflag($self,"GOD")) {
+      return err($self,$prog,"Permission denied.");
+   }
+
    !controls($self,$target) &&
       return err($self,$prog,"Permission denied.");
 
@@ -4561,20 +4602,36 @@ sub cmd_last
       ref($$attr{value}) ne "HASH") {
       return err($self,$prog,"Internal error, unable to continue");
    }
-   $out .= "Site:                         Connection Start  | " .
-           "Connection End\n";
-   $out .= "----------------------------|-------------------|" .
-           ("-" x 18) . "\n";
 
+   # deterime site column sizing
    for my $key (sort {$b <=> $a} keys %{$$attr{value}}) {
-      last if($count++ > 6);
+      last if($count++ > 15);
       if(@{$$attr{value}}{$key} =~ /^([^,]+)\,([^,]+)\,/) {
-         $out .= sprintf("%-27s | %s | %s\n",short_hn($'),minits($key),
-            minits($1));
+         $h = (defined $$switch{full}) ? $' : short_hn($');
+         $max = ansi_length($h) if ansi_length($h) >= $max;
       }
    }
 
-   $out .= "----------------------------|-------------------|" .
+   $count = 0;                                              # build header
+   $out .= "Site:" . (" " x ($max-2)) . "Connection Start  | ".
+           "Connection End\n";
+   $out .= ("-" x ($max+1)) . "|-------------------|" .
+           ("-" x 18) . "\n";
+
+   for my $key (sort {$b <=> $a} keys %{$$attr{value}}) { # build contents
+      last if($count++ > 15);
+      if(@{$$attr{value}}{$key} =~ /^([^,]+)\,([^,]+)\,/) {
+         $h = (defined $$switch{full}) ? $' : short_hn($');
+         $out .= sprintf("%s%s | %s | %s\n",
+                         $h,
+                         " " x ($max - ansi_length($h)),
+                         minits($key),
+                         minits($1)
+                        );
+      }
+   }
+
+   $out .= ("-" x ($max+1)) . "|-------------------|" .          # footer
            ("-" x 18) . "\n";
 
    necho(self   => $self,
@@ -4599,7 +4656,7 @@ sub cmd_go
 
    my $loc = loc($self);
 
-   if(conf("master_override") ne "no") {        # search master room first?
+   if(conf_true("master_override")) {          # search master room first?
       $dest = find_exit($self,$prog,conf("master"),$txt);
 
       if(dest($dest) eq undef) {
@@ -4811,10 +4868,19 @@ sub cmd_help
       $help = "No entry for '" . lc(trim($txt) . "'");
    }
 
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "%s", $help ],
-        );
+   if($help =~ /^run: /i) {                # run a command to provide help
+      mushrun(self   => $self,
+              prog   => $prog,
+              runas  => $self,
+              source => 0,
+              cmd    => $'
+             );
+   } else {                                       # send help output to user
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s", $help ],
+           );
+   }
 }
 
 
@@ -4844,6 +4910,12 @@ sub create_exit
 {
    my ($self,$prog,$name,$in,$out,$verbose) = @_;
 
+   # only ROOM, OBJECT, or PLAYERS may have exits;
+   return undef if(!or_hasflag($in,"ROOM","OBJECT","PLAYER"));
+
+   # only ROOM, OBJECT, or PLAYERS may have destinations;
+   return undef if(!or_hasflag($out,"ROOM","OBJECT","PLAYER"));
+
    my $exit = create_object($self,$prog,$name,undef,"EXIT") ||
       return undef;
 
@@ -4860,7 +4932,7 @@ sub cmd_create
 
    if(hasflag($self,"GUEST")) {
       return err($self,$prog,"Permission denied.");
-   } elsif(quota_left($self) <= 0) {
+   } elsif(quota($self,"left") <= 0) {
       return err($self,$prog,"You are out of QUOTA to create objects.");
    } elsif(length($txt) > 50) {
       return err($self,$prog,
@@ -4882,8 +4954,7 @@ sub cmd_create
          source => [ "Object created as: %s",obj_name($self,$dbref) ],
         );
 
-   my $cur = get($self,"obj_quota"); 
-   db_set($self,"obj_quota",$cur - 1);
+   set_quota($self,"sub");
 }
 
 sub cmd_link
@@ -4929,104 +5000,112 @@ sub cmd_dig
    my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    my ($loc,$room_name,$room,$in,$out,$cost,$quota);
      
-   if(hasflag($self,"GUEST")) {
+   hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission Denied."); 
-   } elsif($txt =~ /^\s*([^\=]+)\s*=\s*([^,]+)\s*,\s*(.+?)\s*$/ ||
-      $txt =~ /^\s*([^=]+)\s*=\s*([^,]+)\s*$/ ||
-      $txt =~ /^\s*([^=]+)\s*$/) {
-      ($room_name,$in,$out) = ($1,$2,$3);
-   } else {
+
+   # parse command line
+   my ($room_name,$rest) = bsplit($txt,"=");
+   my $room_name = evaluate($self,$prog,$room_name);
+   ($in,$out) = besplit($self,$prog,$rest,",");
+
+   $loc = loc($self) ||
+      return err($self,$prog,"Unable to determine your location");
+
+   $quota = 1;                            # determine required quota & cost
+   $cost = conf("digcost");
+   if($in ne undef) {
+      $cost += conf("linkcost");
+      $quota++;
+   }
+   if($out ne undef) {
+      $cost += conf("linkcost");
+      $quota++;
+   }
+   
+   if($room_name eq undef) {                                 # no room name
+      return err($self,$prog,"Dig what?");
+   } elsif(hasflag($self,"WIZARD") || hasflag($self,"GOD")) {
+      # ignore QUOTA restrictions
+   } elsif(quota($self,"left") < $quota) {
+      return err($self,$prog,"A quota of $quota is needed for this \@dig");
+   } elsif($cost > money($self)) {
+      return err($self,$prog,"%s is needed for this \@dig.",pennies($cost));
+   } elsif($in ne undef && find_exit($self,$prog,loc($self),$in)) {
+      return err($self,$prog,"Exit '%s' already exists in this location",$in);
+   } elsif($out ne undef && !(controls($self,$loc)||hasflag($loc,"LINK_OK"))) {
       return err($self,
                  $prog,
-                 "syntax: \@dig <RoomName> = <InExitName>,<OutExitName>\n".
-                 "        \@dig <RoomName> = <InExitName>\n" .
-                 "        \@dig <RoomName>");
-   }
+                 "You do not own this room or it is not LINK_OK"
+                 );
+   } if(hasflag($loc,"EXIT")) {
+      return err($self,$prog,"You can not \@dig from inside an exit.");
+   } elsif($out ne undef && hasflag($out,"EXIT")) {
+      return err($self,$prog,"You only dig to a ROOM, OBJECT, or PLAYER.");
+   } else {                                           # okay to start @digging
+      # creatse room
+      my $room = create_object($self,$prog,$room_name,undef,"ROOM")||
+         return err($self,$prog,"Unable to create a new object");
 
-   $quota++;
-   $quota++ if($in ne undef);
-   $quota++ if($in ne out);
+      give_money($self,"-" . $cost) ||
+         return err($self,$prog,"Couldn't debit %s",pennies($cost));
 
-   if(hasflag($self,"WIZARD") || hasflag($self,"GOD")) {
-      # ignore restrictions
-   } elsif(quota_left($self) < $quota) {
-      return err($self,$prog,"You need a quota of $quota or better to " .
-                 "complete this \@dig"
-                );
-   } elsif($in eq undef && $out eq undef && quota_left($self) < 1) {
-      return err($self,$prog,"You are out of QUOTA to create objects");
-   } elsif($in ne undef && $out ne undef) {
-      $cost = conf("digcost") + (conf("linkcost") * 2);
-   } elsif($in ne undef || $out ne undef) {
-      $cost = conf("digcost") + conf("linkcost");
-   } elsif($in eq undef && $out eq undef) { 
-      $cost = conf("digcost");
-   } elsif($cost > money($self)) {
-      return err($self,$prog,"You need at least " . pennies($cost));
-   }
-
-   if(!hasflag($self,"WIZARD") && !hasflag($self,"GOD") &&
-      !give_money($self,"-" . $cost)) {
-      return err($self,$prog,"Internal error, couldn't debit " .
-                 pennies($cost));
-   }
-
-   if($in ne undef && find_exit($self,$prog,loc($self),$in)) {
-      return err($self,$prog,"Exit '%s' already exists in this location",$in);
-   }
+      set_quota($self,"sub") ||
+         return err($self,$prog,"Couldn't update quota.");
 
 
-   if($out ne undef  || $in ne undef) {
-      $loc = loc($self) ||
-         return err($self,$prog,"Unable to determine your location");
-   }
-
-   if($out ne undef) {
-      if(!(controls($self,$loc) || hasflag($loc,"LINK_OK"))) {
-         return err($self,
-                    $prog,
-                    "You do not own this room or it is not LINK_OK"
-                   );
-      }
-   }
-
-   my $room = create_object($self,$prog,$room_name,undef,"ROOM")||
-      return err($self,$prog,"Unable to create a new object");
-
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "Room created as:         %s(#%sR)",$room_name,$room ],
-        );
-
-   if($in ne undef) {
-      my $in_dbref = create_exit($self,$prog,$in,$loc,$room);
- 
-      if($in_dbref eq undef) {
-         return err($self,$prog,"Unable to create exit '%s' going in to room",
-                    $in
-                   );
-      }
       necho(self   => $self,
             prog   => $prog,
-            source => [ "   In exit created as:   %s(#%sE)",$in,$in_dbref ],
+            source => [ "%s created as #%s.",$room_name,$room ],
            );
-   }
 
-   if($out ne undef) {
-      my $out_dbref = create_exit($self,$prog,$out,$room,$loc);
-      if($out_dbref eq undef) {
-         return err($self,$prog,"Unable to create exit '%s' going out of room",
-                    $out
-                   );
+      if($in ne undef) {                    # create exit going into the room
+         my $in_dbref = create_exit($self,$prog,$in,$loc,$room);
+
+         if($in_dbref eq undef) {
+            return err($self,
+                       $prog,
+                       "Unable to create exit '%s' going in to room",
+                       $in
+                      );
+         }
+
+         give_money($in_dbref,conf("linkcost"),1) ||
+           return err($self,$prog,"Couldn't give #$in_dbref %s",pennies($cost));
+         set_quota($self,"sub");
+
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "   In exit created as:   %s(#%sE)",$in,$in_dbref ],
+              );
       }
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "   Out exit created as:  %s(#%sE)",$out,$out_dbref ],
-           );
-   }
 
-   my $cur = get($self,"obj_quota"); 
-   db_set($self,"obj_quota",$cur - $quota);
+      if($out ne undef) {                # create exit going out of the room
+         my $out_dbref = create_exit($self,$prog,$out,$room,$loc);
+         if($out_dbref eq undef) {
+            return err($self,
+                       $prog,
+                       "Unable to create exit '%s' going out of room",
+                       $out
+                      );
+         }
+
+         set_quota($self,"sub");
+         give_money($out_dbref,conf("linkcost"),1) ||
+            return err($self,
+                       $prog,
+                       "Couldn't give #%s %s",
+                       $out_dbref,
+                       pennies($cost)
+                      );
+
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ "   Out exit created as:  %s(#%sE)",
+                           $out,$out_dbref
+                         ],
+              );
+      }
+   }
 }
 
 sub cmd_open
@@ -5045,7 +5124,7 @@ sub cmd_open
                              "        \@open <ExitName>");
    }
 
-   if(quota_left($self) < 1) {
+   if(quota($self,"left") < 1) {
       return err($self,$prog,"You are out of QUOTA to create objects");
    }
 
@@ -5072,8 +5151,7 @@ sub cmd_open
    my $dbref = create_exit($self,$prog,$exit,$loc,$dest) ||
       return err($self,$prog,"Internal error, unable to create the exit");
 
-   my $cur = get($self,"obj_quota"); 
-   db_set($self,"obj_quota",$cur - 1);
+   set_quota($self,"sub");
 
    necho(self   => $self,
          prog   => $prog,
@@ -5495,7 +5573,7 @@ sub list_attr
    }
 
 
-   if($#out == -1) {
+   if($#out == -1 && $pattern ne undef) {
       return "No matching attributes";
    } else {
       return join("\n",@out);
@@ -5573,7 +5651,7 @@ sub cmd_ex
                               "*UNLOCKED*"
                              ) .
               "  " . color("h",ucfirst(conf("money_name_plural"))) .
-              ": ". money($target);
+              ": ". money($target,1);
        my $parent = get($target,"obj_parent");
 
        if($parent ne undef) {
@@ -5782,7 +5860,7 @@ sub run_attr
    my @args = @_;
    my $txt;
 
-   return 0 if(is_true(conf("safemode")));         # nothing runs in safemode
+   return 0 if(conf_true("safemode"));            # nothing runs in safemode
 
    $txt = get($target,$attr) ||
       return 0;
@@ -5838,7 +5916,7 @@ sub cmd_set
    verify_switches($self,$prog,$switch,"quiet") || return;
 
    my $target = find($self,$prog,evaluate($self,$prog,$name)) || # find target
-      return err($self,$prog,"I don't see that here.");
+      return err($self,$prog,"I don't see that here");
 
    !controls($self,$target) &&
       return err($self,$prog,"Permission denied");
@@ -6509,11 +6587,11 @@ sub money
 {
    my ($target,$flag) = (obj(shift),shift);
 
-   my $owner = owner($target);
+   $target = owner($target) if !$flag;
 
-   return 0 if($owner eq undef);
+   return 0 if($target eq undef);
 
-   return get($owner,"obj_money");
+   return get($target,"obj_money");
 }
 
 #
@@ -6626,6 +6704,27 @@ sub hasflag
       return 0;
    }
 }
+
+sub or_hasflag
+{
+   my ($obj,@flags) = @_;
+
+   for my $flag (@flags) {
+      return 1 if(hasflag($obj,$flag));
+   }
+   return 0;
+}
+
+sub and_hasflag
+{
+   my ($obj,@flags) = @_;
+
+   for my $flag (@flags) {
+      return 0 if(!hasflag($obj,$flag));
+   }
+   return 1;
+}
+
 
 sub dest
 {
@@ -7997,7 +8096,7 @@ sub single_line
 
 sub run_obj_commands
 {
-   my ($self,$prog,$runas,$obj,$cmd)= @_;
+   my ($self,$prog,$runas,$obj,$cmd)= (obj(shift),shift,shift,obj(shift),shift);
    $cmd =~ s/\r|\n//g;
    my $match = 0;
 
@@ -8088,10 +8187,10 @@ sub mush_command
    my ($self,$prog,$runas,$cmd,$src) = @_;
    my $match = 0;
 
-   return if(conf("safemode"));
+   return if(conf_true("safemode"));
    $cmd = evaluate($self,$prog,$cmd) if($src ne undef && $src == 0);
    
-   if(conf("master_override") eq "no") {   # search master room first
+   if(conf_true("master_override")) {            # search master room first
       for my $obj (lcon(conf("master"))) {
          run_obj_commands($self,$prog,$runas,$obj,$cmd) && return 1;
       }
@@ -8115,7 +8214,7 @@ sub mush_command
       return 0;
    }
 
-   if(conf("master_override") ne "no") {        # search master room
+   if(!conf_true("master_override")) {                # search master room
       for my $obj (lcon(conf("master"))) {             # but not twice
          if(!hasflag($obj,"PLAYER")) {
             run_obj_commands($self,$prog,$runas,$obj,$cmd) && return 1;
@@ -8183,7 +8282,6 @@ sub mushrun_add_cmd
    # add to command stack or program stack
    my $prog = @$arg{prog};
    my $stack = $$prog{stack};
-   $$prog{ping} = @$arg{ping};
 
    for my $i (0 .. $#cmd) {
       my $data = { runas   => $$arg{runas},
@@ -8193,7 +8291,7 @@ sub mushrun_add_cmd
                    mdigits => $$arg{match}
                  };
 
-      if(conf("debug") == 1) {
+      if(conf_true("debug")) {
          #
          # Extra Debuging to trace calls back to the begining, when needed.
          # useful for code_history()
@@ -8784,6 +8882,13 @@ sub spin_run
    } elsif(mush_command($self,$prog,$$cmd{runas},$$cmd{origcmd},$$cmd{source})) {
       return 1;                                   # mush_command runs command
    } else { # no match, show HUH?
+      if(defined $$prog{ping} && $$prog{ping}) {
+         necho(self   => $$cmd{created_by},
+               prog   => $prog,
+               source => [ "PONG: No matching command found." ]
+              );
+         return;
+      }
       return cmd_huh($$cmd{runas},$prog,$$cmd{cmd});
    }
    return 1;
@@ -9463,7 +9568,7 @@ sub initialize_functions
    @fun{keys}       = sub { return &fun_keys(@_);                  };
    @fun{timezone}   = sub { return &fun_timezone(@_);              };
    @fun{flags}      = sub { return &fun_flags(@_);                 };
-   @fun{quota}      = sub { return &fun_quota_left(@_);            };
+   @fun{quota}      = sub { return &fun_quota(@_);                 };
    @fun{input}      = sub { return &fun_input(@_);                 };
    @fun{has_input}  = sub { return &fun_has_input(@_);             };
    @fun{strlen}     = sub { return &fun_strlen(@_);                };
@@ -9783,6 +9888,21 @@ sub fun_haspower
      return "#-1 FUNCTION (ZONE) EXPECTS 2 ARGUMENTS";
 
    return 0;
+}
+
+sub fun_quota
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args($#_,1) ||
+     return "#-1 FUNCTION (QUOTA) EXPECTS 1 ARGUMENTS";
+
+   my $target = find($self,$prog,evaluate($self,$prog,shift)) ||
+      return "#-1 NO SUCH OBJECT";
+  
+   return quota($target,"max") . " " . 
+          quota($target,"used") . " " .
+          quota($target,"left");
 }
 
 #
@@ -11724,8 +11844,6 @@ sub age
    return sprintf("%d",(time() - $date) / 86400);
 }
 
-   my $attr = mget(0,"stat_login");
-
 sub graph_connected
 {
    my ($size_x,$size_y) = @_;
@@ -11798,6 +11916,15 @@ sub graph_connected
 }
 
 
+#
+# fun_run
+#    Run a command as if it was a function. Each @command cannot be run
+#    as a function should will need a test condition to prevent it
+#    from running like below:
+#
+#  in_run_function($prog) &&      # sleep can not be called from inside run()
+#     return out($prog,"#-1 \@SLEEP can not be called from RUN function");
+#
 sub fun_run
 {
    my ($self,$prog) = (shift,shift);
@@ -11835,6 +11962,7 @@ sub fun_run
       $$prog{output} = $tmp;
    }
    delete @$prog{nomushrun};
+   $output =~ s/\n+$//;
    return $output;
 }
 
@@ -11900,12 +12028,65 @@ sub good_args
    return 0;
 }
 
+# sub quota
+# {
+#    my $self = shift;
+# 
+#    return quota_left($self);
+# }
+
 sub quota
 {
-   my $self = shift;
+   my ($self,$type) = (obj(shift),shift);
+   my $target = owner($self);
 
-   return quota_left($self);
+   return undef if($type !~ /^(max|used|left)$/);
+   return undef if(!valid_dbref($target) || !hasflag($target,"PLAYER"));
+
+   if(get($target,"obj_quota") =~ /^(\d+),(\d+)$/) {
+      if($type eq "max") {
+         return $1;
+      } elsif($type eq "used") {
+         return $2;
+      } elsif($type eq "left") {
+         return $1 - $2;
+      }
+   } else {
+      return 0;
+   }
 }
+
+sub set_quota
+{
+   my ($target,$type,$amount) = (obj(shift),shift,shift);
+   my $owner = owner($target);
+
+   # verify arguments
+   return 0 if($type !~ /^(max|used|add|subtract)$/);
+   if(!(($type =~ /^(max|used)$/ && $amount =~ /^\s*(\d+)\s*$/) ||
+        ($type =~ /^(add|sub)$/ && $amount eq undef))) {
+      return 0;
+   }
+   return 0 if(!valid_dbref($owner) || !hasflag($owner,"PLAYER"));
+
+   if(get($owner,"obj_quota") =~ /^(\d*),(\d*)$/) {
+      if($type eq "max") {
+         db_set($owner,"obj_quota","$amount," . nvl($2,0));
+      } elsif($type eq "used") {
+         db_set($owner,"obj_quota",nvl($1,0) . ",$amount");
+      } elsif($type eq "add") {
+         db_set($owner,"obj_quota",nvl($1,0) . "," . $2 + 1);
+      } elsif($type eq "subtract") {
+         db_set($owner,"obj_quota",nvl($1,0) . "," . $2 - 1);
+      }
+   } elsif($type eq "max") {
+      db_set($owner,"obj_quota","$amount,1");
+   } else {
+      return 0;
+   }
+}
+
+
 
 sub fun_mudname
 {
@@ -15050,9 +15231,9 @@ sub pennies
    }
 
    if($amount == 1) {
-      return $amount . " " . conf("money_name_singular") . ".";
+      return $amount . " " . conf("money_name_singular");
    } else {
-      return $amount . " " . conf("money_name_plural") . ".";
+      return $amount . " " . conf("money_name_plural");
    }
 }
 
@@ -15191,6 +15372,11 @@ sub evaluate_substitutions
       } elsif($seq =~ /^%([0-9])$/ || $seq =~ /^%\{([^}]+)\}$/) {  # temp vars
          if($1 eq "hostname") {
             $out .= $$user{raw_hostname};
+         } elsif($1 eq "##") {
+            if(defined $$prog{iter_stack} && $#{$$prog{iter_stack}} != -1 ) {
+               my $var = @{@{$$prog{iter_stack}}[-1]}{val};
+               $out .= @{$$prog{var}}{$var} if(defined $$prog{var});
+            }
          } elsif($1 eq "socket") {
             $out .= $$user{raw_socket};
          } else {
@@ -15484,18 +15670,18 @@ sub logit
 
 sub web
 {
-   logit("weblog",@_) if(lc(conf("weblog")) eq "yes");
+   logit("weblog",@_) if(conf_true("weblog"));
 }
 
 sub con
 {
-   logit("conlog",@_) if(lc(conf("conlog")) eq "yes");
+   logit("conlog",@_) if(conf_true("conlog"));
 }
 
 sub audit
 {
    my ($self,$prog,$fmt,@args) = @_;
-   return if(lc(conf("auditlog")) ne "yes");
+   return if(!conf_true("auditlog"));
 
    my $info = sprintf("[%s] $fmt by " . obj_name($self,$self),ts(),@args);
 
@@ -15943,9 +16129,12 @@ sub destroy_object
    my ($self,$prog,$target) = (obj(shift),shift,obj(shift));
 
    my $loc = loc($target);
+   my $owner = owner($target);
 
    for my $exit (lexits($target)) {                   # destroy all exits
       if(valid_dbref($exit)) {
+         give_money($owner,money($exit,1));                # refund money
+         set_quota($owner,"sub");                          # refund quota
          db_delete($exit);
       }
    }
@@ -15981,6 +16170,8 @@ sub destroy_object
    }
 
    push(@free,$$target{obj_id});
+   give_money($owner,money($target,1));                        # refund money
+   set_quota($owner,"sub");                                    # refund quota
    db_delete($target);
    return 1;
 }
@@ -16037,8 +16228,7 @@ sub create_object
       db_set($id,"obj_home",$where);
       db_set($id,"obj_money",conf("starting_money"));
       db_set($id,"obj_firstsite",$where);
-      db_set($id,"obj_quota",conf("starting_quota"));
-      db_set($id,"obj_total_quota",conf("starting_quota"));
+      db_set($id,"obj_quota",conf("starting_quota") . ",0");
       @player{trim(ansi_remove(lc($name)))} = $id;
    } else {
       db_set($id,"obj_home",$$self{obj_id});
@@ -16131,18 +16321,24 @@ sub inuse_player_name
 #
 sub give_money
 {
-   my ($target,$amount) = (obj(shift),shift);
-   my $owner = owner($target);
+   my ($target,$amount,$flag) = (obj(shift),shift,shift);
+
+   $target = owner($target) if(!$flag);
 
    # $money doesn't contain a number
-   return undef if($amount !~ /^\s*\-{0,1}(\d+)\s*$/);
+   return 0 if($amount !~ /^\s*\-{0,1}(\d+)\s*$/);
 
    my $money = money($target);
 
-   db_set($owner,"obj_money",$money + $amount);
+   db_set($target,"obj_money",$money + $amount);
 
    return 1;
 }
+
+#
+# set_used_quota
+#    Update how much quota has been used by $obj
+#
 
 sub good_atr_name
 {
@@ -16251,6 +16447,11 @@ sub conf
    }
 }
 
+sub conf_true
+{
+   return is_true(conf($_[0]));
+}
+
 sub get
 {
    my ($obj,$attribute,$flag) = (obj($_[0]),$_[1],$_[2]);
@@ -16276,7 +16477,14 @@ sub player
 
 sub obj_name
 {
-   my ($self,$obj,$flag,$noansi) = (obj(shift),obj(shift),shift,shift);
+   my ($self,$obj,$flag,$noansi) = (obj(shift),shift,shift,shift);
+
+   if($obj eq undef) {                   # assume full name if not qualified
+      $obj = $self;
+   } else {
+      $obj = obj($obj);                                     # convert to obj
+   }
+   
 
    if(controls($self,$obj) || $flag) {
       return name($obj,$noansi) . "(#" . $$obj{obj_id} . flag_list($obj) . ")";
@@ -16545,20 +16753,6 @@ sub fuzzy
    } else {
       return timelocal($sec,$min,$hour,$day,$mon-1,$year);
    }
-}
-
-sub quota_left
-{
-  my $obj = obj(shift);
-  my $owner = owner($obj);
-
-  if(hasflag($obj,"WIZARD")) {
-     return 99999999;
-  } elsif(hasflag($obj,"GUEST")) {
-     return 0;
-  } 
-
-  return get(owner($obj),"obj_quota");
 }
 
 sub isatrflag

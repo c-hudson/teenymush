@@ -10147,7 +10147,7 @@ sub fun_ansi2mush
    );
 
    my $txt = evaluate($self,$prog,shift);
-   $txt =~ s///g;
+   $txt =~ s/\r//g;
 #   $txt =~ s/ /%b/g;
    my $str = ansi_init($txt);
 
@@ -14573,14 +14573,18 @@ sub http_accept
 
    my $addr = server_hostname($new);
 
-   $readable->add($new);
+   printf("ADD: '$addr'\n");
+   if(defined @info{http_ban} && defined @{@info{httpd_ban}}{$addr}) {
+      $new->close();
+      web("   %s %s\@web [BANNED-INSTANT CLOSE]\n",ts(),$addr);
+   } else {
+      $readable->add($new);
 
-   @http{$new} = { sock => $new,
-                   data => {},
-                   ip   => $addr,
-                 };
-
-#   web("   %s\@web Connect\n",@{@http{$new}}{ip});
+      @http{$new} = { sock => $new,
+                      data => {},
+                      ip   => $addr,
+                    };
+   }
 }
 
 sub http_disconnect

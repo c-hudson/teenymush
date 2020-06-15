@@ -15335,10 +15335,10 @@ sub evaluate_substitutions
          } else {
            my $sex = get(@{@{$$prog{cmd}}{invoker}}{obj_id},"sex");
 
-           if($sex =~ /(male|boy|garson|gent|father|mr|man|sir|son|brother)/i){
-              $out .= ($seq eq "%p") ? "his" : "His";
-           } elsif($sex =~ /(female|girl|woman|lady|dame|chick|gal|bimbo)/i) {
+           if($sex =~ /(female|girl|woman|lady|dame|chick|gal|bimbo)/i) {
               $out .= ($seq eq "%p") ? "her" : "Her";
+           } elsif($sex =~ /(male|boy|garson|gent|father|mr|man|sir|son|brother)/i) {
+              $out .= ($seq eq "%p") ? "his" : "His";
            } else {
               $out .= ($seq eq "%p") ? "its" : "Its";
            }

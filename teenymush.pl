@@ -5025,7 +5025,7 @@ sub cmd_dig
    } elsif(hasflag($self,"WIZARD") || hasflag($self,"GOD")) {
       # ignore QUOTA restrictions
    } elsif(quota($self,"left") < $quota) {
-      return err($self,$prog,"A quota of $quota is needed for this \@dig");
+      return err($self,$prog,"A quota of $quota is needed for this \@dig.");
    } elsif($cost > money($self)) {
       return err($self,$prog,"%s is needed for this \@dig.",pennies($cost));
    } elsif($in ne undef && find_exit($self,$prog,loc($self),$in)) {
@@ -16210,7 +16210,7 @@ sub create_object
    my $owner = $$user{obj_id};
 
    # check quota
-   if($flag && ($type ne "PLAYER" && quota($owner,"left") <= 0)) {
+   if(!$flag && ($type ne "PLAYER" && quota($owner,"left") <= 0)) {
       return 0;
    }
   

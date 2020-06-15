@@ -4177,7 +4177,6 @@ sub cmd_pemit
       return err($self,$prog,"Permission denied.");
 
    my ($obj,$txt) = balanced_split(shift,"=",4);
-   printf("PEMIT: '%s'\n",$txt);
 
    if($txt eq undef) {
       return err($self,$prog,"syntax: \@pemit <object> = <message> '$txt'");

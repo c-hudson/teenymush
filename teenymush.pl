@@ -3905,13 +3905,10 @@ sub motd_with_border
    my ($self,$prog,$txt) = @_;
 
    if($txt eq undef) {
-      $txt = "   " . fun_center($self,$prog,"There is no MOTD today",70) .
+      $txt = "   " . 
+             ansi_center("There is no MOTD today",70) .
              "\n   " .
-             fun_center($self,
-                        $prog,
-                        "\@set #0/motd=<message> for your MOTD",
-                        70
-                       );
+             ansi_center("&conf.motd #0=<message> for your MOTD",70);
    }
 
    return "   " . ("-" x 31) . "[ MOTD ]" . ("-" x 31) . "\n\n".
@@ -3923,8 +3920,7 @@ sub motd
    my ($self,$prog) = @_;
    
    my $atr = conf("motd");
-   return motd_with_border($self,$prog) if($atr eq undef);
-   motd_with_border($self,$prog,evaluate(0,$prog,$atr));
+   return motd_with_border($self,$prog,$atr);
 }
 
 sub cmd_list
@@ -4997,19 +4993,24 @@ sub cmd_link
 
 sub cmd_dig
 {
-   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
+   my ($self,$prog,$txt,$switch,$flag) = (obj(shift),shift,shift,shift,shift);
    my ($loc,$room_name,$room,$in,$out,$cost,$quota);
      
+   printf("Got this far: 1\n");
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission Denied."); 
+   printf("Got this far: 2\n");
 
    # parse command line
    my ($room_name,$rest) = bsplit($txt,"=");
    my $room_name = evaluate($self,$prog,$room_name);
    ($in,$out) = besplit($self,$prog,$rest,",");
+   printf("Got this far: 3 : '%s'\n",loc($self));
 
-   $loc = loc($self) ||
-      return err($self,$prog,"Unable to determine your location");
+   if(!$flag) {
+      $loc = loc($self) ||
+         return err($self,$prog,"Unable to determine your location");
+   }
 
    $quota = 1;                            # determine required quota & cost
    $cost = conf("digcost");
@@ -5021,6 +5022,7 @@ sub cmd_dig
       $cost += conf("linkcost");
       $quota++;
    }
+   printf("Got this far: 4\n");
    
    if($room_name eq undef) {                                 # no room name
       return err($self,$prog,"Dig what?");
@@ -5037,11 +5039,12 @@ sub cmd_dig
                  $prog,
                  "You do not own this room or it is not LINK_OK"
                  );
-   } if(hasflag($loc,"EXIT")) {
+   } elsif(hasflag($loc,"EXIT")) {
       return err($self,$prog,"You can not \@dig from inside an exit.");
    } elsif($out ne undef && hasflag($out,"EXIT")) {
       return err($self,$prog,"You only dig to a ROOM, OBJECT, or PLAYER.");
    } else {                                           # okay to start @digging
+      printf("Got this far: 5\n");
       # creatse room
       my $room = create_object($self,$prog,$room_name,undef,"ROOM")||
          return err($self,$prog,"Unable to create a new object");
@@ -5104,6 +5107,7 @@ sub cmd_dig
                            $out,$out_dbref
                          ],
               );
+          printf("Got this far: 6\n");
       }
    }
 }
@@ -12641,7 +12645,7 @@ sub fun_center
    my $size = evaluate($self,$prog,shift);
    my $fill = evaluate($self,$prog,shift);
 
-   if($size !~ /^\s*\d+\s*$/) {
+   if(!isint($size)) {
       return "#-1 SECOND ARGUMENT MUST BE NUMERIC - '$size'";
    } elsif($size eq 0) { 
       return "#-1 SECOND ARGUMENT MUST NOT BE ZERO";
@@ -12656,13 +12660,23 @@ sub fun_center
    my $len = ansi_length($txt);
 
    my $lpad = sprintf("%d",($size - $len) / 2);
-
    my $ltxt = ansi_substr($fill x $lpad,0,$lpad);
-
    my $rpad = $size - $lpad - $len;
-
    my $rtxt = ansi_substr($fill x $rpad,0,$rpad); 
-   
+   return "$ltxt$txt$rtxt";
+}
+
+sub ansi_center
+{
+   my ($txt,$size,$fill) = @_;
+
+   $fill = " " if($fill eq undef);
+   $txt = ansi_substr($txt,0,$size);
+   my $len = ansi_length($txt);
+   my $lpad = sprintf("%d",($size - $len) / 2);
+   my $ltxt = ansi_substr($fill x $lpad,0,$lpad);
+   my $rpad = $size - $lpad - $len;
+   my $rtxt = ansi_substr($fill x $rpad,0,$rpad); 
    return "$ltxt$txt$rtxt";
 }
 
@@ -14573,8 +14587,7 @@ sub http_accept
 
    my $addr = server_hostname($new);
 
-   printf("ADD: '$addr'\n");
-   if(defined @info{http_ban} && defined @{@info{httpd_ban}}{$addr}) {
+   if(defined @info{httpd_ban} && defined @{@info{httpd_ban}}{$addr}) {
       $new->close();
       web("   %s %s\@web [BANNED-INSTANT CLOSE]\n",ts(),$addr);
    } else {
@@ -14595,7 +14608,6 @@ sub http_disconnect
    $readable->remove($s);
    $s->close;
 }
-
 
 #
 # manage_httpd_bans
@@ -15065,7 +15077,8 @@ sub load_db
       my $prog = prog($obj,$obj,$obj);
       cmd_pcreate($obj,$prog,"god potrzebie");                 # create god
       set_flag($obj,$prog,$obj,"GOD",,1);                  # set god wizard
-      cmd_dig($obj,$prog,"The Void");                        # dig the void
+
+      create_object($obj,$prog,"The Void",undef,"ROOM",1);
       set($obj,$prog,$obj,"CONF.STARTING_ROOM","#1");   # set starting room
       teleport($obj,$prog,$obj,1);             # teleport god into the void
       cmd_give($obj,$prog,"#0 = 0");                  # give god some money
@@ -16182,13 +16195,13 @@ sub destroy_object
 
 sub create_object
 {
-   my ($self,$prog,$name,$pass,$type) = @_;
+   my ($self,$prog,$name,$pass,$type,$flag) = @_;
    my ($where,$id);
    my $who = $$user{obj_name};
    my $owner = $$user{obj_id};
 
    # check quota
-   if($type ne "PLAYER" && quota_left($$user{obj_id}) <= 0) {
+   if(!$flag && $type ne "PLAYER" && quota($owner,"LEFT") <= 0) {
       return 0;
    }
   

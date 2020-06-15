@@ -5020,21 +5020,25 @@ sub cmd_dig
       $quota++;
    }
    
-   if($room_name eq undef) {                                 # no room name
-      return err($self,$prog,"Dig what?");
-   } elsif(hasflag($self,"WIZARD") || hasflag($self,"GOD")) {
+   # permission / quota check.
+   if(hasflag($self,"WIZARD") || hasflag($self,"GOD")) {
       # ignore QUOTA restrictions
    } elsif(quota($self,"left") < $quota) {
       return err($self,$prog,"A quota of $quota is needed for this \@dig.");
    } elsif($cost > money($self)) {
       return err($self,$prog,"%s is needed for this \@dig.",pennies($cost));
-   } elsif($in ne undef && find_exit($self,$prog,loc($self),$in)) {
-      return err($self,$prog,"Exit '%s' already exists in this location",$in);
    } elsif($out ne undef && !(controls($self,$loc)||hasflag($loc,"LINK_OK"))) {
       return err($self,
                  $prog,
                  "You do not own this room or it is not LINK_OK"
                  );
+   }
+
+   # non-quota / permisison checks.
+   if($room_name eq undef) {                                 # no room name
+      return err($self,$prog,"Dig what?");
+   } elsif($in ne undef && find_exit($self,$prog,loc($self),$in)) {
+      return err($self,$prog,"Exit '%s' already exists in this location",$in);
    } elsif(hasflag($loc,"EXIT")) {
       return err($self,$prog,"You can not \@dig from inside an exit.");
    } else {                                           # okay to start @digging

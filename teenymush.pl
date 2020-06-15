@@ -16214,7 +16214,9 @@ sub create_object
    my $owner = $$user{obj_id};
 
    # check quota
-   if(!$flag && ($type ne "PLAYER" && quota($owner,"left") <= 0)) {
+
+   if(!$flag && !or_hasflag($self,"WIZARD","GOD") &&
+      $type ne "PLAYER" && quota($owner,"left") <= 0) {
       return 0;
    }
   

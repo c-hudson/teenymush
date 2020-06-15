@@ -187,7 +187,7 @@ sub load_defaults
    @default{login}                    = "Welcome to TeenyMUSH\r\n\r\n" .
                                         "   Type the below command to " .
                                         "customize this screen after loging ".
-                                        "in as God.\r\n\r\n    \@set #0/" .
+                                        "in as God.\r\n\r\n    &set #0/" .
                                         "conf.login = Login screen\r\n\r\n";
    @default{badsite}                  = "Your site has been banned.";
    @default{httpd_template}           = "<pre>";
@@ -4177,6 +4177,7 @@ sub cmd_pemit
       return err($self,$prog,"Permission denied.");
 
    my ($obj,$txt) = balanced_split(shift,"=",4);
+   printf("PEMIT: '%s'\n",$txt);
 
    if($txt eq undef) {
       return err($self,$prog,"syntax: \@pemit <object> = <message> '$txt'");

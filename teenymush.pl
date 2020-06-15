@@ -7202,8 +7202,8 @@ sub ansi_trim
 
    if($start eq undef || $end eq undef) {
       return undef;
-   } else {
-      return ansi_substr($txt,$start,$end);    # let ansi_substr do the work
+    } else {                                     # let ansi_substr do the work
+      return ansi_substr($txt,$start,$end - $start + 1);
    }
 }
 

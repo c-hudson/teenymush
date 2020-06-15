@@ -1391,7 +1391,7 @@ sub cmd_quota
       if(!hasflag($self,"WIZARD")) {
          return err($self,$prog,"Permission denied.");
       } elsif($value =~ /^\s*(\d+)\s*$/) {
-         printf("RESULT: '%s'\n",set_quota($target,"max",$1));
+         set_quota($target,"max",$1);
       } else {
          return err($self,$prog,"Invalid number ($value).");
       }
@@ -4996,16 +4996,13 @@ sub cmd_dig
    my ($self,$prog,$txt,$switch,$flag) = (obj(shift),shift,shift,shift,shift);
    my ($loc,$room_name,$room,$in,$out,$cost,$quota);
      
-   printf("Got this far: 1\n");
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission Denied."); 
-   printf("Got this far: 2\n");
 
    # parse command line
    my ($room_name,$rest) = bsplit($txt,"=");
    my $room_name = evaluate($self,$prog,$room_name);
    ($in,$out) = besplit($self,$prog,$rest,",");
-   printf("Got this far: 3 : '%s'\n",loc($self));
 
    if(!$flag) {
       $loc = loc($self) ||
@@ -5022,7 +5019,6 @@ sub cmd_dig
       $cost += conf("linkcost");
       $quota++;
    }
-   printf("Got this far: 4\n");
    
    if($room_name eq undef) {                                 # no room name
       return err($self,$prog,"Dig what?");
@@ -5041,11 +5037,8 @@ sub cmd_dig
                  );
    } elsif(hasflag($loc,"EXIT")) {
       return err($self,$prog,"You can not \@dig from inside an exit.");
-   } elsif($out ne undef && hasflag($out,"EXIT")) {
-      return err($self,$prog,"You only dig to a ROOM, OBJECT, or PLAYER.");
    } else {                                           # okay to start @digging
-      printf("Got this far: 5\n");
-      # creatse room
+      # create room
       my $room = create_object($self,$prog,$room_name,undef,"ROOM")||
          return err($self,$prog,"Unable to create a new object");
 
@@ -5054,6 +5047,9 @@ sub cmd_dig
 
       set_quota($self,"sub") ||
          return err($self,$prog,"Couldn't update quota.");
+
+      give_money($room,conf("digcost"),1) ||
+         return err($self,$prog,"Couldn't debit %s",pennies($cost));
 
 
       necho(self   => $self,
@@ -5107,7 +5103,6 @@ sub cmd_dig
                            $out,$out_dbref
                          ],
               );
-          printf("Got this far: 6\n");
       }
    }
 }
@@ -10135,7 +10130,8 @@ sub fun_dump
 
    return "#-1" if(!valid_dbref($target));
 
-   return encode_base64(compress(db_object($$target{obj_id})));
+   return db_object($$target{obj_id});
+#   return encode_base64(compress(db_object($$target{obj_id})));
 }
 
 sub fun_ansi2mush
@@ -12045,9 +12041,9 @@ sub quota
    my $target = owner($self);
 
    return undef if($type !~ /^(max|used|left)$/);
-   return undef if(!valid_dbref($target) || !hasflag($target,"PLAYER"));
+   return undef if(!valid_dbref($self) || !hasflag($target,"PLAYER"));
 
-   if(get($target,"obj_quota") =~ /^(\d+),(\d+)$/) {
+   if(get($target,"obj_quota") =~ /^([-\d]+),([-\d]+)$/) {
       if($type eq "max") {
          return $1;
       } elsif($type eq "used") {
@@ -12060,34 +12056,46 @@ sub quota
    }
 }
 
+#
+# set_quota
+#    type
+#       max  : set the maxium allowed objects
+#       used : set number of used objects
+#       add  : Add one object to the number of used objects
+#       sub  : Subtract one object to the number of used objects
+#
 sub set_quota
 {
    my ($target,$type,$amount) = (obj(shift),shift,shift);
    my $owner = owner($target);
-
+   
    # verify arguments
-   return 0 if($type !~ /^(max|used|add|subtract)$/);
+   return 0 if($type !~ /^(max|used|add|subtract|sub)$/);
    if(!(($type =~ /^(max|used)$/ && $amount =~ /^\s*(\d+)\s*$/) ||
         ($type =~ /^(add|sub)$/ && $amount eq undef))) {
       return 0;
    }
-   return 0 if(!valid_dbref($owner) || !hasflag($owner,"PLAYER"));
+   return 0 if($owner eq undef);
 
-   if(get($owner,"obj_quota") =~ /^(\d*),(\d*)$/) {
+   # do the work
+   if(get($owner,"obj_quota") =~ /^([-\d]*),([-\d]*)$/) {
       if($type eq "max") {
          db_set($owner,"obj_quota","$amount," . nvl($2,0));
       } elsif($type eq "used") {
          db_set($owner,"obj_quota",nvl($1,0) . ",$amount");
       } elsif($type eq "add") {
-         db_set($owner,"obj_quota",nvl($1,0) . "," . $2 + 1);
-      } elsif($type eq "subtract") {
-         db_set($owner,"obj_quota",nvl($1,0) . "," . $2 - 1);
+         db_set($owner,"obj_quota",nvl($1,0) . "," . ($2 - 1));
+      } elsif($type eq "subtract" || $type eq "sub") {
+         db_set($owner,"obj_quota",nvl($1,0) . "," . ($2 + 1));
+      } else {
+         return 0;
       }
    } elsif($type eq "max") {
       db_set($owner,"obj_quota","$amount,1");
    } else {
       return 0;
    }
+   return 1;
 }
 
 
@@ -14589,7 +14597,8 @@ sub http_accept
 
    if(defined @info{httpd_ban} && defined @{@info{httpd_ban}}{$addr}) {
       $new->close();
-      web("   %s %s\@web [BANNED-INSTANT CLOSE]\n",ts(),$addr);
+      web("   %s %s\@web [BANNED-CLOSE]\n",ts(),$addr);
+      $new->close();
    } else {
       $readable->add($new);
 
@@ -16151,7 +16160,7 @@ sub destroy_object
    for my $exit (lexits($target)) {                   # destroy all exits
       if(valid_dbref($exit)) {
          give_money($owner,money($exit,1));                # refund money
-         set_quota($owner,"sub");                          # refund quota
+         set_quota($owner,"add");                          # refund quota
          db_delete($exit);
       }
    }
@@ -16188,7 +16197,7 @@ sub destroy_object
 
    push(@free,$$target{obj_id});
    give_money($owner,money($target,1));                        # refund money
-   set_quota($owner,"sub");                                    # refund quota
+   set_quota($owner,"add");                                    # refund quota
    db_delete($target);
    return 1;
 }
@@ -16201,7 +16210,7 @@ sub create_object
    my $owner = $$user{obj_id};
 
    # check quota
-   if(!$flag && $type ne "PLAYER" && quota($owner,"LEFT") <= 0) {
+   if($flag && ($type ne "PLAYER" && quota($owner,"left") <= 0)) {
       return 0;
    }
   
@@ -16237,6 +16246,7 @@ sub create_object
            );
       db_delete($id);
       push(@free,$id);
+      printf("abort: couldn't set flag?\n");
       return undef;
    }
 
@@ -16345,9 +16355,12 @@ sub give_money
    # $money doesn't contain a number
    return 0 if($amount !~ /^\s*\-{0,1}(\d+)\s*$/);
 
-   my $money = money($target);
-
-   db_set($target,"obj_money",$money + $amount);
+   if($flag) {
+      db_set($target,"obj_money",$amount);
+   } else {
+      my $money = money($target);
+      db_set($target,"obj_money",$money + $amount);
+   }
 
    return 1;
 }

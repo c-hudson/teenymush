@@ -187,8 +187,8 @@ sub load_defaults
    @default{login}                    = "Welcome to TeenyMUSH\r\n\r\n" .
                                         "   Type the below command to " .
                                         "customize this screen after loging ".
-                                        "in as God.\r\n\r\n    &set #0/" .
-                                        "conf.login = Login screen\r\n\r\n";
+                                        "in as God.\r\n\r\n    &conf.login #0" .
+                                        "= Login screen\r\n\r\n";
    @default{badsite}                  = "Your site has been banned.";
    @default{httpd_template}           = "<pre>";
    @default{mudname}                  = "TeenyMUSH";
@@ -8959,6 +8959,12 @@ sub find
    } elsif($thing =~ /^\s*#master\s*$/) {             # return master room
       my $master = get(0,"conf.master");
       return ($master =~ /^\s*#{0,1}(\d+)\s*/) ? obj($1) : undef;
+   } elsif($thing =~ /^\s*#web\s*$/) {               # return web object
+      my $master = get(0,"conf.webobject");
+      return ($master =~ /^\s*#{0,1}(\d+)\s*/) ? obj($1) : undef;
+   } elsif($thing =~ /^\s*#starting\s*$/) {           # return starting room
+      my $master = get(0,"conf.starting_room");
+      return ($master =~ /^\s*#{0,1}(\d+)\s*/) ? obj($1) : undef;
    } elsif($thing =~ /^\s*me\s*$/) {
       return $self;
    } elsif($thing =~ /^\s*\*/) {
@@ -15327,9 +15333,7 @@ sub gender
    my ($atr, $result);
 
    $result = $it;                                         # default to it
-   if(defined $$prog{cmd} &&
-      defined $$prog{cmd}->{invoker} &&
-      defined $$prog{cmd}->{invoker}) {
+   if(defined $$prog{cmd} && defined $$prog{cmd}->{invoker}) {
       $atr = get($$prog{cmd}->{invoker},"sex");
    
       if($atr =~ /(female|girl|woman|lady|dame|chick|gal|bimbo)/i) {
@@ -17982,19 +17986,20 @@ sub db_read_import
    delete @impflag{"FLAG_WORD3_1"}; 
    delete @impflag{"GOODTYPE_1"};
    delete @impflag{"NOTYPE_1"};
+   my $ctl_a = chr(1);
 
    open(FILE,$file) ||                            # start reading actual db
       return err($self,$prog,"Could not open file '%s' for reading",$file);
 
 #   my $one = char(1);
    while(<FILE>) {
-      if($_ =~ /^"(\d+):(\d+):(.*)"$/) {
+      if($_ =~ /^"$ctl_a(\d+):(\d+):(.*)"$/) {
          $_ = $3;
       } elsif($_ =~ /^"(.*)"$/) {
          $_ = $1;
       }
 
-      if($_ =~ /$/) {
+      if($_ =~ /\r$/) {
          $prev = $_;
          next;
       } elsif($prev ne undef) {

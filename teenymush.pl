@@ -15314,6 +15314,35 @@ sub renumber_code
 }
 
 
+# 
+# gender
+#    Handle gender pronouns. Peek at the currently running $prog
+#    to determine the gender of the thing invoking the command.
+#    Then use the $male, $female, or $it version that is passed
+#    in based upon that gender.
+#
+sub gender
+{
+   my ($prog,$case,$male,$female,$it) = @_;
+   my ($atr, $result);
+
+   $result = $it;                                         # default to it
+   if(defined $$prog{cmd} &&
+      defined $$prog{cmd}->{invoker} &&
+      defined $$prog{cmd}->{invoker}) {
+      $atr = get($$prog{cmd}->{invoker},"sex");
+   
+      if($atr =~ /(female|girl|woman|lady|dame|chick|gal|bimbo)/i) {
+         $result = $female;
+      } elsif($atr =~ /(male|boy|garson|gent|father|mr|man|sir|son|brother)/i) {
+         $result = $male;
+      }
+   }
+ 
+   # does the result need to be first character uppercased?
+   return ($case =~ /[A-Z]/) ? ucfirst($result) : $result;
+}
+
 #
 # evaluate
 #    Take a string and evaluate any functions, and mush variables
@@ -15324,7 +15353,7 @@ sub evaluate_substitutions
    my ($out,$seq,$debug);
 
    my $orig = $t;
-   while($t =~ /(\\|%m[0-9]|%q[0-9a-z]|%i[0-9]|%[!pbrtnk#0-9%]|%(v|w)[a-zA-Z]|%=<[^>]+>|%\{[^}]+\}|##|#@)/i) {
+   while($t =~ /(\\|%m[0-9]|%q[0-9a-z]|%i[0-9]|%[!psaobrtnk#0-9%]|%(v|w)[a-zA-Z]|%=<[^>]+>|%\{[^}]+\}|##|#@)/i) {
       ($seq,$t)=($1,$');                                   # store variables
       $out .= $`;
       if($seq eq "\\") {                               # skip over next char
@@ -15360,19 +15389,13 @@ sub evaluate_substitutions
            $out .= "#$$self{obj_id}";
          }
       } elsif(lc($seq) eq "%p") {
-         if(!defined $$prog{cmd}) {
-           $out .= "its";
-         } else {
-           my $sex = get(@{@{$$prog{cmd}}{invoker}}{obj_id},"sex");
-
-           if($sex =~ /(female|girl|woman|lady|dame|chick|gal|bimbo)/i) {
-              $out .= ($seq eq "%p") ? "her" : "Her";
-           } elsif($sex =~ /(male|boy|garson|gent|father|mr|man|sir|son|brother)/i) {
-              $out .= ($seq eq "%p") ? "his" : "His";
-           } else {
-              $out .= ($seq eq "%p") ? "its" : "Its";
-           }
-         }
+         $out .= gender($prog,$seq,"his","her","its");
+      } elsif(lc($seq) eq "%s") {
+         $out .= gender($prog,$seq,"he","she","it");
+      } elsif(lc($seq) eq "%o") {
+         $out .= gender($prog,$seq,"him","her","it");
+      } elsif(lc($seq) eq "%a") {
+         $out .= gender($prog,$seq,"his","hers","its");
       } elsif($seq eq "%#") {                                # current dbref
          if(defined $$prog{cmd} && defined @{$$prog{cmd}}{invoker}) {
             $out .= "#" . @{@{$$prog{cmd}}{invoker}}{obj_id};

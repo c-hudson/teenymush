@@ -15324,7 +15324,7 @@ sub evaluate_substitutions
    my ($out,$seq,$debug);
 
    my $orig = $t;
-   while($t =~ /(\\|%m[0-9]|%q[0-9a-z]|%i[0-9]|%[!pbrtnk#0-9%]|%(v|w)[a-zA-Z]|%=<[^>]+>|%\{[^}]+\}|##|#@)/i) {
+   while($t =~ /(\\|%m[0-9]|%q[0-9a-z]|%i[0-9]|%[!ospabrtnk#0-9%]|%(v|w)[a-zA-Z]|%=<[^>]+>|%\{[^}]+\}|##|#@)/i) {
       ($seq,$t)=($1,$');                                   # store variables
       $out .= $`;
       if($seq eq "\\") {                               # skip over next char
@@ -15359,7 +15359,35 @@ sub evaluate_substitutions
          if(defined $$self{obj_id}) {
            $out .= "#$$self{obj_id}";
          }
-      } elsif(lc($seq) eq "%p") {
+      } elsif(lc($seq) eq "%s") {                       # subjective pronoun
+         if(!defined $$prog{cmd}) {
+           $out .= "it";
+         } else {
+           my $sex = get(@{@{$$prog{cmd}}{invoker}}{obj_id},"sex");
+
+           if($sex =~ /(female|girl|woman|lady|dame|chick|gal|bimbo)/i) {
+              $out .= ($seq eq "%s") ? "she" : "She";
+           } elsif($sex =~ /(male|boy|garson|gent|father|mr|man|sir|son|brother)/i) {
+              $out .= ($seq eq "%s") ? "he" : "He";
+           } else {
+              $out .= ($seq eq "%s") ? "it" : "It";
+           }
+         }
+      } elsif(lc($seq) eq "%o") {                        # objective pronoun
+         if(!defined $$prog{cmd}) {
+           $out .= "it";
+         } else {
+           my $sex = get(@{@{$$prog{cmd}}{invoker}}{obj_id},"sex");
+
+           if($sex =~ /(female|girl|woman|lady|dame|chick|gal|bimbo)/i) {
+              $out .= ($seq eq "%o") ? "her" : "Her";
+           } elsif($sex =~ /(male|boy|garson|gent|father|mr|man|sir|son|brother)/i) {
+              $out .= ($seq eq "%o") ? "him" : "Him";
+           } else {
+              $out .= ($seq eq "%o") ? "it" : "It";
+           }
+         }
+      } elsif(lc($seq) eq "%p") {                       # possessive pronoun
          if(!defined $$prog{cmd}) {
            $out .= "its";
          } else {
@@ -15371,6 +15399,20 @@ sub evaluate_substitutions
               $out .= ($seq eq "%p") ? "his" : "His";
            } else {
               $out .= ($seq eq "%p") ? "its" : "Its";
+           }
+         }
+      } elsif(lc($seq) eq "%a") {                      # absolute possessive
+         if(!defined $$prog{cmd}) {
+           $out .= "its";
+         } else {
+           my $sex = get(@{@{$$prog{cmd}}{invoker}}{obj_id},"sex");
+
+           if($sex =~ /(female|girl|woman|lady|dame|chick|gal|bimbo)/i) {
+              $out .= ($seq eq "%a") ? "hers" : "Hers";
+           } elsif($sex =~ /(male|boy|garson|gent|father|mr|man|sir|son|brother)/i) {
+              $out .= ($seq eq "%a") ? "his" : "His";
+           } else {
+              $out .= ($seq eq "%a") ? "its" : "Its";
            }
          }
       } elsif($seq eq "%#") {                                # current dbref

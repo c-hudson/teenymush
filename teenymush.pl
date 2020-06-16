@@ -15326,7 +15326,7 @@ sub gender
    my ($prog,$case,$male,$female,$it) = @_;
    my ($atr, $result);
 
-   $result = $it;
+   $result = $it;                                         # default to it
    if(defined $$prog{cmd} &&
       defined $$prog{cmd}->{invoker} &&
       defined $$prog{cmd}->{invoker}) {
@@ -15338,7 +15338,9 @@ sub gender
          $result = $male;
       }
    }
-   return ($case =~ /A-Z/) ? ucfirst($result) : $result;
+ 
+   # does the result need to be first character uppercased?
+   return ($case =~ /[A-Z]/) ? ucfirst($result) : $result;
 }
 
 #

@@ -15329,17 +15329,19 @@ sub renumber_code
 #
 sub gender
 {
-   my ($prog,$case,$male,$female,$it) = @_;
+   my ($prog,$case,$male,$female,$it,$other) = @_;
    my ($atr, $result);
 
    $result = $it;                                         # default to it
    if(defined $$prog{cmd} && defined $$prog{cmd}->{invoker}) {
       $atr = get($$prog{cmd}->{invoker},"sex");
 
-      if($atr =~ /(female|girl|woman|lady|dame|chick|gal|bimbo)/i) {
+      if($atr =~ /(female|girl|woman|lady|dame|chick|gal|bimbo|ms|mrs|miss)/i) {
          $result = $female;
       } elsif($atr =~ /(male|boy|garson|gent|father|mr|man|sir|son|brother)/i) {
          $result = $male;
+      } elsif($atr =~ /(plural|enby|fluid|mx)/i) {
+         $result = $other
       }
    }
 
@@ -15393,13 +15395,13 @@ sub evaluate_substitutions
            $out .= "#$$self{obj_id}";
          }
       } elsif(lc($seq) eq "%p") {
-         $out .= gender($prog,$seq,"his","her","its");
+         $out .= gender($prog,$seq,"his","her","its","their");
       } elsif(lc($seq) eq "%s") {
-         $out .= gender($prog,$seq,"he","she","it");
+         $out .= gender($prog,$seq,"he","she","it","they");
       } elsif(lc($seq) eq "%o") {
-         $out .= gender($prog,$seq,"him","her","it");
+         $out .= gender($prog,$seq,"him","her","it","them");
       } elsif(lc($seq) eq "%a") {
-         $out .= gender($prog,$seq,"his","hers","its");
+         $out .= gender($prog,$seq,"his","hers","its","theirs");
       } elsif($seq eq "%#") {                                # current dbref
          if(defined $$prog{cmd} && defined @{$$prog{cmd}}{invoker}) {
             $out .= "#" . @{@{$$prog{cmd}}{invoker}}{obj_id};

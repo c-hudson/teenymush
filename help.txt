@@ -1832,3 +1832,12 @@ TRAIN
     You say "Wed Jun 24 10:22:54 1992"
 
   See Also: convtime(), secs(), time()
+& @last
+  COMMAND: @last <player>
+           @last/full <player>
+
+  This command displays a short 'connection history' for <player>, showing
+  recent successful and failed connection attempts, as well as the total
+  number of successful and failed connections. You can only display
+  information about yourself unless your a Wizard or God. Only God may
+  use the /full switch which will show the full hostname.

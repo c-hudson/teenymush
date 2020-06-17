@@ -1019,7 +1019,10 @@ SUBSTITUTIONS
   displayed, not the object that stored the message or which is running the
   action list.  The substitutions available are:
  
-    %p, %P    = Name's, his, her, its, their.   (possessive)
+    %s, %S    = he, she, it, they.              (subjective)
+    %o, %O    = him, her, it, them.             (objective)
+    %p, %P    = his, her, its, their.           (possessive)
+    %a, %A    = his, hers, its, theirs.         (absolute possessive)
     %n, %N    = the player's name.
     %k, %K    = the player's colorized/accented name.
     %r        = carriage return.

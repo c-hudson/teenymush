@@ -981,6 +981,11 @@ sub cmd_restore
    }
 }
 
+#
+# cmd_train
+#    Command to echo the unevaluated command followed by the results
+#    for training purposes.
+#
 sub cmd_train
 {
    my ($self,$prog,$txt) = (obj(shift),shift,shift);

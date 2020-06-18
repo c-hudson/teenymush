@@ -865,7 +865,7 @@ sub cmd_motd
    verify_switches($self,$prog,$switch,"list") ||
       return;
 
-   !or_hasflag($self,"WIZARD","GOD") &&
+   !or_hasflags($self,"WIZARD","GOD") &&
       return err($self,$prog,"Permission denied.");
 
    if(defined $$switch{list}) {

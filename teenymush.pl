@@ -744,6 +744,7 @@ sub initialize_commands
    @command{"\@restore"}    ={ fun => sub { return &cmd_restore(@_); }       };
    @command{"\@ping"}       ={ fun => sub { return &cmd_ping(@_); }          };
    @command{"\@ban"}        ={ fun => sub { return &cmd_ban(@_); }           };
+   @command{"\@missing"}    ={ fun => sub { return &cmd_missing(@_); }       };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -856,6 +857,25 @@ sub restore_process_line
    }
 }
 
+#
+# cmd_missing
+#    Report on missing commands or functions
+#
+sub cmd_missing
+{
+   my ($self,$prog,$txt,$switch) = @_;
+
+   $$prog{missing} = {};                         # setup storage structure
+   $$prog{missing}->{fun} = {};
+   $$prog{missing}->{cmd} = {};
+
+   mushrun(self   => $self,                         # run specified command
+           prog   => $prog,
+           runas  => $self,
+           source => 0,
+           cmd    => $txt
+          );
+}
 #
 # cmd_ban
 #   List or remove http ban entries.
@@ -2398,6 +2418,11 @@ sub cmd_huh
                         trim((($txt eq undef) ? "" : " " . $txt))
                       ]
            );
+   }
+
+   # record missing command for @missing
+   if(defined $$prog{missing} && ref($$prog{missing}) eq "HASH") {
+      $$prog{missing}->{cmd}->{fun_extract($self,$prog,$txt,1,1)}++;
    }
 
 #   printf("HUH: '%s'\n",$txt);
@@ -8709,6 +8734,22 @@ sub mushrun_done
       } else {
          http_error($prog,"%s","Page not found");
       }
+   } elsif(defined $$prog{missing} && ref($$prog{missing}) eq "HASH") {
+      my (@cmds, @fun);                  # show result for @missing command
+      my $c = $$prog{missing}->{cmd};
+      my $clist = join(', ',keys %$c);
+      $clist = "None" if $clist eq undef;
+
+      my $f = $$prog{missing}->{fun};
+      my $flist = join(', ',keys %$f);
+      $flist = "None" if $flist eq undef;
+      necho(self   => $self,
+            prog   => $prog,
+            target => [ $$prog{created_by}, "Missing commands: %s\n".
+                        "Missing functions: %s",
+                        $clist,$flist
+                      ]
+           );
    }
    close_telnet($prog);
    delete @engine{$$prog{pid}};
@@ -14378,11 +14419,17 @@ sub fun_lookup
       return "EVAL";
    }
 
-   if(!$flag) {
-      con("undefined function '%s'\n",$name);
-      con("                   '%s'\n",ansi_debug($before));
-      con("%s",code("long"));
+#   if(!$flag) {
+#      con("undefined function '%s'\n",$name);
+#      con("                   '%s'\n",ansi_debug($before));
+#      con("%s",code("long"));
+#   }
+
+   # record missing function for @missing
+   if(defined $$prog{missing} && ref($$prog{missing}) eq "HASH") {
+      $$prog{missing}->{fun}->{lc($name)}++;
    }
+ 
    return "huh";
 }
 

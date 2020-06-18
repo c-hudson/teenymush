@@ -77,7 +77,7 @@ my (%command,                  #!# commands for after player has connected
 # without restarting the server.
 sub version
 {
-   return "TeenyMUSH 0.9";
+   return "TeenyMUSH 0.91";
 }
 
 #
@@ -99,6 +99,8 @@ sub load_modules
       'HTML::Restrict'         => 'html_restrict',   # libhtml-restrict-perl
       'MIME::Base64'           => 'mime',
       'Compress::Zlib'         => 'compress',
+      'Net::DNS'               => 'dns',
+      'Cwd'                    => 'cwd'
    );
 
    for my $key (keys %mod) {
@@ -149,6 +151,11 @@ sub getfile
    return $out;                                                 # return data
 }
 
+#
+# getbinfile
+#    Load a binary file into memory, such as a jpg for use by 
+#    httpd.
+#
 sub getbinfile
 {
    my $fn = shift;
@@ -165,6 +172,11 @@ sub getbinfile
    return $content;
 }
 
+#
+# load_defaults
+#    Default values for common configuration items. This is handled as a
+#    list of sets to allow reloading while running.
+#
 sub load_defaults
 {
    delete @default{keys %default};
@@ -286,9 +298,16 @@ sub main
 
    process_commandline();
 
+   fun_mush_address();                               # cache public address
    server_start();                                      #!# start only once
 }
 
+#
+# initalize_ansi
+#    Define colors numbers to rgb values and color names to color numbers
+#    for use by ansi. This is handled as a list of sets to allow reloading
+#    while running.
+#
 sub initialize_ansi
 {
    delete @ansi_rgb{keys %ansi_rgb};
@@ -725,6 +744,7 @@ sub initialize_commands
    @command{"\@restore"}    ={ fun => sub { return &cmd_restore(@_); }       };
    @command{"\@ping"}       ={ fun => sub { return &cmd_ping(@_); }          };
    @command{"\@ban"}        ={ fun => sub { return &cmd_ban(@_); }           };
+   @command{"\@missing"}    ={ fun => sub { return &cmd_missing(@_); }       };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -837,6 +857,25 @@ sub restore_process_line
    }
 }
 
+#
+# cmd_missing
+#    Report on missing commands or functions
+#
+sub cmd_missing
+{
+   my ($self,$prog,$txt,$switch) = @_;
+
+   $$prog{missing} = {};                         # setup storage structure
+   $$prog{missing}->{fun} = {};
+   $$prog{missing}->{cmd} = {};
+
+   mushrun(self   => $self,                         # run specified command
+           prog   => $prog,
+           runas  => $self,
+           source => 0,
+           cmd    => $txt
+          );
+}
 #
 # cmd_ban
 #   List or remove http ban entries.
@@ -1625,6 +1664,10 @@ sub cmd_import
    }
 }
 
+#
+# cmd_mail
+#    Command for sending internal email.
+#
 sub cmd_mail
 {
    my ($self,$prog) = (obj(shift),obj(shift));
@@ -2375,6 +2418,11 @@ sub cmd_huh
                         trim((($txt eq undef) ? "" : " " . $txt))
                       ]
            );
+   }
+
+   # record missing command for @missing
+   if(defined $$prog{missing} && ref($$prog{missing}) eq "HASH") {
+      $$prog{missing}->{cmd}->{fun_extract($self,$prog,$txt,1,1)}++;
    }
 
 #   printf("HUH: '%s'\n",$txt);
@@ -3966,27 +4014,37 @@ sub cmd_force
 #   -------------------------------[ MOTD ]-------------------------------
 #   ------------------------------[ MOTD ]------------------------------
 
-sub motd_with_border
-{
-   my ($self,$prog,$txt) = @_;
-
-   if($txt eq undef) {
-      $txt = "   " .
-             ansi_center("There is no MOTD today",70) .
-             "\n   " .
-             ansi_center("&conf.motd #0=<message> for your MOTD",70);
-   }
-
-   return "   " . ("-" x 31) . "[ MOTD ]" . ("-" x 31) . "\n\n".
-             $txt . "\n\n   " . ("-" x 70) . "\n";
-}
-
+#
+# motd
+#    Display the message of the day. Since this will be run as #0,
+#    don't allow any modifications to the db to prevent wizards
+#    from doing anything interesting.
+#
 sub motd
 {
    my ($self,$prog) = @_;
 
-   my $atr = conf("motd");
-   return motd_with_border($self,$prog,$atr);
+   my $atr = conf("motd");                                  # get motd
+
+   if($atr eq undef) {                    # no motd, provide a default
+      $atr = "   " .
+             ansi_center("There is no MOTD today",70) .
+             "\n   " .
+             ansi_center("&conf.motd #0=<message> for your MOTD",70);
+   } else {                                        # evaluate the motd
+      my $tmp = $$prog{read_only};                    # set readonly mode
+      $$prog{read_only} = 1;
+      $atr = evaluate($self,$prog,$atr);
+
+      if($tmp eq undef) {
+         delete @$prog{read_only};
+      } else {
+         $$prog{read_only} = $tmp;
+      }
+   }
+
+   return "   " . ("-" x 31) . "[ MOTD ]" . ("-" x 31) . "\n\n".
+             $atr . "\n\n   " . ("-" x 70) . "\n";
 }
 
 sub cmd_list
@@ -4301,9 +4359,9 @@ sub cmd_drop
    generic_action($self,
                   $prog,
                   $target,
-                  $loc,
                   "DROP",
-                  [ "dropped %s\n%s has arrived.",name($target),name($target) ],
+                  [ "dropped %s.\n%s has arrived.",
+                    name($target),name($target) ],
                   [ "Dropped." ]);
 
 #   necho(self    => $self,
@@ -4388,12 +4446,18 @@ sub cmd_take
       }
    }
 
+   generic_action($self,
+                  $prog,
+                  $target,
+                  "SUCC",
+                  [ "takes %s.\n%s has left.",                # msg to room
+                    name($target),name($target) ],
+                  [ "Taken." ]                             # msg to enactor
+                 );
+
    necho(self   => $self,
          prog   => $prog,
-         source => [ "You have picked up %s.", name($target) ],
          target => [ $target, "%s has picked you up.", name($self) ],
-         room   => [ $self, "%s picks up %s.", name($self),name($target) ],
-         room2  => [ $self, "%s has left.",name($target) ]
         );
 
    teleport($self,$prog,$target,$self) ||
@@ -4778,7 +4842,13 @@ sub cmd_go
    teleport($self,$prog,$self,$dest) ||
       return err($self,$prog,"Internal error, unable to go that direction");
 
-   generic_action($self,$prog,$self,"MOVE",$loc);
+#   generic_action($self,$prog,$self,"MOVE",$loc);
+   generic_action($self,
+                  $prog,
+                  $self,
+                  "MOVE",
+                  [ "has arrived." ],
+                  [ "" ]);
 
    # provide some visual feed back to the player
    necho(self   => $self,
@@ -5366,9 +5436,10 @@ sub cmd_connect
       calculate_login_stats();
 
       # --- Provide users visual feedback / MOTD --------------------------#
+      $prog = prog($user,$user);
       necho(self   => $user,                 # show message of the day file
-            prog   => prog($user,$user),
-            source => [ "%s\n", motd() ]
+            prog   => $prog,
+            source => [ "%s\n", motd($user,$prog) ]
            );
 
       cmd_mail($user,prog($user,$user),"short");
@@ -5919,7 +5990,14 @@ sub cmd_look
          source => ["%s",$out ]
         );
 
-   run_attr($self,$prog,$target,"ADESCRIBE");
+   generic_action($self,
+                  $prog,
+                  $target,
+                  "describe",
+                  [ "" ],
+                  [ "" ]);
+
+#   run_attr($self,$prog,$target,"ADESCRIBE");
 }
 
 sub is_true
@@ -8656,6 +8734,22 @@ sub mushrun_done
       } else {
          http_error($prog,"%s","Page not found");
       }
+   } elsif(defined $$prog{missing} && ref($$prog{missing}) eq "HASH") {
+      my (@cmds, @fun);                  # show result for @missing command
+      my $c = $$prog{missing}->{cmd};
+      my $clist = join(', ',keys %$c);
+      $clist = "None" if $clist eq undef;
+
+      my $f = $$prog{missing}->{fun};
+      my $flist = join(', ',keys %$f);
+      $flist = "None" if $flist eq undef;
+      necho(self   => $self,
+            prog   => $prog,
+            target => [ $$prog{created_by}, "Missing commands: %s\n".
+                        "Missing functions: %s",
+                        $clist,$flist
+                      ]
+           );
    }
    close_telnet($prog);
    delete @engine{$$prog{pid}};
@@ -8796,7 +8890,7 @@ sub show_verbose
 sub run_internal
 {
    my ($hash,$cmd,$command,$prog,$arg,$type) = @_;
-   my (%switch,$result);
+   my (%switch,$result,$runas);
 
    # The player is probably disconnected but there are commands in the queue.
    # These orphaned commands are being run against the not logged in commands
@@ -8821,7 +8915,15 @@ sub run_internal
       give_money($$command{runas},-1);
    }
 
-   if($$command{runas}->{obj_id} eq conf("webobject") || 
+   if(defined $$command{runas}) {
+      if(ref($$command{runas}) eq "HASH") {
+         $runas = $$command{runas}->{obj_id};
+      } else {
+         $runas = $$command{runas};
+      }
+   }
+
+   if($runas eq conf("webobject") ||
       $$command{source} == 1  || 
       money($$command{runas}) > 0) {
       if(defined $$command{wild}) {
@@ -9659,6 +9761,7 @@ sub initialize_functions
    @fun{timezone}   = sub { return &fun_timezone(@_);              };
    @fun{flags}      = sub { return &fun_flags(@_);                 };
    @fun{quota}      = sub { return &fun_quota(@_);                 };
+   @fun{mush_address}=sub { return &fun_mush_address(@_);          };
    @fun{input}      = sub { return &fun_input(@_);                 };
    @fun{has_input}  = sub { return &fun_has_input(@_);             };
    @fun{strlen}     = sub { return &fun_strlen(@_);                };
@@ -9677,6 +9780,7 @@ sub initialize_functions
    @fun{lwho}       = sub { return &fun_lwho(@_);                  };
    @fun{remove}     = sub { return &fun_remove(@_);                };
    @fun{get}        = sub { return &fun_get(@_);                   };
+   @fun{xget}       = sub { return &fun_get(@_);                   };
    @fun{default}    = sub { return &fun_default(@_);               };
    @fun{eval}       = sub { return &fun_eval(@_);                  };
    @fun{edit}       = sub { return &fun_edit(@_);                  };
@@ -9978,6 +10082,41 @@ sub fun_haspower
      return "#-1 FUNCTION (ZONE) EXPECTS 2 ARGUMENTS";
 
    return 0;
+}
+
+#
+# public_address
+#    Return the hostname of the MUSH server
+#
+sub fun_mush_address
+{
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,0) ||
+     return "#-1 FUNCTION (MUSH_ADDRESS) EXPECTS NO ARGUMENTS";
+
+   if(@info{"dns"} == -1) {
+      return err($self,$prog,"#-1 DISABLED");
+   } elsif(!defined @info{mush_address}) {                 # not cached, yet
+      my $r = Net::DNS::Resolver->new(nameservers=>["resolver1.opendns.com"])||
+         return;
+
+      my $query = $r->search("myip.opendns.com") || return;
+
+      foreach my $record ($query->answer) {
+         my $name = gethostbyaddr(inet_aton($record->address),AF_INET);
+
+         if($name eq undef || $name =~ /in-addr\.arpa$/) {
+            @info{mush_address} = $record->address;
+            return $record->address;
+         } else {
+            @info{mush_address} = $name;
+            return $name;
+         }
+      }
+   } else {
+      return @info{mush_address};                  # return cached address
+   }
 }
 
 sub fun_quota
@@ -14280,11 +14419,17 @@ sub fun_lookup
       return "EVAL";
    }
 
-   if(!$flag) {
-      con("undefined function '%s'\n",$name);
-      con("                   '%s'\n",ansi_debug($before));
-      con("%s",code("long"));
+#   if(!$flag) {
+#      con("undefined function '%s'\n",$name);
+#      con("                   '%s'\n",ansi_debug($before));
+#      con("%s",code("long"));
+#   }
+
+   # record missing function for @missing
+   if(defined $$prog{missing} && ref($$prog{missing}) eq "HASH") {
+      $$prog{missing}->{fun}->{lc($name)}++;
    }
+ 
    return "huh";
 }
 
@@ -15069,7 +15214,11 @@ sub http_process_line
          } elsif($$data{get} =~ /^pid$/) {
             web(" * %s %s\@web [%s]\n",ts(),$addr,$$data{get});
             if($addr eq "localhost" || $addr eq "127.0.0.1") {
-               http_reply_simple($s,$1,"%s","$$");
+               if(@info{cwd} != -1) {
+                  http_reply_simple($s,$1,"%s",$$.",".getcwd());
+               } else {
+                  http_reply_simple($s,$1,"%s","$$,%s");
+               }
             } else {
                http_error($s,"%s","pid request from bad location. '$addr'");
             }
@@ -15190,8 +15339,9 @@ sub load_db
       set($obj,$prog,$obj,"CONF.WEBOBJECT","#3");        # set webuser object
       set_flag($obj,$prog,3,"!NO_COMMAND",,1);       # remove NO_COMMAND
       set($obj,$prog,3,"DEFAULT",
-         "\$default:\@pemit %#=This is the minimal default web page. Please ".
-         "update this with: &default #3=Your web page");
+         "\$default:\@pemit %#=This is the minimal default web page for " .
+         "TeenyMUSH [version()]. Please update this with: &default #3=Your " .
+         "web page");
 
       return;
    }
@@ -15214,39 +15364,51 @@ sub load_db
 
 sub generic_action
 {
-   my ($self,$prog,$target,$action,$motion,$src) = @_;
-   my ($self,$prog,$target,$action,$src,$target_msg,$src_msg) = @_;
+   my ($self,$prog,$target,$action,$target_msg,$src_msg) = @_;
 
    if((my $atr = get($target,$action)) ne undef) {
          necho(self => $self,
                prog => $prog,
-               room => [ $src, "%s %s", name($self), $atr  ],
+               room => [ $self,
+                         "%s %s", 
+                         name($self),
+                         evaluate($self,$prog,$atr)
+                       ],
          );
    }
 
-   if((my $atr = get($target,"A$action")) ne undef) {
-      mushrun(self   => $self,
-              runas  => $self,
-              cmd    => $atr,
-              source => 0,
-              from   => "ATTR",
-              invoker=> $self,
-             );
-   }
+   run_attr($self,$prog,$target,"A$action");           # handle @aACTION
 
-   if((my $atr = get($target,"o$action")) ne undef) {
-         necho(self => $self,
-               prog => $prog,
-               room => [ $self, "%s %s", name($self), $atr  ],
-         );
-   } else {
-      my ($ifmt,@iargs) = @$src_msg;
-      my ($ofmt,@oargs) = @$target_msg;
-      necho(self   =>   $self,
-            prog   =>   $prog,
-            source => [ "%s $ifmt", name($self), @iargs ],
-            room   => [ $self, $ofmt, @oargs ],
+   my ($sfmt,@sargs) = @$src_msg;
+   my $msg = sprintf($sfmt,@sargs);               # handle msg to enactor
+
+   if($msg !~ /^\s*$/) {
+      necho(self =>   $self,
+            prog =>   $prog,
+            source => [ "%s", evaluate($self,$prog,$msg) ],
            );
+   }
+
+   my $atr = get($target,"o$action");
+
+   if($atr ne undef) {                                # standard message
+      necho(self =>   $self,
+            prog =>   $prog,
+            room =>   [ $self,
+                        "%s %s",
+                        name($self),
+                        evaluate($self,$prog,$atr)
+                      ],
+      );
+   } else {                                            # oACTION message
+      my ($tfmt,@targs) = @$target_msg;
+      my $msg = sprintf($tfmt,@targs);
+      if($msg !~ /^\s*$/) {
+         necho(self   =>   $self,
+               prog   =>   $prog,
+               room   => [ $self, "%s %s", name($self), $msg ],
+              );
+      }
    }
 }
 

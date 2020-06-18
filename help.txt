@@ -1841,3 +1841,43 @@ TRAIN
   number of successful and failed connections. You can only display
   information about yourself unless your a Wizard or God. Only God may
   use the /full switch which will show the full hostname.
+& @ban
+  COMMAND: @ban <pattern>
+           @ban/unban <pattern>
+
+  This command displays sites that have been banned from connecting to the
+  MUSH via httpd. It optionally can unban sites if needed.
+& xget()
+
+  FUNCTION: xget(<object>,<attribute>)
+
+  This function works exactly like get(), but uses the object and attribute
+  separated into two arguments.
+
+  Related Topics: get(), eval(), get_eval().
+
+& mush_address()
+
+  FUNCTION: mush_address()
+
+  This function returns the public address for the mush server.
+
+& @missing
+
+  COMMAND: @missing <command>
+
+  This command runs <command> and logs which commands and functions do
+  not exist. If a function() or @command exists in the code being run
+  but is not run, it will not be logged as missing. This is usefull for
+  determining compatability between TeenyMUSH and other MUSH servers by
+  helping identify what is missing.
+
+  > &foo me = $+fun:@funky;think [missing_function()]
+  > @missing +fun
+  Huh? (Type "HELP" for help.)
+  #-1 Undefined function
+  Missing commands: @funky
+  Missing functions: missing_function
+
+  The first two lines resulting in the Huh? and #-1 are the output
+  from the +fun command when run by the user.

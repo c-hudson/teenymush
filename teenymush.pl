@@ -8796,7 +8796,7 @@ sub show_verbose
 sub run_internal
 {
    my ($hash,$cmd,$command,$prog,$arg,$type) = @_;
-   my (%switch,$result);
+   my (%switch,$result,$runas);
 
    # The player is probably disconnected but there are commands in the queue.
    # These orphaned commands are being run against the not logged in commands
@@ -8821,7 +8821,15 @@ sub run_internal
       give_money($$command{runas},-1);
    }
 
-   if($$command{runas}->{obj_id} eq conf("webobject") || 
+   if(defined $$command{runas}) {
+      if(ref($$command{runas}) eq "HASH") {
+         $runas = $$command{runas}->{obj_id};
+      } else {
+         $runas = $$command{runas};
+      }
+   }
+
+   if($runas eq conf("webobject") ||
       $$command{source} == 1  || 
       money($$command{runas}) > 0) {
       if(defined $$command{wild}) {

@@ -745,6 +745,7 @@ sub initialize_commands
    @command{"\@ping"}       ={ fun => sub { return &cmd_ping(@_); }          };
    @command{"\@ban"}        ={ fun => sub { return &cmd_ban(@_); }           };
    @command{"\@missing"}    ={ fun => sub { return &cmd_missing(@_); }       };
+   @command{"\@motd"}       ={ fun => sub { return &cmd_motd(@_); }          };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -857,6 +858,30 @@ sub restore_process_line
    }
 }
 
+sub cmd_motd
+{
+   my ($self,$prog,$txt,$switch) = @_;
+
+   verify_switches($self,$prog,$switch,"list") ||
+      return;
+
+   !or_hasflag($self,"WIZARD","GOD") &&
+      return err($self,$prog,"Permission denied.");
+
+   if(defined $$switch{list}) {
+      necho(self => $self,
+            prog => $prog,
+            source => [ "MOTD: %s", conf("motd") ]
+           );
+   } else {
+      set($self,
+          $prog,
+          obj(0),
+          "conf.motd",
+          $txt
+         );
+   }
+}
 #
 # cmd_missing
 #    Report on missing commands or functions
@@ -16688,7 +16713,7 @@ sub good_atr_name
 sub set
 {
    my ($self,$prog,$obj,$attribute,$value,$quiet,$override)=
-      ($_[0],$_[1],obj($_[2]),lc($_[3]),$_[4],$_[5]);
+      (obj($_[0]),$_[1],obj($_[2]),lc($_[3]),$_[4],$_[5]);
    my ($pat,$first,$type);
 
    # don't strip leading spaces on multi line attributes

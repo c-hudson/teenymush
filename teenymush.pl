@@ -724,6 +724,7 @@ sub initialize_commands
    @command{"teach"}        ={ fun => sub { return &cmd_train(@_); }         };
    @command{"\@restore"}    ={ fun => sub { return &cmd_restore(@_); }       };
    @command{"\@ping"}       ={ fun => sub { return &cmd_ping(@_); }          };
+   @command{"\@ban"}        ={ fun => sub { return &cmd_ban(@_); }           };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -836,6 +837,66 @@ sub restore_process_line
    }
 }
 
+#
+# cmd_ban
+#   List or remove http ban entries.
+# 
+sub cmd_ban
+{
+   my ($self,$prog,$txt,$switch) = @_;
+   my (@out, $count);
+
+   verify_switches($self,$prog,$switch,"unban") ||
+      return;
+
+   !or_hasflags($self,"WIZARD","GOD") &&
+      return err($self,$prog,"Permission denied.");
+   
+   my $hash = @info{httpd_ban};
+   my $pat = glob2re(evaluate($self,$prog,$txt)) if($txt ne undef);
+
+   if(defined $$switch{unban}) {                           # delete entries
+      my $count = 0;
+      for my $key (keys %$hash) {
+         eval {                                # protect against bad patterns?
+            if($pat eq undef || $key =~ /$pat/) {
+               $count++;
+               delete @$hash{$key};
+            }
+         };
+      }
+      necho(self    => $self,
+            prog   => $prog,
+            source => [ "%d entries removed.", $count ]
+           );
+   } else {                                   # show reverse date sorted list
+      for my $key (sort {fuzzy($$hash{$b}) <=> fuzzy($$hash{$a})} keys %$hash) {
+         eval {                                # protect against bad patterns?
+            if($pat eq undef || $key =~ /$pat/) {
+               push(@out,sprintf("%-55s  %s",$key,ts(fuzzy($$hash{$key}))));
+            }
+         };
+      }
+
+      if($#out == -1) {                                      # show results
+         necho(self    => $self,
+               prog   => $prog,
+               source => [ "No sites matched." ]
+              );
+      } else {
+         necho(self    => $self,
+               prog   => $prog,
+               source => [ "%s", join("\n",@out) ]
+              );
+      }
+   }
+}
+
+#
+# cmd_ping
+#    Internal command for finding out which object/attribute match the
+#    provided command.
+#
 sub cmd_ping
 {
    my ($self,$prog,$cmd) = @_;
@@ -1833,7 +1894,7 @@ sub cmd_bad
             }
 
             # arbitrarly choose exit over object due to previous bug.
-            if(and_hasflag($$cmd{bad_pos},"EXIT","OBJECT")) {
+            if(and_hasflags($$cmd{bad_pos},"EXIT","OBJECT")) {
                db_remove_list($$cmd{bad_pos},"obj_flag","OBJECT");
             }
             my $count += hasflag($$cmd{bad_pos},"PLAYER");
@@ -4231,18 +4292,28 @@ sub cmd_drop
       return err($self,$prog,"You may not drop yourself.");
    }
 
-   teleport($self,$prog,$target,loc($self)) ||
+   my $loc = loc($self);
+
+   teleport($self,$prog,$target,$loc) ||
       return err($self,$prog,"Internal error, unable to drop that object");
 
    # provide some visual feed back to the player
-   necho(self    => $self,
-         prog    => $prog,
-         source  => [ "You have dropped %s.\n%s has arrived.",
-                      name($target), name($target)
-                    ],
-         room    => [ $self, "%s dropped %s.", name($self),name($target) ],
-         room2   => [ $self, "%s has arrived.",name($target) ]
-        );
+   generic_action($self,
+                  $prog,
+                  $target,
+                  $loc,
+                  "DROP",
+                  [ "dropped %s\n%s has arrived.",name($target),name($target) ],
+                  [ "Dropped." ]);
+
+#   necho(self    => $self,
+#         prog    => $prog,
+#         source  => [ "You have dropped %s.\n%s has arrived.",
+#                      name($target), name($target)
+#                    ],
+#         room    => [ $self, "%s dropped %s.", name($self),name($target) ],
+#         room2   => [ $self, "%s has arrived.",name($target) ]
+#        );
 
    cmd_look($target,$prog);
 }
@@ -4707,7 +4778,7 @@ sub cmd_go
    teleport($self,$prog,$self,$dest) ||
       return err($self,$prog,"Internal error, unable to go that direction");
 
-   generic_action($self,$prog,"MOVE",$loc);
+   generic_action($self,$prog,$self,"MOVE",$loc);
 
    # provide some visual feed back to the player
    necho(self   => $self,
@@ -4887,7 +4958,7 @@ sub cmd_help
 
 sub cmd_pcreate
 {
-   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
+   my ($self,$prog,$txt,$switch,$flag) = (obj(shift),shift,shift,shift,shift);
 
    if($$user{site_restriction} == 3) {
       necho(self   => $self,
@@ -4900,7 +4971,7 @@ sub cmd_pcreate
       } else {
          $$user{obj_id} = create_object($self,$prog,$1,$2,"PLAYER");
          $$user{obj_name} = $1;
-         cmd_connect($self,$prog,$txt) if $$user{obj_id} != 0;
+         cmd_connect($self,$prog,$txt) if !$flag;
       }
    } else {
       err($user,$prog,"Invalid create command, try: create <user> <password> [$txt]");
@@ -4912,10 +4983,10 @@ sub create_exit
    my ($self,$prog,$name,$in,$out,$verbose) = @_;
 
    # only ROOM, OBJECT, or PLAYERS may have exits;
-   return undef if(!or_hasflag($in,"ROOM","OBJECT","PLAYER"));
+   return undef if(!or_hasflags($in,"ROOM","OBJECT","PLAYER"));
 
    # only ROOM, OBJECT, or PLAYERS may have destinations;
-   return undef if(!or_hasflag($out,"ROOM","OBJECT","PLAYER"));
+   return undef if(!or_hasflags($out,"ROOM","OBJECT","PLAYER"));
 
    my $exit = create_object($self,$prog,$name,undef,"EXIT") ||
       return undef;
@@ -4923,7 +4994,7 @@ sub create_exit
    if(!link_exit($self,$exit,$in,$out,1)) {
       return undef;
    }
-
+ 
    return $exit;
 }
 
@@ -5191,7 +5262,10 @@ sub invalid_player
       }
    } elsif(!defined @player{trim(ansi_remove(lc($name)))}) {
       return 1;
-   } elsif(lc($name) eq "guest") {               # any password for guest
+   } elsif(@player{trim(ansi_remove(lc($name)))} eq conf("webuser")) {
+      printf("PLAYER: '%s' -> '%s'\n",@player{trim(ansi_remove(lc($name)))},conf("webuser"));
+      return 1;                                    # don't allow webuser in
+   } elsif(lc($name) eq "guest") {                 # any password for guest
       $$self{obj_id} = @player{lc($name)};
       return 0;
    } elsif(!valid_dbref(@player{trim(ansi_remove(lc($name)))}) ||
@@ -6713,7 +6787,7 @@ sub hasflag
    }
 }
 
-sub or_hasflag
+sub or_hasflags
 {
    my ($obj,@flags) = @_;
 
@@ -6723,7 +6797,7 @@ sub or_hasflag
    return 0;
 }
 
-sub and_hasflag
+sub and_hasflags
 {
    my ($obj,@flags) = @_;
 
@@ -8747,7 +8821,9 @@ sub run_internal
       give_money($$command{runas},-1);
    }
 
-   if($$command{source} == 1  || money($$command{runas}) > 0) {
+   if($$command{runas}->{obj_id} eq conf("webobject") || 
+      $$command{source} == 1  || 
+      money($$command{runas}) > 0) {
       if(defined $$command{wild}) {
          set_digit_variables($$command{runas},                    # copy %0-%9
                              $prog,
@@ -12586,7 +12662,7 @@ sub fun_words
 #
 sub fun_match
 {
-   my ($self,$prog) = (shift,shift);
+   my ($self,$prog) = (obj(shift),shift);
    my $count = 1;
 
    good_args($#_,1,2,3) ||
@@ -15099,13 +15175,24 @@ sub load_db
       printf("Connect as: god potrzebie\n\n");
       my $obj = {obj_id => 0};
       my $prog = prog($obj,$obj,$obj);
-      cmd_pcreate($obj,$prog,"god potrzebie");                 # create god
+      cmd_pcreate($obj,$prog,"god potrzebie",{},1);             # create god
       set_flag($obj,$prog,$obj,"GOD",,1);                  # set god wizard
 
       create_object($obj,$prog,"The Void",undef,"ROOM",1);
       set($obj,$prog,$obj,"CONF.STARTING_ROOM","#1");   # set starting room
       teleport($obj,$prog,$obj,1);             # teleport god into the void
-      cmd_give($obj,$prog,"#0 = 0");                  # give god some money
+
+      cmd_pcreate($obj,$prog,"webuser potrzebie",{},1);        # create webuser 
+      cmd_give(3,$prog,"#0 = 9999999");             # give webobject money
+      teleport(3,$prog,$obj,1);             # teleport god into the void
+      set($obj,$prog,$obj,"CONF.WEBUSER","#2");         # set webuser object
+      create_object($obj,$prog,"WebSecurityObject",undef,"OBJECT",1);
+      set($obj,$prog,$obj,"CONF.WEBOBJECT","#3");        # set webuser object
+      set_flag($obj,$prog,3,"!NO_COMMAND",,1);       # remove NO_COMMAND
+      set($obj,$prog,3,"DEFAULT",
+         "\$default:\@pemit %#=This is the minimal default web page. Please ".
+         "update this with: &default #3=Your web page");
+
       return;
    }
 
@@ -15127,16 +15214,17 @@ sub load_db
 
 sub generic_action
 {
-   my ($self,$prog,$action,$src) = @_;
+   my ($self,$prog,$target,$action,$motion,$src) = @_;
+   my ($self,$prog,$target,$action,$src,$target_msg,$src_msg) = @_;
 
-   if((my $atr = get($self,$action)) ne undef) {
+   if((my $atr = get($target,$action)) ne undef) {
          necho(self => $self,
                prog => $prog,
                room => [ $src, "%s %s", name($self), $atr  ],
          );
    }
 
-   if((my $atr = get($self,"A$action")) ne undef) {
+   if((my $atr = get($target,"A$action")) ne undef) {
       mushrun(self   => $self,
               runas  => $self,
               cmd    => $atr,
@@ -15146,11 +15234,19 @@ sub generic_action
              );
    }
 
-   if((my $atr = get($self,"o$action")) ne undef) {
+   if((my $atr = get($target,"o$action")) ne undef) {
          necho(self => $self,
                prog => $prog,
                room => [ $self, "%s %s", name($self), $atr  ],
          );
+   } else {
+      my ($ifmt,@iargs) = @$src_msg;
+      my ($ofmt,@oargs) = @$target_msg;
+      necho(self   =>   $self,
+            prog   =>   $prog,
+            source => [ "%s $ifmt", name($self), @iargs ],
+            room   => [ $self, $ofmt, @oargs ],
+           );
    }
 }
 
@@ -15409,7 +15505,11 @@ sub evaluate_substitutions
          $out .= gender($prog,$seq,"his","hers","its","theirs");
       } elsif($seq eq "%#") {                                # current dbref
          if(defined $$prog{cmd} && defined @{$$prog{cmd}}{invoker}) {
-            $out .= "#" . @{@{$$prog{cmd}}{invoker}}{obj_id};
+            if(ref($$prog{cmd}->{invoker}) eq "HASH") {
+               $out .= "#" . $$prog{cmd}->{invoker}->{obj_id};
+            } else {
+               $out .= "#" . $$prog{cmd}->{invoker};
+            }
          } else {
             $out .= "#" . $$self{obj_id};
          }
@@ -15417,7 +15517,7 @@ sub evaluate_substitutions
          if(!defined $$prog{cmd}) {
             $out .= name($self,undef,$self,$prog);
          } else {
-            $out .= name(@{@{$$prog{cmd}}{invoker}}{obj_id},undef,$self,$prog);
+            $out .= name($$prog{cmd}->{invoker},undef,$self,$prog);
          }
       } elsif($seq =~ /^%q([0-9a-z])$/i) {
          if(defined $$prog{var}) {
@@ -16249,7 +16349,7 @@ sub create_object
 
    # check quota
 
-   if(!$flag && !or_hasflag($self,"WIZARD","GOD") &&
+   if(!$flag && !or_hasflags($self,"WIZARD","GOD") &&
       $type ne "PLAYER" && quota($owner,"left") <= 0) {
       return 0;
    }
@@ -16295,7 +16395,7 @@ sub create_object
       db_set($id,"obj_home",$where);
       db_set($id,"obj_money",conf("starting_money"));
       db_set($id,"obj_firstsite",$where);
-      db_set($id,"obj_quota",conf("starting_quota") . ",0");
+      db_set($id,"obj_quota",nvl(conf("starting_quota"),0) . ",0");
       @player{trim(ansi_remove(lc($name)))} = $id;
    } else {
       db_set($id,"obj_home",$$self{obj_id});
@@ -16635,7 +16735,7 @@ sub obj
    } else {
       if($id !~ /^\s*\d+\s*$/) {
          con("ID: '%s' -> '%s'\n",$id,code());
-         die();
+         croak();
       }
       return { obj_id => $id };
    }

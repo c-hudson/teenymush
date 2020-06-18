@@ -15330,18 +15330,19 @@ sub generic_action
          );
    }
 
-   run_attr($self,$prog,$target,"A$action");
-
-   my $atr = get($target,"o$action");
+   run_attr($self,$prog,$target,"A$action");           # handle @aACTION
 
    my ($sfmt,@sargs) = @$src_msg;
    my $msg = sprintf($sfmt,@sargs);               # handle msg to enactor
-   if($msg =~ /^\s*$/) {
+
+   if($msg !~ /^\s*$/) {
       necho(self =>   $self,
             prog =>   $prog,
             source => [ "%s", evaluate($self,$prog,$msg) ],
            );
    }
+
+   my $atr = get($target,"o$action");
 
    if($atr ne undef) {                                # standard message
       necho(self =>   $self,

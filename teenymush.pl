@@ -298,7 +298,7 @@ sub main
 
    process_commandline();
 
-   fun_mush_address();                               # cache public address
+   fun_mush_address(obj(0),{});                      # cache public address
    server_start();                                      #!# start only once
 }
 

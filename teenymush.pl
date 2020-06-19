@@ -8768,7 +8768,7 @@ sub mushrun_done
       my $f = $$prog{missing}->{fun};
       my $flist = join(', ',keys %$f);
       $flist = "None" if $flist eq undef;
-      necho(self   => $self,
+      necho(self   => $$prog{created_by},
             prog   => $prog,
             target => [ $$prog{created_by}, "Missing commands: %s\n".
                         "Missing functions: %s",

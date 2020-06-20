@@ -3212,7 +3212,7 @@ sub cmd_dirty
    my $dirty = @info{dirty};
    return if ref($dirty) eq "HASH" && scalar keys %$dirty == -1; # nothing2save
 
-   my $fn = sprintf("dumps/%s.%06d",@info{dump_name},++@info{change});
+   my $fn = sprintf("%s.%06d",@info{dump_name},++@info{change});
 
    if(-e "dumps/$fn") {
       return err($self,$prog,"Log file already exists, please wait longer " .

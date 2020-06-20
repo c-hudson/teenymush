@@ -8925,7 +8925,7 @@ sub spin
       }
 
       if(!defined @info{dirty_time}) {
-         @info{dirty_type} = time();
+         @info{dirty_time} = time();
       } elsif(time()-@info{dirty_time} > 300) {
          @info{dirty_time} = time();
          my $self = obj(0);

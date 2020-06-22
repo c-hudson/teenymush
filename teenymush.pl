@@ -207,6 +207,7 @@ sub load_defaults
    @default{mudname}                  = "TeenyMUSH";
    @default{port}                     = "4096";
    @default{starting_quota}           = 5;
+   @default{single_dirty_file}        = "yes";
 }
 
 #
@@ -256,6 +257,7 @@ sub process_commandline
 
    if($hit) {
      printf("\nShutting down as per commandline defines.\n");
+     cmd_dirty_dump(obj(0),{});
      exit(0);
    }
 }
@@ -724,7 +726,7 @@ sub initialize_commands
    @command{"\@find"}       ={ fun => sub { return &cmd_find(@_); }          };
    @command{"\@bad"}        ={ fun => sub { return &cmd_bad(@_); }           };
    @command{"\@dump"}       ={ fun => sub { return &cmd_dump(@_); }          };
-   @command{"\@dirty"}      ={ fun => sub { return &cmd_dirty(@_); }         };
+   @command{"\@dirty_dump"} ={ fun => sub { return &cmd_dirty_dump(@_); }    };
    @command{"\@import"}     ={ fun => sub { return &cmd_import(@_); }        };
    @command{"\@stat"}       ={ fun => sub { return &cmd_stat(@_); }          };
    @command{"\@cost"}       ={ fun => sub { return &cmd_generic_set(@_); }   };
@@ -3203,23 +3205,28 @@ sub cmd_dump
 }
 
 
-sub cmd_dirty
+sub cmd_dirty_dump
 {
    my ($self,$prog,$txt,$switch) = @_;
    $self = $$self{obj_id} if ref($self) eq "HASH";
-   my ($file,$out);
+   my ($file,$out,$fn);
 
    my $dirty = @info{dirty};
-   return if ref($dirty) eq "HASH" && scalar keys %$dirty == -1; # nothing2save
+   return if ref($dirty) eq "HASH" && scalar keys %$dirty == 0; # nothing2save
 
-   my $fn = sprintf("%s.%06d",@info{dump_name},++@info{change});
+   if(is_true(conf("single_dirty_file"))) {
+      @info{change} = 1;
+      $fn = sprintf("%s.%06d",@info{dump_name},1);
+   } else {
+      $fn = sprintf("%s.%06d",@info{dump_name},++@info{change});
+   }
 
-   if(-e "dumps/$fn") {
+   if(-e "dumps/$fn" && !is_true(conf("single_dirty_file"))) {
       return err($self,$prog,"Log file already exists, please wait longer " .
                  "between creating log files.");
    }
 
-   open($file,"> $fn") ||
+   open($file,">> dumps/$fn") ||
       return err($self,$prog,"Unable to open $fn for writing");
 
    printf($file "server: %s, version=%s, change#=%s, exported=%s, " .
@@ -4757,7 +4764,7 @@ sub page
 
 #   my $target = fetch($$target{obj_id});
 
-   my $msg = evaluate($self,$prog,$');
+   my $msg = evaluate($self,$prog,$msg);
 
    if($msg =~ /^\s*:\s*/) {
 
@@ -5462,20 +5469,20 @@ sub calculate_login_stats
       }
    }
 
-   my $attr = mget(0,"stat_login");
-
    #---[ clean up old data > 9 days ]------------------------------------#
-   if($attr ne undef) {
-      for my $i (keys %{$$attr{value}}) {
-         if(time() - fuzzy($i) > 86400 * 9) {
-            delete @$attr{$i} if(time() - fuzzy($i) > 86400 * 9);
+   my $data = mget(0,"stat_login");
+   if($data ne undef && defined $$data{value}) { 
+      my $attr = $$data{value};
+      for my $i (keys %$attr) {
+         if(time() - fuzzy($i) > 86400 * 30) {
+            db_remove_hash(0,"stat_login",$i);                   # delete entry
          }
       }
-   }
 
-   #---[ Caculate max logged in for day ]------------------------------#
-   if($attr ne undef || $$attr{value}->{$tsday} < $count) {
-      db_set_hash(0,"stat_login",$tsday,$count);
+      #---[ Caculate max logged in for day ]------------------------------#
+      if($attr ne undef || $$attr{value}->{$tsday} < $count) {
+         db_set_hash(0,"stat_login",$tsday,$count);
+      }
    }
 }
 
@@ -8349,7 +8356,7 @@ sub db_process_line
 
 $SIG{'INT'} = sub {  if(defined @info{controlc} &&
 		        time() - @info{controlc} < 30) {
-   		        cmd_dirty(obj(0),{},"CRASH");
+   		        cmd_dirty_dump(obj(0),{},"CRASH");
                         @info{crash_dump_complete} = 1;
                         exit(1);
 	             } else {
@@ -8364,10 +8371,10 @@ $SIG{'USR1'} = sub { @info{sigusr1} = time(); };
 END {
    if(@info{run} == 0) {
       con("%s shutdown by %s.\n",conf("mudname"),@info{shutdown_by});
-      cmd_dirty(obj(0),{});
+      cmd_dirty_dump(obj(0),{});
       @info{crash_dump_complete} = 1;
    } elsif(!defined @info{crash_dump_complete} && $#db > -1) {
-      cmd_dirty(obj(0),{},"CRASH");
+      cmd_dirty_dump(obj(0),{},"CRASH");
    }
 }
 
@@ -8933,7 +8940,7 @@ sub spin
                  runas  => $self,
                  invoker=> $self,
                  source => 0,
-                 cmd    => "\@dirty",
+                 cmd    => "\@dirty_dump",
                  from   => "ATTR",
                  hint   => "ALWAYS_RUN"
          );

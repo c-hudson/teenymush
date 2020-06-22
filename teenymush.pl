@@ -65,7 +65,8 @@ my (%command,                  #!# commands for after player has connected
     #----[memory database structures]---------------------------------------#
     %help,                     #!# online-help
     @db,                       #!# whole database
-    @delta,                    #!# db changes storage
+    @delta,                    #!# db changes storage during @dump
+    %dirty,                    #!# dirty "bit" to track db changes.
     %player,                   #!# player list for quick lookup
     @free,                     #!# free objects list
     %deleted,                  #!# deleted objects during backup
@@ -206,6 +207,7 @@ sub load_defaults
    @default{mudname}                  = "TeenyMUSH";
    @default{port}                     = "4096";
    @default{starting_quota}           = 5;
+   @default{single_dirty_file}        = "yes";
 }
 
 #
@@ -255,6 +257,7 @@ sub process_commandline
 
    if($hit) {
      printf("\nShutting down as per commandline defines.\n");
+     cmd_dirty_dump(obj(0),{});
      exit(0);
    }
 }
@@ -275,12 +278,6 @@ sub main
       delete @engine{keys %engine};
       con("HUP signal caught, reloading: %s\n",$count ? $count : "none");
    };
-
-   # trap signal INIT and try to dump the database
-   $SIG{'INT'} = sub {  cmd_dump(obj(0),{},"CRASH");
-                        @info{crash_dump_complete} = 1;
-                        exit(1);
-                     };
 
    load_modules();
 
@@ -729,6 +726,7 @@ sub initialize_commands
    @command{"\@find"}       ={ fun => sub { return &cmd_find(@_); }          };
    @command{"\@bad"}        ={ fun => sub { return &cmd_bad(@_); }           };
    @command{"\@dump"}       ={ fun => sub { return &cmd_dump(@_); }          };
+   @command{"\@dirty_dump"} ={ fun => sub { return &cmd_dirty_dump(@_); }    };
    @command{"\@import"}     ={ fun => sub { return &cmd_import(@_); }        };
    @command{"\@stat"}       ={ fun => sub { return &cmd_stat(@_); }          };
    @command{"\@cost"}       ={ fun => sub { return &cmd_generic_set(@_); }   };
@@ -980,6 +978,7 @@ sub cmd_ping
       $$prog{ping} = $tmp;
    }
 }
+
 sub cmd_restore
 {
    my ($self,$prog) = (obj(shift),shift);
@@ -3127,14 +3126,16 @@ sub cmd_dump
       $mon++;
       $yr -= 100;
 #
-      my $fn = sprintf("dumps/%s.FULL.%02d%02d%02d_%02d%02d%02d.tdb",
+      my $fn = sprintf("dumps/%s.%02d%02d%02d_%02d%02d%02d",
                        conf("mudname"),$yr,$mon,$day,$hour,$min,$sec);
 
-      open($file,"> $fn") ||
+      open($file,"> $fn.tdb") ||
         return err($self,$prog,"Unable to open $fn for writing");
+      @info{dump_name} = $fn;
 
-      printf($file "server: %s, dbversion=%s, exported=%s, type=$type\n",
-         conf("version"),db_version(),scalar localtime());
+      printf($file "server: %s, version=%s, change#=0, exported=%s, type=%s\n",
+         conf("version"),db_version(),scalar localtime(),$type);
+      @info{change} = 0;
 
       $$cmd{dump_file} = $file;
       @info{backup_mode} = $$prog{pid};
@@ -3180,7 +3181,6 @@ sub cmd_dump
       }
       delete @delta[0 .. $#delta];                        # empty the delta
       delete @info{backup_mode};                     # turn off backup mode
-      @info{dump_time} = time();
 
       if($type ne "CRASH") {
          echo_flag($user,
@@ -3202,6 +3202,84 @@ sub cmd_dump
    } else {
       return "RUNNING";                                       # still running
    }
+}
+
+
+sub cmd_dirty_dump
+{
+   my ($self,$prog,$txt,$switch) = @_;
+   $self = $$self{obj_id} if ref($self) eq "HASH";
+   my ($file,$out,$fn);
+
+   my $dirty = @info{dirty};
+   return if ref($dirty) eq "HASH" && scalar keys %$dirty == 0; # nothing2save
+
+   @info{dump_name} = $' if(@info{dump_name} =~ /^dumps\//i);
+   if(is_true(conf("single_dirty_file"))) {
+      @info{change} = 1;
+      $fn = sprintf("%s.%06d",@info{dump_name},1);
+   } else {
+      $fn = sprintf("%s.%06d",@info{dump_name},++@info{change});
+   }
+
+   if(-e "dumps/$fn" && !is_true(conf("single_dirty_file"))) {
+      return err($self,$prog,"Log file already exists, please wait longer " .
+                 "between creating log files.");
+   }
+
+   open($file,">> dumps/$fn") ||
+      return err($self,$prog,"Unable to open dumps/$fn for writing");
+
+   printf($file "server: %s, version=%s, change#=%s, exported=%s, " .
+       "type=archive_log\n",conf("version"),db_version(),@info{change},
+       scalar localtime());
+
+   my $dirty = @info{dirty};
+   for my $dbref (sort keys %$dirty) {
+      my $dobj = $$dirty{$dbref};
+      my $obj = dbref($dbref);
+
+      if(!valid_dbref($dbref)) {
+         $out .= "$dbref,delobj";
+      } else {
+         # mark as previously deleted.
+         printf($file "%s,delobj\n",$dbref) if(defined $$dobj{destroyed});
+
+         # cycle all attributes that are dirty
+         for my $key (sort keys %$dobj) {
+            if($key =~ /^A_/ && !defined $$obj{$'}) {
+               printf($file "%s,delatr,%s\n",$dbref,$');
+            } elsif($key =~ /^A_/) {
+               my $attr = $$obj{$'};
+               my $name = $';
+               $$attr{created} = time() if !defined $$attr{created};
+               $$attr{modified} = time() if !defined $$attr{modified};
+
+               if(reserved($name) && defined $$attr{value} &&
+                  $$attr{type} eq "list") {
+                  printf($file "%s,setatr,%s:%s:%s::L:%s\n",
+                         $dbref,$name,$$attr{created},$$attr{modified},
+                         join(',',keys %{$$attr{value}}));
+               } elsif(defined $$attr{value} && $$attr{type} eq "hash") {
+                  printf($file "%s,setatr,%s:%s:%s::H:%s\n",
+                         $dbref,$name,$$attr{created},$$attr{modified},
+                         hash_serialize($$attr{value},$name,$dbref));
+               } else {
+                  printf($file "%s,setatr,%s\n",$dbref,
+                     serialize($name,$attr));
+               }  
+            }  
+         }  
+      }  
+   }
+   printf($file "** Dump Completed %s **\n", scalar localtime());
+   close($file);
+
+#   necho(self   => $self,
+#         prog   => $prog,
+#         source => [ "%s", $out ],
+#        );
+   @info{dirty} = {};                                         # empty pool;
 }
 
 
@@ -4687,7 +4765,7 @@ sub page
 
 #   my $target = fetch($$target{obj_id});
 
-   my $msg = evaluate($self,$prog,$');
+   my $msg = evaluate($self,$prog,$msg);
 
    if($msg =~ /^\s*:\s*/) {
 
@@ -5392,20 +5470,20 @@ sub calculate_login_stats
       }
    }
 
-   my $attr = mget(0,"stat_login");
-
    #---[ clean up old data > 9 days ]------------------------------------#
-   if($attr ne undef) {
-      for my $i (keys %{$$attr{value}}) {
-         if(time() - fuzzy($i) > 86400 * 9) {
-            delete @$attr{$i} if(time() - fuzzy($i) > 86400 * 9);
+   my $data = mget(0,"stat_login");
+   if($data ne undef && defined $$data{value}) { 
+      my $attr = $$data{value};
+      for my $i (keys %$attr) {
+         if(time() - fuzzy($i) > 86400 * 30) {
+            db_remove_hash(0,"stat_login",$i);                   # delete entry
          }
       }
-   }
 
-   #---[ Caculate max logged in for day ]------------------------------#
-   if($attr ne undef || $$attr{value}->{$tsday} < $count) {
-      db_set_hash(0,"stat_login",$tsday,$count);
+      #---[ Caculate max logged in for day ]------------------------------#
+      if($attr ne undef || $$attr{value}->{$tsday} < $count) {
+         db_set_hash(0,"stat_login",$tsday,$count);
+      }
    }
 }
 
@@ -6429,6 +6507,7 @@ sub cmd_reload_code
       return err($self,$prog,"#-1 DISABLED");
    }
 
+   audit($self,$prog,"\@reload");
    $count = reload_code($self,$prog);
 
    if($count == 0) {
@@ -7479,7 +7558,26 @@ sub initialize_flags
 #
 sub db_version
 {
-   return "2.0";
+   return "3.0";
+}
+
+sub dirty_bit
+{
+   my ($obj,$atr) = @_;
+   @info{dirty} = {} if !defined @info{dirty};
+   my $dirty = @info{dirty};
+
+   my $obj = $$obj{obj_id} if(ref($obj) eq "HASH");
+
+   if($atr eq undef) {
+      $$dirty{$obj} = { destroyed => 1 };               # deleted attribute
+   } else {
+      # new object in dirty bit, or object no longer deleted.
+      if(!defined $$dirty{$obj} || ref($$dirty{$obj}) ne "HASH") {
+         $$dirty{$obj} = {};
+      }
+      $$dirty{$obj}->{"A_$atr"} = scalar localtime; # don't allow overwrite of deleted 'flag'
+   }
 }
 
 sub hasparent
@@ -7601,6 +7699,7 @@ sub db_delete
 
    return if db_readonly();
 
+   dirty_bit($obj);                                      # mark object dirty
    if(defined @info{backup_mode} && @info{backup_mode}) {  # in backup mode
       delete @delta[$$obj{obj_id}] if(defined @delta[$$obj{obj_id}]);
       @deleted{$$obj{obj_id}} = 1;
@@ -7925,6 +8024,7 @@ sub db_set
 
    my $obj = dbref_mutate($id);
 
+   dirty_bit($id,$key);
    if($value eq undef) {
       delete @$obj{$key};
       return;
@@ -7976,6 +8076,7 @@ sub db_set_flag
    $$obj{$key} = {} if(!defined $$obj{$key});       # create attr if needed
 
    my $attr = $$obj{$key};
+   dirty_bit($id,"flag");
 
    $$attr{flag} = {} if(!defined $$attr{flag});
 
@@ -7997,6 +8098,7 @@ sub db_set_list
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
 
    my $obj = dbref_mutate($id);
+   dirty_bit($id,$key);
 
    $$obj{$key} = {} if(!defined $$obj{$key});
    my $attr = $$obj{$key};
@@ -8029,6 +8131,7 @@ sub db_remove_list
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
 
    my $obj = dbref_mutate($id);
+   dirty_bit($id,$key);
    $$obj{key} = {} if(!defined $$obj{$key});
    my $attr = $$obj{$key};
    $$attr{value} = {} if(!defined $$attr{value});
@@ -8094,6 +8197,7 @@ sub db_set_hash
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
 
    my $obj = dbref_mutate($id);
+   dirty_bit($id,$key);
 
    $$obj{$key} = {} if(!defined $$obj{$key});
    my $attr = $$obj{$key};
@@ -8126,6 +8230,7 @@ sub db_remove_hash
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
 
    my $obj = dbref_mutate($id);
+   dirty_bit($id,$key);
 
    $$obj{$key} = {} if(!defined $$obj{$key});
    my $attr = $$obj{$key};
@@ -8192,6 +8297,10 @@ sub db_process_line
    if($$state{obj} eq undef &&  $line =~                            # header
       /^server: ([^,]+), dbversion=([^,]+), exported=([^,]+), type=/) {
       $$state{ver} = $2;
+   } elsif($$state{obj} eq undef && $line =~                        # header
+      /^server: ([^,]+), version=([^,]+), change#=([^,]+), exported=([^,]+), type=/) {
+      $$state{ver} = $2;
+      @info{change} = $3;
    } elsif($line =~ /^\*\* Dump Completed (.*) \*\*$/) {
       $$state{complete} = 1;                                  # dump complete
    } elsif($$state{obj} eq undef && $line =~ /^obj\[(\d+)]\s*{\s*$/) {
@@ -8249,12 +8358,12 @@ sub db_process_line
 
 $SIG{'INT'} = sub {  if(defined @info{controlc} &&
 		        time() - @info{controlc} < 30) {
-   		        cmd_dump(obj(0),{},"CRASH");
+   		        cmd_dirty_dump(obj(0),{},"CRASH");
                         @info{crash_dump_complete} = 1;
                         exit(1);
 	             } else {
 			printf("Control-C: Recieved. Need two < 30 seconds ".
-			       "to shutdown.");
+			       "to shutdown.\n");
 			@info{controlc} = time();
 	             }
                   };
@@ -8264,10 +8373,10 @@ $SIG{'USR1'} = sub { @info{sigusr1} = time(); };
 END {
    if(@info{run} == 0) {
       con("%s shutdown by %s.\n",conf("mudname"),@info{shutdown_by});
-      cmd_dump(obj(0),{});
+      cmd_dirty_dump(obj(0),{});
       @info{crash_dump_complete} = 1;
    } elsif(!defined @info{crash_dump_complete} && $#db > -1) {
-      cmd_dump(obj(0),{},"CRASH");
+      cmd_dirty_dump(obj(0),{},"CRASH");
    }
 }
 
@@ -8811,7 +8920,7 @@ sub spin
 
       if(!defined @info{dump_time}) {
          @info{dump_time} = time();
-      } elsif(time()-@info{dump_time} > nvl(conf("dump_interval"),3600)) {
+      } elsif(time()-@info{dump_time} > nvl(conf("dump_interval"),86400)) {
          @info{dump_time} = time();
          my $self = obj(0);
          mushrun(self   => $self,
@@ -8819,6 +8928,21 @@ sub spin
                  invoker=> $self,
                  source => 0,
                  cmd    => "\@dump",
+                 from   => "ATTR",
+                 hint   => "ALWAYS_RUN"
+         );
+      }
+
+      if(!defined @info{dirty_time}) {
+         @info{dirty_time} = time();
+      } elsif(time()-@info{dirty_time} > 300) {
+         @info{dirty_time} = time();
+         my $self = obj(0);
+         mushrun(self   => $self,
+                 runas  => $self,
+                 invoker=> $self,
+                 source => 0,
+                 cmd    => "\@dirty_dump",
                  from   => "ATTR",
                  hint   => "ALWAYS_RUN"
          );
@@ -15378,6 +15502,8 @@ sub load_db
    open($file,"< dumps/$fn") ||
       die("Unable to open database 'dumps/$fn'\n");
 
+   @info{dump_name} = $` if($fn =~ /\.tdb$/);
+
    while(<$file>) {
       db_process_line(\%state,$_);
    }
@@ -15385,6 +15511,62 @@ sub load_db
 
    con(" + Database: %s [%s Version, %s bytes]\n",
       $fn,@state{ver},@state{chars});
+
+   recover_db();
+
+   delete @info{dirty};     # delete, this will get populated by the db load
+}
+
+sub recover_db
+{
+   while(-e sprintf("dumps/@info{dump_name}.%06d",@info{change}+1)) {
+      @info{change}++;
+      load_archive_log(sprintf("@info{dump_name}.%06d",@info{change}));
+   }
+
+   if(@info{change} == 1) {
+      printf(" +           DB Sequence 1 loaded.\n");
+   } elsif(@info{change} > 1) {
+      printf(" +           DB Sequences 1 .. @info{change} loaded.\n");
+   }
+}
+
+#
+# load_archive_log
+#    Load the archive log files which contain just the changes since
+#    the last full dump.
+#
+sub load_archive_log
+{
+   my $fn = shift;
+   my %state;
+   my $file;
+
+   if(!dump_complete("dumps/$fn")) {
+      die("$fn is incomplete, remove or use --forceload to override");
+   }
+
+   open($file,"< dumps/$fn") ||
+      die("Unable to open database 'dumps/$fn'\n");
+
+   while(<$file>) {
+      s/\r|\n//g;
+      if($_ =~ /^(\d+),([^,]+),{0,1}/) {
+         @state{obj} = $1;
+         my $type = $2;
+         my $rest = $';
+
+         if($type eq "delatr") {
+            my $obj = @db[@state{obj}];
+            delete @$obj{$rest};
+         } elsif($type eq "delobj") {
+            delete @db[@state{obj}];
+         } else {
+            db_process_line(\%state,$rest);
+         }
+      }
+   }
+   close($file);
 }
 
 sub generic_action

@@ -3214,6 +3214,7 @@ sub cmd_dirty_dump
    my $dirty = @info{dirty};
    return if ref($dirty) eq "HASH" && scalar keys %$dirty == 0; # nothing2save
 
+   @info{dump_name} = $' if(@info{dump_name} =~ /^dumps\//i);
    if(is_true(conf("single_dirty_file"))) {
       @info{change} = 1;
       $fn = sprintf("%s.%06d",@info{dump_name},1);
@@ -3227,7 +3228,7 @@ sub cmd_dirty_dump
    }
 
    open($file,">> dumps/$fn") ||
-      return err($self,$prog,"Unable to open $fn for writing");
+      return err($self,$prog,"Unable to open dumps/$fn for writing");
 
    printf($file "server: %s, version=%s, change#=%s, exported=%s, " .
        "type=archive_log\n",conf("version"),db_version(),@info{change},
@@ -6506,6 +6507,7 @@ sub cmd_reload_code
       return err($self,$prog,"#-1 DISABLED");
    }
 
+   audit($self,$prog,"\@reload");
    $count = reload_code($self,$prog);
 
    if($count == 0) {
@@ -7574,7 +7576,7 @@ sub dirty_bit
       if(!defined $$dirty{$obj} || ref($$dirty{$obj}) ne "HASH") {
          $$dirty{$obj} = {};
       }
-      $$dirty{$obj}->{"A_$atr"} = 1; # don't allow overwrite of deleted 'flag'
+      $$dirty{$obj}->{"A_$atr"} = scalar localtime; # don't allow overwrite of deleted 'flag'
    }
 }
 

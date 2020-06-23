@@ -205,7 +205,7 @@ sub load_defaults
    @default{badsite}                  = "Your site has been banned.";
    @default{httpd_template}           = "<pre>";
    @default{mudname}                  = "TeenyMUSH";
-   @default{port}                     = "4096";
+   @default{port}                     = "4096,4201,6250";
    @default{starting_quota}           = 5;
    @default{single_dirty_file}        = "yes";
 }
@@ -744,6 +744,7 @@ sub initialize_commands
    @command{"\@ban"}        ={ fun => sub { return &cmd_ban(@_); }           };
    @command{"\@missing"}    ={ fun => sub { return &cmd_missing(@_); }       };
    @command{"\@motd"}       ={ fun => sub { return &cmd_motd(@_); }          };
+   @command{"\@chown"}      ={ fun => sub { return &cmd_chown(@_); }         };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -853,6 +854,18 @@ sub restore_process_line
 #      con("Unable to parse[$$state{obj}]: '%s'\n",$line);
 #      printf("Unable to parse[$$state{obj}]: '%s'\n",$line);
 #      printf("%s\n",code("long"));
+   }
+}
+
+sub cmd_chown
+{
+   my ($self,$prog,$txt,$switch) = @_;
+
+   my $target = find($self,$prog,$txt) ||             # can't find target
+      return err($self,$prog,"You don't have that.");
+
+   if(hasflag($target,"PLAYER")) {
+      return err($self,$prog,"Permission denied.");
    }
 }
 
@@ -6232,7 +6245,7 @@ sub cmd_set2
 
    my $switch = shift;
 
-   verify_switches($self,$prog,$switch,"quiet") || return;
+   verify_switches($self,$prog,$switch,"quiet","notrim") || return;
 
    my $flag = shift;
 
@@ -6281,6 +6294,8 @@ sub cmd_set2
              $append . trim(evaluate($self,$prog,$value)),
              $$switch{quiet}
             );
+      } elsif(defined $$prog{multi}) {
+         set($self,$prog,$target,$attr,join("\n",@{$$prog{multi}}));
       } else {
          set($self,$prog,$target,$attr,$append . trim($value),$$switch{quiet});
       }
@@ -8362,8 +8377,10 @@ $SIG{'INT'} = sub {  if(defined @info{controlc} &&
                         @info{crash_dump_complete} = 1;
                         exit(1);
 	             } else {
-			printf("Control-C: Recieved. Need two < 30 seconds ".
-			       "to shutdown.\n");
+			printf("Warning: A Control-C was recieved. Two " .
+                               "are needed within 30 seconds to shutdown ".
+                               "the MUSH. This is a pre-caution against " .
+                               "accidental aborts.\n");
 			@info{controlc} = time();
 	             }
                   };
@@ -8645,8 +8662,9 @@ sub multiline
    } elsif($$arg{source} == 1 && $multi ne undef) {
       my $stack = $$multi{content};
       if($$arg{cmd} =~ /^\s*$/) {                                # attr is done
-         $$arg{cmd} = "&$$multi{attr} $$multi{object}=" . join("\r\n",@$stack);
+         $$arg{cmd} = "&$$multi{attr} $$multi{object}= multi";
          delete @{$connected{@{$$arg{self}}{sock}}}{inattr};
+         @$arg{prog}->{multi} = $stack;
          return 0;
       } elsif($$arg{cmd} =~  /^\s*\.\s*$/) {                       # blank line
          push(@$stack,"");
@@ -8920,7 +8938,8 @@ sub spin
 
       if(!defined @info{dump_time}) {
          @info{dump_time} = time();
-      } elsif(time()-@info{dump_time} > nvl(conf("dump_interval"),86400)) {
+      } elsif(@info{dump_name} eq "" ||  # initial db?
+              time()-@info{dump_time} > nvl(conf("dump_interval"),86400)) {
          @info{dump_time} = time();
          my $self = obj(0);
          mushrun(self   => $self,
@@ -8935,7 +8954,7 @@ sub spin
 
       if(!defined @info{dirty_time}) {
          @info{dirty_time} = time();
-      } elsif(time()-@info{dirty_time} > 300) {
+      } elsif(time()-@info{dirty_time} > 300 && defined @info{dump_name}) {
          @info{dirty_time} = time();
          my $self = obj(0);
          mushrun(self   => $self,
@@ -9072,7 +9091,8 @@ sub run_internal
       }
    }
 
-   if($runas eq conf("webobject") ||
+   if($$prog{hint} eq "ALWAYS_RUN" ||
+      $runas eq conf("webobject") ||
       $$command{source} == 1  || 
       money($$command{runas}) > 0) {
       if(defined $$command{wild}) {
@@ -9091,7 +9111,6 @@ sub run_internal
               );
          return;
       }
-
       my $target = $$command{runas};
       $target = $$target{obj_id} if(ref($target) eq "HASH");
       $result = &{@{$$hash{$cmd}}{fun}}($target,
@@ -9236,7 +9255,8 @@ sub spin_run
 #
 sub find_in_list
 {
-   my ($thing,@list) = @_;
+   my $thing = lc(shift);
+   my (@list) = @_;
    my ($start_count,$start_obj,$middle_count,$middle_obj);
 
    return undef if $thing eq undef;
@@ -9320,13 +9340,17 @@ sub find
    return find_exit($self,$prog,loc($self),$thing);
 }
 
+#
+# find_exit
+#    Given a location, see if there is an exit named after $thing
+#
 sub find_exit
 {
    my ($self,$prog,$loc,$thing) = (obj(shift),shift,shift,trim(lc(shift)));
    my ($partial,$dup);
 
    if($thing =~ /^\s*#(\d+)\s*$/) {
-      return hasflag($1,"EXIT") ? obj($1) : undef;
+      return hasflag($1,"EXIT") ? obj($1) : "#foo";
    }
 
    for my $obj (lexits($loc)) {
@@ -9945,6 +9969,7 @@ sub initialize_functions
    @fun{index}      = sub { return &fun_index(@_);                 };
    @fun{replace}    = sub { return &fun_replace(@_);               };
    @fun{num}        = sub { return &fun_num(@_);                   };
+   @fun{locate}     = sub { return &fun_locate(@_);                };
    @fun{lnum}       = sub { return &fun_lnum(@_);                  };
    @fun{name}       = sub { return &fun_name(0,@_);                };
    @fun{fullname}   = sub { return &fun_name(1,@_);                };
@@ -13536,6 +13561,108 @@ sub fun_num
    }
 }
 
+sub fun_locate
+{
+   my ($self,$prog) = (shift,shift);
+   my (%result, @r, $prefer);
+   my $random = 0;
+
+   good_args($#_,3) ||
+      return "#-1 FUNCTION (LOCATE) EXPECTS 3 ARGUMENT";
+
+   my $target = find($self,$prog,evaluate($self,$prog,shift)) ||
+      return "#-1 NOT FOUND";
+
+   readonly($self,$target) ||
+      return err($self,$prog,"#-1 PERMISSION DENIED");
+
+   my $what = lc(trim(ansi_remove(evaluate($self,$prog,shift))));
+   my $where  = evaluate($self,$prog,shift);
+
+   for(my $i=0;$i < length($where);$i++) {
+      if(substr($where,$i,1) eq "a") {
+         @result{"a"} = $1 if($what =~ /^\s*#(\d+)\s*$/ && valid_dbref($1));
+      } elsif(substr($where,$i,1) eq "c") {
+         my $obj= find_exit($self,$prog,$target,$what);
+         @result{c} = $$obj{obj_id} if $obj ne undef;
+      } elsif(substr($where,$i,1) eq "e") {
+         my $obj = find_exit($self,$prog,loc($target),$what);
+         @result{e} = $$obj{obj_id} if $obj ne undef;
+      } elsif(substr($where,$i,1) eq "h") {
+         if($what eq lc(ansi_remove(name(loc($target))))) {
+            @result{h} = return loc($target);
+         }
+      } elsif(substr($where,$i,1) eq "i") {
+         my $obj = find_in_list($what,lcon($target));
+         @result{e} = $$obj{obj_id} if $obj ne undef;
+      } elsif(substr($where,$i,1) eq "m") {
+         @result{m} = $$target{obj_id} if $what eq "me";
+      } elsif(substr($where,$i,1) eq "n") {
+         my $obj = find_in_list($what,lcon(loc($target)));
+         @result{n} = $$obj{obj_id} if $obj ne undef;
+      } elsif(substr($where,$i,1) eq "p") {
+         if($what =~ /^\s*\*/) {
+            my $player = trim(ansi_remove(lc($')));
+            if(defined @player{$player}) {
+               @result{p} = @player{$player};
+            }
+         }
+      } elsif(substr($where,$i,1) eq "E") {
+         $prefer = "E";
+      } elsif(substr($where,$i,1) eq "L") {
+         $prefer = "L";
+      } elsif(substr($where,$i,1) eq "P") {
+         $prefer = "P";
+      } elsif(substr($where,$i,1) eq "R") {
+         $prefer = "R";
+      } elsif(substr($where,$i,1) eq "T") {
+         $prefer = "T";
+      } elsif(substr($where,$i,1) eq "V") {
+         $prefer = "V";
+      } elsif(substr($where,$i,1) eq "X") {
+         $random = 1;
+      }
+   }
+
+   for my $key (keys %result) {
+      if($prefer eq undef) {
+        return "#-2" if(!$random && $#r == 0);
+        push(@r,@result{$key});
+      } else {
+         if($prefer eq "E" && hasflag(@result{$key},"EXIT")) {
+            return "#-2" if(!$random && $#r == 0);
+            push(@r,@result{$key});
+         }
+         if($prefer eq "L" && hasflag(@result{$key},"EXIT")) {
+            my $atr = get($target,"OBJ_LOCK_DEFAULT");
+            if($atr ne undef) {
+               my $lock = lock_eval($self,$prog,$target,$atr);
+
+               if(!$$lock{error} && $$lock{result}) {
+                  return "#-2" if(!$random && $#r == 0);
+                  push(@r,@result{$key});
+               }
+            }
+         }
+         if($prefer eq "P" && hasflag(@result{$key},"PLAYER")) {
+            return "#-2" if(!$random && $#r == 0);
+            push(@r,@result{$key});
+         }
+         if($prefer eq "T" && hasflag(@result{$key},"OBJECT")) {
+            return "#-2" if(!$random && $#r == 0);
+            push(@r,@result{$key});
+         }
+      }
+   }
+
+   if($random) {
+      return @r[rand($#r + 1)];
+   } else {
+      return @r[0];
+   }
+}
+      
+
 sub fun_owner
 {
    my ($self,$prog) = (shift,shift);
@@ -15484,7 +15611,7 @@ sub load_db
       cmd_give(3,$prog,"#0 = 9999999");             # give webobject money
       teleport(3,$prog,$obj,1);             # teleport god into the void
       set($obj,$prog,$obj,"CONF.WEBUSER","#2");         # set webuser object
-      create_object($obj,$prog,"WebSecurityObject",undef,"OBJECT",1);
+      create_object(obj(2),$prog,"WebSecurityObject",undef,"OBJECT",1);
       set($obj,$prog,$obj,"CONF.WEBOBJECT","#3");        # set webuser object
       set_flag($obj,$prog,3,"!NO_COMMAND",,1);       # remove NO_COMMAND
       set($obj,$prog,3,"DEFAULT",
@@ -15509,7 +15636,7 @@ sub load_db
    }
    close($file);
 
-   con(" + Database: %s [%s Version, %s bytes]\n",
+   printf(" + Database: %s [%s Version, %s bytes]\n",
       $fn,@state{ver},@state{chars});
 
    recover_db();
@@ -16899,9 +17026,7 @@ sub set
    my ($pat,$first,$type);
 
    # don't strip leading spaces on multi line attributes
-   if(!@{$$prog{cmd}}{multi}) {
-       $value =~ s/^\s+//g;
-   }
+   $value =~ s/^\s+//g if(!defined $$prog{multi});
 
    if(!good_atr_name($attribute),$override) {
       err($self,$prog,"Attribute name is bad, use the following characters: " .
@@ -18012,13 +18137,22 @@ sub server_disconnect
 sub server_start
 {
    my @port;
+   my @tried;
 
-   $listener = IO::Socket::INET->new(LocalPort => conf("port"),
-                                     Listen    => 1,
-                                     Reuse     => 1
-                                    ) ||
-      die("   Port already in use.");
-   push(@port,conf("port") . "{Mush}");
+   # my dev instant just needs a free port, so choose from a list
+   for my $p (split(/,/,conf("port"))) {
+      $listener = IO::Socket::INET->new(LocalPort => $p,
+                                        Listen    => 1,
+                                        Reuse     => 1
+                                       );
+      if($listener ne undef) {
+         push(@port,"$p\{Mush\}");
+         last;
+      } else {
+         push(@tried,$p);
+      }
+   }
+   die("Ports " . join(',',@tried) . " already in use.") if $listener eq undef;
 
    # uri_escape is required for httpd
    if(@info{"uri_escape"} == -1 && conf("httpd") > 0) {

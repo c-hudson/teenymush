@@ -1881,3 +1881,94 @@ TRAIN
 
   The first two lines resulting in the Huh? and #-1 are the output
   from the +fun command when run by the user.
+& @motd
+  COMMAND: @motd[/<switches>] <message>
+
+  This command sets or lists short messages that are displayed to players
+  after they successfully log in to the game (or after they fail because
+  logins are not allowed). 
+
+  The following switches are available:
+
+     (No switches)   - Sets the message that all players see when they
+                       connect.
+     /list           - Lists the current messages.
+& locate()
+  FUNCTION: locate(<looker>,<string>,<where>)
+
+  The locate function is used to look for an object from the perspective of
+  <looker> (You must own <looker>).  The database number of the item that
+  is found is returned.  The <where> parameter specifies a list of places to
+  look, from this list:
+    a    - Look for absolute references (#<number>)
+    c    - Look for exits carried by <looker> (and by <looker>'s parents).
+    e    - Look for exits in <looker>'s location (and the location's parents).
+    h    - Look for 'here', which matches <looker>'s location.
+    i    - Look in <looker>'s inventory.
+    m    - Look for 'me', which matches <looker>.
+    n    - Look for <looker>'s neighbors (other objects in the same location).
+    p    - Look for player names prefixed by a '*'
+    *    - Look for everything in the above list.
+
+{ 'help locate2' for more }
+& locate2
+LOCATE() (continued)
+
+  You may also specify qualifiers in <where> to help resolve possible
+  ambiguities:
+    E    - Prefer exits over other types.
+    L    - Prefer unlocked exits over locked exits.
+    P    - Prefer players over other types.
+    R    - Prefer rooms over other types.
+    T    - Prefer things over other types.
+    V    - Report "Can't find..." and "Which one..." errors to <looker>.
+    X    - Select randomly if search finds multiple matches.
+
+  If nothing matches, the value #-1 is returned.  If more than one thing
+  of the preferred type matches, but nothing matches exactly, the value #-2
+  is returned, except if the X qualifier was specified in which case one is
+  chosen at random.  If more than one thing exactly matches, one is chosen
+  at random.  If you specify more than one type preference (E, P, R, or T),
+  then the last one entered is the one that is obeyed.  The default is for
+  no type to be preferred.
+
+{ 'help locate3' for more }
+& locate3
+LOCATE() (continued)
+
+  Examples:
+    > i
+    test1(#378)
+    test(#376)
+    You have 42463 clams.
+    > look
+    Nullspace(#250R)
+    test1(#382)
+    > say locate(me,test,i)                > say locate(me,tes,in)
+    You say, "#376"                         You say, "#-2"
+    > say locate(me,test,n)                > say locate(here,tes,*)
+    You say, "#382"                         You say, "#382"
+    > say locate(me,test1,in)              > say locate(me,out,e)
+    You say, "#378"                         You say, "#252"
+    > say locate(me,test1,in)              > say locate(me,here,*)
+    You say, "#382"                         You say, "#250"
+
+  Related Topics: num(), PARENT OBJECTS.
+& @chown
+
+  COMMAND: @chown <thing>
+           @chown <thing> = <player>
+
+  This command allows you to change the ownership of things with the below
+  restrictions. Once the ownership has been changed, the object will be set
+  HALTED.
+
+  Restrictions:
+     1. The thing must be set CHOWN_OK.
+     2. The thing can not be a PLAYER.
+     3. If the thing is an OBJECT, then you must be carrying the OBJECT
+        to @chown it.
+     4. If the thing is a ROOM, you must be in the room to @chown it.
+     5. If the thing is an EXIT, you must be in the same room as the exit.
+     6. If you are trying to @chown an object to someone else, you must be
+        a Wizard / God.

@@ -389,23 +389,6 @@ function:
                   returned. This is implimented for debug purposes only.
 
 See: @telnet, telnet_open()
-& @telnet
-command:
-
-   @telnet <hostname> <port>
-
-   Opens a connection to <hostname> on <port> if the object is set either
-   SOCKET_PUPPET or SOCKET_INPUT. Both flags are setable by WIZARDS only.
-
-   If the object is set SOCKET_PUPPET, all socket input is matched via a
-   ^pattern style listen used by MUSH to match input in the same room as
-   an object. However, instead of a "^" the pattern must start with "!"
-   to specify a socket based listen.
-
-   If the object is set SOCKET_LISTEN, then all socket input may be
-   retrieved by the input() / telnet_open functions.
-
-See: input(), telnet_open(), SOCKET_PUPPET, SOCKET_INPUT, @close
 &url
 function:
 
@@ -1972,3 +1955,105 @@ LOCATE() (continued)
      5. If the thing is an EXIT, you must be in the same room as the exit.
      6. If you are trying to @chown an object to someone else, you must be
         a Wizard / God.
+& @function
+
+  COMMAND: @function/list
+           @function <name> = <object> / <attribute>
+
+  This command is used to manage user defined functions by either listing
+  them or defining them to point to a object and attribute. User defined
+  @functions will not survive a reboot of the MUSH and must be re-added.
+
+  The functionalty of user defined functions is similar to the use of
+  the u() function.
+
+  Example:
+     &foo #1 = [add(1,0)]
+     > @function bar = #1/foo
+     > say [bar(1)]
+     You say, "2"
+     > say [u(#1/foo,1)]
+     You say, "2"
+
+  The use of [bar(1)] is similar to [u(#1/foo,1)] in the above situation.
+& @stats
+
+  COMMAND: @stats[/all] [<player>]
+
+  Display the number of objects in the game.  @stats/all gives a
+  breakdown by object types.  If <player> is specified, the breakdown
+  for the named player is given.  You may only list individual counts
+  for yourself.  If invoked with no arguments or switches this command is
+  free, but if you specify either /all or <player>, then this command costs
+  100 coins to run, because it is computationally expensive.
+
+  Related Topics: stats().
+& look
+
+  COMMAND: look[/<switches>] [<object>]
+
+  Displays the description of <object>, or the room you're in if you don't
+  specify an object.  Specifying object as <name> or #<dbref> or 'me' or
+  'here' is legal.  You can also use look to look at objects held by other
+  people, just use 'look <person>'s <object>'.
+
+& @uptime
+
+  COMMAND: @uptime
+
+  Lists how long the MUSH has been up in days, hour, and minutes.
+& @sex
+  COMMAND:   @sex <object> = <gender>
+  ATTRIBUTE: Sex
+
+  Sets the gender for <object>, which is used to determine which pronouns to
+  use when replacing %p, %o, %s, and %a parameters in messages that apply to
+  <object>.  Genders that start with M or m are considered male, those
+  starting with F, f, W, or w are considered female, those starting with
+  P or p are considered plural, and anything else is considered neuter.
+
+  Example: @sex me = female
+           @sex me = No thank you (Silly, but possible.  Treated as neuter)
+& version
+
+  COMMAND: version
+
+  Displays the version of MUSH other tidbits.
+& @send
+  COMMAND:   @send <message>
+
+  This command is used to send a message over an already open @telnet
+  connection. Since only one connection is allowed per object, there is
+  no need to specify which connection to use.
+
+  Related Topics: @telnet
+& @telnet
+  COMMAND:   @telnet <host>:<port>
+
+  This command will open up a connection to a host at the specified port.
+  The object issueing the @telnet command must be set SOCKET_PUPPET or
+  SOCKET_INPUT. Both flags may only be set by Wizards / God. These two
+  flags control only how data is recieved. See below.
+
+  SOCKET_PUPPET
+     Input from the socket is handled in a way similar to the user defined
+     attribute listens. I.e. "&attribute object = ^* has arrived.". The only
+     differences is that the "^" is replaced with a "!" to signify the
+     object is listening to @telnet data.
+
+  SOCKET_INPUT
+     The input from @telnet is availible via the input() function and
+     the function must be called once for each line of input coming from
+     the connection. See help input() for more details. This allows a more
+     controlled way of dealing with input but can also be more complicated.
+
+  Sending Data
+     Data for both types are sent via @send <message>
+
+  Related Topics: @close, @send, flags
+
+& @nohelp
+  COMMAND:   @nohelp
+
+  This command lists @commands or functions() without any help.
+  This is useful for determing which things need help entries written.

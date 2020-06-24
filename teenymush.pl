@@ -721,14 +721,13 @@ sub initialize_commands
    @command{"\@pay"}        ={ fun => sub { return &cmd_generic_set(@_);}    };
    @command{"give"}         ={ fun => sub { return &cmd_give(@_);}           };
    @command{"\@squish"}     ={ fun => sub { return &cmd_squish(@_);}         };
-   @command{"\@split"}      ={ fun => sub { return &cmd_split(@_); }         };
    @command{"\@websocket"}  ={ fun => sub { return &cmd_websocket(@_); }     };
    @command{"\@find"}       ={ fun => sub { return &cmd_find(@_); }          };
    @command{"\@bad"}        ={ fun => sub { return &cmd_bad(@_); }           };
    @command{"\@dump"}       ={ fun => sub { return &cmd_dump(@_); }          };
    @command{"\@dirty_dump"} ={ fun => sub { return &cmd_dirty_dump(@_); }    };
    @command{"\@import"}     ={ fun => sub { return &cmd_import(@_); }        };
-   @command{"\@stat"}       ={ fun => sub { return &cmd_stat(@_); }          };
+   @command{"\@stats"}      ={ fun => sub { return &cmd_stats(@_); }         };
    @command{"\@cost"}       ={ fun => sub { return &cmd_generic_set(@_); }   };
    @command{"\@quota"}      ={ fun => sub { return &cmd_quota(@_); }         };
    @command{"\@player"}     ={ fun => sub { return &cmd_player(@_); }        };
@@ -745,6 +744,7 @@ sub initialize_commands
    @command{"\@missing"}    ={ fun => sub { return &cmd_missing(@_); }       };
    @command{"\@motd"}       ={ fun => sub { return &cmd_motd(@_); }          };
    @command{"\@chown"}      ={ fun => sub { return &cmd_chown(@_); }         };
+   @command{"\@nohelp"}     ={ fun => sub { return &cmd_nohelp(@_); }         };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -1685,7 +1685,7 @@ sub gather_stats
    return $hash;
 }
 
-sub cmd_stat
+sub cmd_stats
 {
    my ($self,$prog,$txt,$switch) = (obj(shift),obj(shift),shift,shift);
    my ($hash, $target);
@@ -3066,48 +3066,6 @@ sub test
    } else {
       return evaluate($self,$prog,$txt) ? 1 : 0;
    }
-}
-
-sub cmd_split
-{
-   my ($self,$prog,$txt) = (obj(shift),shift,shift);
-   my $max = 10;
-   my @stack;
-
-   hasflag($self,"GUEST") &&
-      return err($self,$prog,"Permission denied.");
-
-   if($txt =~ /,/) {
-       my $target = find($self,$prog,$`) ||
-         return err($self,$prog,"I can't find that");
-       my $txt = get($target,$');
-       $txt =~ s/\r\s*|\n\s*//g;
-
-      unshift(@stack,$txt);
-
-      while($#stack > -1 && $max--) {
-          necho(self => $self,
-                prog => $prog,
-                source => [ "! %s", @stack[0] ]
-               );
-          my $before = $#stack;
-          my $item = shift(@stack);
-
-          if($item =~ /;/) {
-             for my $i (balanced_split($item,';',3,1)) {
-                unshift(@stack,$i);
-             }
-          }
-          if($before == $#stack) {
-             necho(self => $self,
-                   prog => $prog,
-                   source => [ "# %s ($before==$#stack)", $item ]
-                  );
-          }
-       }
-    } else {
-       err($self,$prog,"Usage: \@split <object>,<attribute>");
-    }
 }
 
 #
@@ -5178,6 +5136,42 @@ sub cmd_help
             source => [ "%s", $help ],
            );
    }
+}
+
+sub cmd_nohelp
+{
+   my ($self,$prog,$txt,$switch,$flag) = (obj(shift),shift,shift,shift,shift);
+   my @result;
+
+   for my $key (sort keys %command) {
+      if(@command{$key}->{full} eq $key && !defined @help{$key}) {
+         push(@result,$key);
+      }
+   }
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ wrap("commands: ",
+                          "          ",
+                           join(', ',@result)
+                          )
+                   ]
+        );
+   delete @result[0 .. $#result];
+   
+   for my $key (sort keys %fun) {
+      if(!defined @help{"$key()"}) {
+         push(@result,$key);
+      }
+   }
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ wrap("functions: ",
+                          "           ",
+                           join(', ',@result)
+                          )
+                   ]
+        );
+   delete @result[0 .. $#result];
 }
 
 

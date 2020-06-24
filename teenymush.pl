@@ -154,7 +154,7 @@ sub getfile
 
 #
 # getbinfile
-#    Load a binary file into memory, such as a jpg for use by 
+#    Load a binary file into memory, such as a jpg for use by
 #    httpd.
 #
 sub getbinfile
@@ -915,7 +915,7 @@ sub cmd_missing
 #
 # cmd_ban
 #   List or remove http ban entries.
-# 
+#
 sub cmd_ban
 {
    my ($self,$prog,$txt,$switch) = @_;
@@ -926,7 +926,7 @@ sub cmd_ban
 
    !or_hasflags($self,"WIZARD","GOD") &&
       return err($self,$prog,"Permission denied.");
-   
+
    my $hash = @info{httpd_ban};
    my $pat = glob2re(evaluate($self,$prog,$txt)) if($txt ne undef);
 
@@ -3280,10 +3280,10 @@ sub cmd_dirty_dump
                } else {
                   printf($file "%s,setatr,%s\n",$dbref,
                      serialize($name,$attr));
-               }  
-            }  
-         }  
-      }  
+               }
+            }
+         }
+      }
    }
    printf($file "** Dump Completed %s **\n", scalar localtime());
    close($file);
@@ -5180,7 +5180,7 @@ sub create_exit
    if(!link_exit($self,$exit,$in,$out,1)) {
       return undef;
    }
- 
+
    return $exit;
 }
 
@@ -5485,7 +5485,7 @@ sub calculate_login_stats
 
    #---[ clean up old data > 9 days ]------------------------------------#
    my $data = mget(0,"stat_login");
-   if($data ne undef && defined $$data{value}) { 
+   if($data ne undef && defined $$data{value}) {
       my $attr = $$data{value};
       for my $i (keys %$attr) {
          if(time() - fuzzy($i) > 86400 * 30) {
@@ -9093,7 +9093,7 @@ sub run_internal
 
    if($$prog{hint} eq "ALWAYS_RUN" ||
       $runas eq conf("webobject") ||
-      $$command{source} == 1  || 
+      $$command{source} == 1  ||
       money($$command{runas}) > 0) {
       if(defined $$command{wild}) {
          set_digit_variables($$command{runas},                    # copy %0-%9
@@ -13661,7 +13661,7 @@ sub fun_locate
       return @r[0];
    }
 }
-      
+
 
 sub fun_owner
 {
@@ -14705,7 +14705,7 @@ sub fun_lookup
    if(defined $$prog{missing} && ref($$prog{missing}) eq "HASH") {
       $$prog{missing}->{fun}->{lc($name)}++;
    }
- 
+
    return "huh";
 }
 
@@ -15607,7 +15607,7 @@ sub load_db
       set($obj,$prog,$obj,"CONF.STARTING_ROOM","#1");   # set starting room
       teleport($obj,$prog,$obj,1);             # teleport god into the void
 
-      cmd_pcreate($obj,$prog,"webuser potrzebie",{},1);        # create webuser 
+      cmd_pcreate($obj,$prog,"webuser potrzebie",{},1);        # create webuser
       cmd_give(3,$prog,"#0 = 9999999");             # give webobject money
       teleport(3,$prog,$obj,1);             # teleport god into the void
       set($obj,$prog,$obj,"CONF.WEBUSER","#2");         # set webuser object
@@ -15616,8 +15616,7 @@ sub load_db
       set_flag($obj,$prog,3,"!NO_COMMAND",,1);       # remove NO_COMMAND
       set($obj,$prog,3,"DEFAULT",
          "\$default:\@pemit %#=This is the minimal default web page for " .
-         "TeenyMUSH [version()]. Please update this with: &default #3=Your " .
-         "web page");
+         "[version()]. Please update this with: &default #3=Your web page");
 
       return;
    }
@@ -15704,7 +15703,7 @@ sub generic_action
          necho(self => $self,
                prog => $prog,
                room => [ $self,
-                         "%s %s", 
+                         "%s %s",
                          name($self),
                          evaluate($self,$prog,$atr)
                        ],

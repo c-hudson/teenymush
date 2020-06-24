@@ -198,7 +198,7 @@ sub load_defaults
    @default{auditlog}                 = "yes";
    @default{httpd_invalid}            = 3;
    @default{login}                    = "Welcome to TeenyMUSH\r\n\r\n" .
-                                        "   Type the below command to " .
+                                        "Type the below command to " .
                                         "customize this screen after loging ".
                                         "in as God.\r\n\r\n    &conf.login #0" .
                                         "= Login screen\r\n\r\n";
@@ -859,15 +859,50 @@ sub restore_process_line
 
 sub cmd_chown
 {
-   my ($self,$prog,$txt,$switch) = @_;
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
+   my ($o,$t) = besplit($self,$prog,$txt,"=");
+   my $target;
 
-   my $target = find($self,$prog,$txt) ||             # can't find target
-      return err($self,$prog,"You don't have that.");
-
-   if(hasflag($target,"PLAYER")) {
-      return err($self,$prog,"Permission denied.");
+   if($t ne undef) {
+      $target = find_player($self,$prog,$t) ||
+         return err($self,$prog,"*Unknown player.");
+   } else {
+      $target = $self;
    }
+
+   my $obj = find($self,$prog,$o) ||           # can't find object to chown
+      return err($self,$prog,"I don't see that here. '$o'");
+
+   if(hasflag($obj,"PLAYER")) {
+      return err($self,$prog,"Players can not be \@chowned.");
+   } elsif(quota_left($target) <= 0) {
+      err($self,$prog,name($target) . " does not have enough quota to " .
+         "\@chown that object");
+   }
+
+   if(!or_flag($self,"WIZARD","GOD") && $t ne undef) {
+      return err($self,$prog,"Permission denied");
+   } elsif(!or_flag($self,"WIZARD","GOD")) {
+      if(hasflag($obj,"OBJECT") && $$target{obj_id} != loc($obj)) {
+         err($self,$prog,"You don't have that!");
+      } elsif(hasflag($obj,"EXIT") && loc($target) != loc($obj)) {
+         err($self,$prog,"You must be in the same as the exit to \@chown it.");
+      } elsif(hasflag($obj,"ROOM") && loc($target) != $obj) {
+         err($self,$prog,"You must be in the room to \@chown it.");
+      } elsif(!hasflag($obj,"CHOWN_OK")) {
+         err($self,$prog,"Permission denied: The object must be set CHOWN_OK");
+      }
+   }
+
+   set_quota($obj,"add",1);
+   db_set($obj,"obj_owner",$$target{obj_id});
+   set_flag($self,$prog,$obj,"HALTED");
+   necho(self => $self,
+         prog => $prog,
+         source => [ "Set." ]
+        );
 }
+
 
 sub cmd_motd
 {
@@ -876,7 +911,7 @@ sub cmd_motd
    verify_switches($self,$prog,$switch,"list") ||
       return;
 
-   !or_hasflags($self,"WIZARD","GOD") &&
+   !or_flag($self,"WIZARD","GOD") &&
       return err($self,$prog,"Permission denied.");
 
    if(defined $$switch{list}) {
@@ -924,7 +959,7 @@ sub cmd_ban
    verify_switches($self,$prog,$switch,"unban") ||
       return;
 
-   !or_hasflags($self,"WIZARD","GOD") &&
+   !or_flag($self,"WIZARD","GOD") &&
       return err($self,$prog,"Permission denied.");
    
    my $hash = @info{httpd_ban};
@@ -1974,7 +2009,7 @@ sub cmd_bad
             }
 
             # arbitrarly choose exit over object due to previous bug.
-            if(and_hasflags($$cmd{bad_pos},"EXIT","OBJECT")) {
+            if(and_flag($$cmd{bad_pos},"EXIT","OBJECT")) {
                db_remove_list($$cmd{bad_pos},"obj_flag","OBJECT");
             }
             my $count += hasflag($$cmd{bad_pos},"PLAYER");
@@ -2476,10 +2511,14 @@ sub cmd_huh
 sub cmd_offline_huh
 {
    my $sock = $$user{sock};
-  if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
-      ws_echo($sock,conf("login"));
+
+   my $obj = obj(0);            #  show login in readonly mode
+   my $prog = prog($obj,$obj,$obj);
+   $$prog{read_only} = 1;
+   if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
+      ws_echo($sock,evaluate($obj,$prog,conf("login")));
    } else {
-      printf($sock "%s\r\n",conf("login"));
+      printf($sock "%s\r\n",evaluate($obj,$prog,conf("login")));
    }
 }
 
@@ -5169,10 +5208,10 @@ sub create_exit
    my ($self,$prog,$name,$in,$out,$verbose) = @_;
 
    # only ROOM, OBJECT, or PLAYERS may have exits;
-   return undef if(!or_hasflags($in,"ROOM","OBJECT","PLAYER"));
+   return undef if(!or_flag($in,"ROOM","OBJECT","PLAYER"));
 
    # only ROOM, OBJECT, or PLAYERS may have destinations;
-   return undef if(!or_hasflags($out,"ROOM","OBJECT","PLAYER"));
+   return undef if(!or_flag($out,"ROOM","OBJECT","PLAYER"));
 
    my $exit = create_object($self,$prog,$name,undef,"EXIT") ||
       return undef;
@@ -5494,7 +5533,7 @@ sub calculate_login_stats
       }
 
       #---[ Caculate max logged in for day ]------------------------------#
-      if($attr ne undef || $$attr{value}->{$tsday} < $count) {
+      if($attr eq undef || $$attr{$tsday} < $count) {
          db_set_hash(0,"stat_login",$tsday,$count);
       }
    }
@@ -6984,7 +7023,7 @@ sub hasflag
    }
 }
 
-sub or_hasflags
+sub or_flag
 {
    my ($obj,@flags) = @_;
 
@@ -6994,7 +7033,7 @@ sub or_hasflags
    return 0;
 }
 
-sub and_hasflags
+sub and_flag
 {
    my ($obj,@flags) = @_;
 
@@ -7536,6 +7575,18 @@ sub initialize_flags
                           type        => 1,
                           ord         => 6,
                           target_type => "PLAYER"
+                        };
+   @flag{CHOWN_OK}     ={ letter      => "C",
+                          perm        => "!GUEST",
+                          type        => 1,
+                          ord         => 28,
+                          target_type => "!PLAYER"
+                        };
+   @flag{HALTED}       ={ letter      => "H",
+                          perm        => "",
+                          type        => 1,
+                          ord         => 29,
+                          target_type => ""
                         };
    @flag{PLAYER}       ={ letter => "P", perm => "GOD",    type => 1, ord=>1  };
    @flag{ROOM}         ={ letter => "R", perm => "GOD",    type => 1, ord=>2  };
@@ -8411,7 +8462,7 @@ sub run_obj_commands
    $cmd =~ s/\r|\n//g;
    my $match = 0;
 
-   if(!hasflag($obj,"NO_COMMAND")) {
+   if(!or_flag($obj,"NO_COMMAND","HALTED")) {
 #      for my $hash (latr_regexp($obj,1)) {
       for my $hash (sort {length(@{$b}{atr_regexp}) <=>
                        length(@{$a}{atr_regexp})} latr_regexp($obj,1)) {
@@ -8455,7 +8506,7 @@ sub run_obj_commands
    return 0 if($parent eq undef || !valid_dbref($$parent{value}));
 
 #   printf("Parent: '$$parent{value}'\n");
-   if(!hasflag($$parent{value},"NO_COMMAND")) {
+   if(!or_flag($$parent{value},"NO_COMMAND","HALTED")) {
       for my $hash (latr_regexp($$parent{value},1)) {
          if($cmd =~ /$$hash{atr_regexp}/i) {
             # run attribute only if last run attritube isn't the new
@@ -8919,7 +8970,7 @@ sub spin_done
 sub spin
 {
    my $start = Time::HiRes::gettimeofday();
-   my ($count,$pid);
+   my ($count,$pid,$result);
 
    $SIG{ALRM} = \&spin_done;
 
@@ -8995,7 +9046,9 @@ sub spin
 
             # optimization for sleeping process
             last if(defined $$cmd{sleep} && $$cmd{sleep} > time());
-            my $result = spin_run($prog,$cmd);
+            if(!hasflag($$cmd{runas},"HALTED")) {
+               $result = spin_run($prog,$cmd);
+            }
 
             if($result eq "BACKGROUNDED") {
                $pos++;
@@ -15700,18 +15753,22 @@ sub generic_action
 {
    my ($self,$prog,$target,$action,$target_msg,$src_msg) = @_;
 
-   if((my $atr = get($target,$action)) ne undef) {
-         necho(self => $self,
-               prog => $prog,
-               room => [ $self,
-                         "%s %s", 
-                         name($self),
-                         evaluate($self,$prog,$atr)
-                       ],
-         );
-   }
+#   if((my $atr = get($target,$action)) ne undef) {
+#         necho(self => $self,
+#               prog => $prog,
+#               room => [ $self,
+#                         "%s %s", 
+#                         name($self),
+#                         evaluate($self,$prog,$atr)
+#                       ],
+#         );
+#   }
 
    run_attr($self,$prog,$target,"A$action");           # handle @aACTION
+
+# actions off the web shouldn't trigger any messages outside of
+# maybe actions.
+   return if(defined $$prog{hint} && $$prog{hint} eq "WEB");
 
    my ($sfmt,@sargs) = @$src_msg;
    my $msg = sprintf($sfmt,@sargs);               # handle msg to enactor
@@ -16845,7 +16902,7 @@ sub create_object
 
    # check quota
 
-   if(!$flag && !or_hasflags($self,"WIZARD","GOD") &&
+   if(!$flag && !or_flag($self,"WIZARD","GOD") &&
       $type ne "PLAYER" && quota($owner,"left") <= 0) {
       return 0;
    }
@@ -17989,7 +18046,10 @@ sub server_handle_sockets
                } elsif(!defined conf("login")) {
                   printf($new "Welcome to %s\r\n\r\n",conf("version"));
                } else {
-                  printf($new "%s\r\n",conf("login"));    #  show login
+                  my $obj = obj(0);            #  show login in readonly mode
+                  my $prog = prog($obj,$obj,$obj);
+                  $$prog{read_only} = 1;
+                  printf($new "%s\r\n",evaluate($obj,$prog,conf("login")));
                }
             }
          } elsif(sysread($s,$buf,1024) <= 0) {          # socket disconnected

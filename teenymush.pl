@@ -257,7 +257,12 @@ sub process_commandline
 
    if($hit) {
      printf("\nShutting down as per commandline defines.\n");
-     cmd_dirty_dump(obj(0),{});
+     if(defined @info{dump_name}) {
+        cmd_dirty_dump(obj(0),{});
+     } else {
+        do_full_dump();
+        delete @info{dirty};
+     }
      exit(0);
    }
 }
@@ -3214,6 +3219,15 @@ sub cmd_dump
    }
 }
 
+sub do_full_dump
+{
+   my $obj = obj(1);
+   my $prog= prog($obj,$obj,$obj);
+   while(cmd_dump($obj,$prog,"",{}) eq "RUNNING") {
+      # everything happens in cmd_dump
+   }
+}
+
 
 sub cmd_dirty_dump
 {
@@ -3222,7 +3236,11 @@ sub cmd_dirty_dump
    my ($file,$out,$fn);
 
    my $dirty = @info{dirty};
-   return if ref($dirty) eq "HASH" && scalar keys %$dirty == 0; # nothing2save
+
+   if(ref($dirty) ne "HASH" || 
+      (ref($dirty) eq "HASH" && scalar keys %$dirty == 0)) {
+      return;                                               # nothing to dump
+   }
 
    @info{dump_name} = $' if(@info{dump_name} =~ /^dumps\//i);
    if(is_true(conf("single_dirty_file"))) {

@@ -1939,13 +1939,19 @@ sub cmd_imc
    return "RUNNING";
 }
 
-
+#
+# inlist
+#    Find out if a given pattern matches any item of the provided list;
+#
 sub inlist
 {
-   my ($item,@list) = @_;
+   my ($pattern,@list) = @_;
+   my $pat = glob2re($pattern);
 
    for my $i (@list) {
-      return 1 if(trim($item) eq trim($i));
+      eval {                              # protect against bad regexps 
+         return 1 if(trim($i) =~ /$pat$/i);
+      };
    }
    return 0;
 }
@@ -18043,7 +18049,7 @@ sub server_handle_sockets
                @connected{$new} = $hash;
 
 
-               my $ignore = get(0,"conf.host_filter");
+               my $ignore = conf("host_filter");
                if($ignore eq undef ||
                   !inlist($$hash{hostname},split(/,/,$ignore))) {
                   con("# Connect from: %s [%s]\n",$$hash{hostname},ts());

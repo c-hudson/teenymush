@@ -279,9 +279,13 @@ sub main
 
    # trap signal HUP and try to reload the code
    $SIG{HUP} = sub {
-      my $count = reload_code();
-      delete @engine{keys %engine};
-      con("HUP signal caught, reloading: %s\n",$count ? $count : "none");
+      if(module_enabled("md5")) {
+         my $count = reload_code();
+         delete @engine{keys %engine};
+         con("HUP signal caught, reloading: %s\n",$count ? $count : "none");
+      } else {
+         con("HUP signal caught, but \@reload not enabled.");
+      }
    };
 
    load_modules();
@@ -290,8 +294,11 @@ sub main
    initialize_ansi();
    initialize_commands();
    initialize_flags();
-   @info{source_prev} = get_source_checksums(1);
-   reload_code();
+
+   if(module_enabled("md5")) {
+      @info{source_prev} = get_source_checksums(1);
+      reload_code();
+   }
 
    load_db();
 
@@ -6575,8 +6582,8 @@ sub cmd_reload_code
 
    if(!hasflag($self,"GOD")) {
       return err($self,$prog,"Permission denied.");
-   } elsif(@info{"md5"} == -1) {
-      return err($self,$prog,"#-1 DISABLED");
+   } elsif(!module_enabled("md5")) {
+      return err($self,$prog,"#-1 \@RELOAD DISABLED (MD5 MODULE DISABLED)");
    }
 
    audit($self,$prog,"\@reload");
@@ -10340,8 +10347,8 @@ sub fun_mush_address
    good_args($#_,0) ||
      return "#-1 FUNCTION (MUSH_ADDRESS) EXPECTS NO ARGUMENTS";
 
-   if(@info{"dns"} == -1) {
-      return err($self,$prog,"#-1 DISABLED");
+   if(!module_enabled("dns")) {
+      return err($self,$prog,"#-1 FUNCTION DISABLED (DNS MODULE DISABLED)");
    } elsif(!defined @info{mush_address}) {                 # not cached, yet
       my $r = Net::DNS::Resolver->new(nameservers=>["resolver1.opendns.com"])||
          return;
@@ -11007,9 +11014,7 @@ sub fun_html_strip
 {
    my ($self,$prog,$txt) = (obj(shift),shift);
 
-   if(@info{"html_restrict"} == -1) {
-      return "#-1 Not enabled";
-   }
+   return "#-1 Not enabled" if(!module_enabled("html_restrict"));
 
    good_args($#_,1) ||
       return "#-1 FUNCTION (HTML_STRIP) EXPECTS 1 ARGUMENTS";
@@ -11460,7 +11465,8 @@ sub fun_entities
 {
    my ($self,$prog) = (obj(shift),shift);
 
-   return "#-1 FUNCTION (ENTITIES) NOT ENABLED" if (@info{entities} == -1);
+   return "#-1 FUNCTION (ENTITIES) NOT ENABLED" if(!module_enabled("entities"));
+
    good_args($#_,2) ||
       return "#-1 FUNCTION (ENTITIES) EXPECTS 2 ARGUMENTS";
 
@@ -11590,9 +11596,9 @@ sub fun_url
       return set_var($prog,"data","#-1 Unable to parse URL");
    }
 
-   if($secure && @info{"url_https"} == -1) {
+   if($secure && !module_enabled("url_https")) {
       return set_var($prog,"data","#-1 HTTPS DISABLED");
-   } elsif(!$secure && @info{"url_http"} == -1) {
+   } elsif(!$secure && !module_enabled("url_http")) {
       return set_var($prog,"data","#-1 HTTP DISABLED");
    } elsif(hasflag($self,"SOCKET_PUPPET") && find_socket($self,$prog) ne undef){
       return set_var($prog,"data","#-1 CONNECTION ALREADY OPEN WITH \@TELNET");
@@ -12088,6 +12094,11 @@ sub fun_base64
 {
    my ($self,$prog) = (obj(shift),shift);
 
+
+   if(!module_enabled("mime")) {
+      return "#-1 FUNCTION DISABLED (MIME MODULE DISABLED)";
+   }
+
    good_args($#_,2) ||
      return "#-1 FUNCTION (BASE64) EXPECTS 2 ARGUMENT ($#_)";
 
@@ -12111,8 +12122,9 @@ sub fun_compress
 {
    my ($self,$prog) = (obj(shift),shift);
 
-   @info{compress} ||
-      return "#-1 function disable due to missing perl module";
+   if(!module_enabled("compress")) {
+      return "#-1 FUNCTION DISABLED (COMPRESS MODULE DISABLED)";
+   }
 
    hasflag($self,"WIZARD") ||
      $$self{obj_id} eq conf("webuser") ||
@@ -12130,10 +12142,9 @@ sub fun_uncompress
 {
    my ($self,$prog) = (obj(shift),shift);
 
-   @info{compress} ||
-      return "#-1 function disable due to missing perl module";
-
-   hasflag($self,"WIZARD") ||
+   if(!module_enabled("compress")) {
+      return "#-1 FUNCTION DISABLED (COMPRESS MODULE DISABLED)";
+   }
      $$self{obj_id} eq conf("webuser") ||
      return "#-1 FUNCTION (COMPRESS) EXPECTS 1 WIZARD FLAG OR IS WEBUSER";
 
@@ -15493,10 +15504,10 @@ sub http_process_line
                 my ($var,$dat) = (lc($`),$');      # need to be <80 chars
                 $var =~ s/ //g;                          # removes spaces
                 $dat =~ s/\+/ /g;
-                if(@info{uri_escape} == -1) {        # decode if possible
-                   @{$$prog{var}}{$var}=$dat;
-                } else {
+                if(module_enabled("uri_escape")) {
                    @{$$prog{var}}{$var}=uri_unescape($dat);
+                } else {
+                   @{$$prog{var}}{$var}=$dat;
                 }
             }
          }
@@ -15509,7 +15520,7 @@ sub http_process_line
    } elsif($txt =~ /^\s*$/ && defined $$data{post}) {
       $$data{headers_done} = 1;
    } elsif($txt =~ /^\s*$/ && defined $$data{get}) {         # end of request
-      $$data{get} = uri_unescape($$data{get}) if(@info{uri_escape} != -1);
+      $$data{get} = uri_unescape($$data{get}) if(module_enabled("uri_escape"));
       $$data{get} =~ s/\// /g;
       $$data{get} =~ s/^\s+|\s+$//g;
       $$data{get} = "default" if($$data{get} =~ /^\s*$/);
@@ -15561,7 +15572,7 @@ sub http_process_line
          } elsif($$data{get} =~ /^pid$/) {
             web(" * %s %s\@web [%s]\n",ts(),$addr,$$data{get});
             if($addr eq "localhost" || $addr eq "127.0.0.1") {
-               if(@info{cwd} != -1) {
+               if(module_enabled("cwd")) {
                   http_reply_simple($s,$1,"%s",$$.",".getcwd());
                } else {
                   http_reply_simple($s,$1,"%s","$$,%s");
@@ -17157,6 +17168,20 @@ sub pget
 }
 
 #
+# module_enabled
+#    Unified way to determine if a module is availible / should be used.
+#
+sub module_enabled
+{
+    my $mod = shift;
+
+    if(defined @info{$mod} && @info{$mod} == 1) {
+       return 1;
+    } else {
+       return 0;
+    }
+}
+#
 # conf
 #    Grab a configuration option from off of "#0/conf.name" or the @default
 #    variable. Also strip any "#" from dbrefs.
@@ -18232,9 +18257,9 @@ sub server_start
    die("Ports " . join(',',@tried) . " already in use.") if $listener eq undef;
 
    # uri_escape is required for httpd
-   if(@info{"uri_escape"} == -1 && conf("httpd") > 0) {
+   if(!module_enabled("uri_escape") && conf("httpd") > 0) {
       con("httpd disabled because of missing URI::Escape module");
-   } elsif(@info{"uri_escape"} == 1 && conf("httpd") > 0) {
+   } elsif(module_enabled("uri_escape") && conf("httpd") > 0) {
       if(conf("httpd") =~ /^\s*(\d+)\s*$/) {
          push(@port,conf("httpd") . "{httpd}");
 
@@ -18247,7 +18272,7 @@ sub server_start
       }
    }
 
-   if(conf("websocket") ne undef && conf("websocket") > 0) {
+   if(module_enabled("websocket") ne undef && conf("websocket") > 0) {
       if(conf("websocket") =~ /^\s*(\d+)\s*$/) {
          push(@port,conf("websocket") . "{websocket}");
          websock_init();

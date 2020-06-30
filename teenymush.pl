@@ -1953,12 +1953,15 @@ sub cmd_imc
 sub inlist
 {
    my ($item,@list) = @_;
+   my $result = 0;
 
+    printf("inlist: start\n");
    for my $i (@list) {
       eval {                              # protect against bad regexps 
          my $pat = glob2re($i);
-         return 1 if(trim($item) =~ /$pat$/i);
+         $result = 1 if(trim($item) =~ /$pat/i);
       };
+      return $result if($result == 1);
    }
    return 0;
 }

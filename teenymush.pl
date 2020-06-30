@@ -1952,12 +1952,12 @@ sub cmd_imc
 #
 sub inlist
 {
-   my ($pattern,@list) = @_;
-   my $pat = glob2re($pattern);
+   my ($item,@list) = @_;
 
    for my $i (@list) {
       eval {                              # protect against bad regexps 
-         return 1 if(trim($i) =~ /$pat$/i);
+         my $pat = glob2re($i);
+         return 1 if(trim($item) =~ /$pat$/i);
       };
    }
    return 0;

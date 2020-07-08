@@ -920,6 +920,11 @@ sub cmd_motd
 {
    my ($self,$prog,$txt,$switch) = @_;
 
+   printf("%s\n",print_var(\%connected));
+#   echo_flag($self,$prog,"CONNECTED,PLAYER,GOD",
+#       "[Monitor] %s has disconnected.",name($self));
+   return;
+
    verify_switches($self,$prog,$switch,"list") ||
       return;
 
@@ -1238,7 +1243,8 @@ sub cmd_wall
 
       necho(self => $self,
             prog => $prog,
-            target => [ $hash, "%s", $msg ]
+            target => [ $hash, "%s", $msg ],
+            always => 1
            );
    }
 }
@@ -1955,7 +1961,6 @@ sub inlist
    my ($item,@list) = @_;
    my $result = 0;
 
-    printf("inlist: start\n");
    for my $i (@list) {
       eval {                              # protect against bad regexps 
          my $pat = glob2re($i);
@@ -2761,8 +2766,6 @@ sub cmd_boot
          !controls($self,@connected{$key})) {
          # god can not be booted by non-god.
          # must control the object to boot it
-
-         # skip
       } elsif((defined $$switch{port} && $$hash{port} == $txt) ||
          (!defined $$switch{port} && name($hash) eq name($target))) {
 
@@ -4477,7 +4480,8 @@ sub cmd_emit
    necho(self   => $self,
          prog   => $prog,
          source => [ "%s", $txt ],
-         room   => [ $self, "%s", $txt ]
+         room   => [ $self, "%s", $txt ],
+         always => 1,
         );
 }
 
@@ -4520,7 +4524,7 @@ sub cmd_drop
 #         room2   => [ $self, "%s has arrived.",name($target) ]
 #        );
 
-   cmd_look($target,$prog);
+   cmd_look($target,$prog,undef,undef,1);
 }
 
 sub cmd_leave
@@ -4540,7 +4544,8 @@ sub cmd_leave
    necho(self   => $self,
          prog   => $prog,
          room   => [ $self, "%s dropped %s", name($container),name($self) ],
-         room2  => [ $self, "%s has left.",name($self) ]
+         room2  => [ $self, "%s has left.",name($self) ],
+         always => 1
         );
 
 #   my ($self,$prog,$target,$dest,$type) = (obj($_[0]),obj($_[1]),obj($_[2]),$_[3]);
@@ -4552,10 +4557,11 @@ sub cmd_leave
    necho(self   => $self,
          prog   => $prog,
          room   => [ $self, "%s dropped %s.", name($container),name($self) ],
-         room2  => [ $self, "%s has arrived.",name($self) ]
+         room2  => [ $self, "%s has arrived.",name($self) ],
+         always => 1
         );
 
-   cmd_look($self,$prog);
+   cmd_look($self,$prog,undef,undef,1);
 }
 
 sub cmd_take
@@ -4612,10 +4618,11 @@ sub cmd_take
 
    necho(self   => $self,
          prog   => $prog,
-         room   => [ $target, "%s has arrived.",name($target) ]
+         room   => [ $target, "%s has arrived.",name($target) ],
+         always => 1
         );
 
-   cmd_look($target,$prog);
+   cmd_look($target,$prog,undef,undef,1);
 }
 
 sub cmd_name
@@ -4703,7 +4710,8 @@ sub cmd_enter
    necho(self   => $self,
          prog   => $prog,
          room   => [ $self, "%s enters %s.",name($self),name($target)],
-         room2  => [ $self, "%s has left.", name($self) ]
+         room2  => [ $self, "%s has left.", name($self) ],
+         always => 1,
         );
 
    teleport($self,$prog,$self,$target) ||
@@ -4714,10 +4722,11 @@ sub cmd_enter
          prog   => $prog,
          source => [ "You have entered %s.",name($target) ],
          room   => [ $self, "%s entered %s.",name($self),name($target)],
-         room2  => [ $self, "%s has arrived.", name($self) ]
+         room2  => [ $self, "%s has arrived.", name($self) ],
+         always => 1,
         );
 
-   cmd_look($self,$prog);
+   cmd_look($self,$prog,undef,undef,1);
 }
 
 sub cmd_to
@@ -4732,6 +4741,7 @@ sub cmd_to
              prog   => $prog,
              source => [ "%s [to %s]: %s\n",name($self),name($tg),$' ],
              room   => [ $self, "%s [to %s]: %s\n",name($self),name($tg),$' ],
+             always => 1
             );
     } else {
        err($self,$prog,"syntax: `<person> <message>");
@@ -4759,12 +4769,14 @@ sub whisper
                         name($obj),name($self),trim($')
                       ],
             target => [ $obj, "You sense, %s %s",name($self),trim($') ],
+            always => 1,
            );
    } else {
       necho(self   => $self,
             prog   => $prog,
             source => [ "You whisper, \"%s\" to %s.",trim($msg),name($obj) ],
             target => [ $obj, "%s whispers, \"%s\"",name($self),trim($msg) ],
+            always => 1,
            );
    }
 
@@ -4819,6 +4831,7 @@ sub page
                         name($self),$'
                       ],
             target => [ $target, "From afar, %s %s\n",name($self),$msg ],
+            always => 1,
            );
    } else {
       $msg =~ s/^\s*//g;
@@ -4826,6 +4839,7 @@ sub page
             prog   => $prog,
             source => [ "You paged %s with '%s'",name($target),$msg ],
             target => [ $target, "%s pages: %s\n",name($self),$msg ],
+            always => 1,
            );
    }
 
@@ -5003,7 +5017,7 @@ sub cmd_go
          room   => [ $self, "%s has arrived.",name($self) ]
         );
 
-   cmd_look($self,$prog);
+   cmd_look($self,$prog,undef,undef,1);
 }
 
 sub cmd_teleport
@@ -5062,7 +5076,7 @@ sub cmd_teleport
         );
 
 
-   cmd_look($target,$prog);
+   cmd_look($target,$prog,undef,undef,1);
 }
 
 #
@@ -5095,11 +5109,11 @@ sub cmd_clear
 {
    my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
 
-   if(!hasflag($self,"WIZARD")) {
+   if(!or_hasflag($self,"WIZARD","GOD")) {
       err($self,$prog,"Permission denied.");
    } elsif($txt ne undef) {
       err($self,$prog,"\@clear expect no arguments");
-   } elsif(perm($self,"CLEAR")) {
+   } else {
       $| = 1;
       con("%s\n%s\n%s\n","#" x 65,"-" x 65,"#" x 65);
       con("\033[2J");    #clear the screen
@@ -5111,8 +5125,6 @@ sub cmd_clear
             prog   => $prog,
             source => [ "Done." ]
            );
-   } else {
-      err($self,$prog,"Permission Denied.");
    }
 }
 
@@ -5126,11 +5138,14 @@ sub cmd_quit
 
    my $sock = $$prog{user}->{sock};
 
-   if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
-      ws_echo($sock,conf("logoff"));
+   my $logoff = conf("logoff");
+   $logoff .= "\n" if($logoff !~ /\n$/);
+
+   if(defined @connected{$sock} && @connected{$sock}->{type} eq "WEBSOCKET") {
+      ws_echo($sock,$logoff);
       ws_disconnect(@c{$sock}) if(defined @c{$sock});
    } else {
-      printf($sock "%s",conf("logoff"));
+      printf($sock "%s",$logoff);
       server_disconnect($sock);
    }
 }
@@ -5255,31 +5270,56 @@ sub cmd_create
 {
    my ($self,$prog,$txt,$switch) = (obj(shift),shift,trim(shift),shift);
 
+   my ($name,$value) = besplit($self,$prog,$txt,"=");
+
+   my $result = create_thing($self,$prog,$name,$value);
+
+   if($result =~ /^(\d+)$/) {                                    # success
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s created as #%s.",obj_name($result),$result ],
+           );
+   } else {                                                         # error
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s", $result ],
+           );
+   }
+}
+
+sub create_thing
+{
+   my ($self,$prog,$name,$cost) = @_;
+
+   $name = ansi_trim($name);
+   $cost = trim(ansi_remove($cost));
+   $cost = conf("createcost") if $cost eq undef;
+
    if(hasflag($self,"GUEST")) {
-      return err($self,$prog,"Permission denied.");
+      return "Permission denied.";
    } elsif(quota($self,"left") <= 0) {
-      return err($self,$prog,"You are out of QUOTA to create objects.");
-   } elsif(length($txt) > 50) {
-      return err($self,$prog,
-                 "Object name may not be greater then 50 characters"
-                );
-   } elsif(money($self) < conf("createcost")) {
-      return err($self,$prog,"You need at least ".pennies("createcost").".");
+      return "You are out of QUOTA to create an object.";
+   } elsif(length($name) > 160) {
+      return "Thats a silly name for a thing.";
+   } elsif(money($self) < $cost) {
+      return "You need at least " . pennies($cost) . ".";
+   } elsif($cost < conf("createcost")) {
+      return "Objects cost at least " . pennies("createcost") . ".";
+   } elsif($cost < 0) {
+      return "You may not create objects with negative money";
    }
 
-   my $dbref = create_object($self,$prog,$txt,undef,"OBJECT") ||
-      return err($self,$prog,"Unable to create object");
+   my $dbref = create_object($self,$prog,$name,undef,"OBJECT") ||
+      return "Unable to create object";
+ 
+   give_money($self,"-$cost") ||
+      return "Unable to deduct " . pennies("-$cost") . " from you($cost).";
 
-   if(!give_money($self,"-" . conf("createcost"))) {
-      return err($self,$prog,"Unable to deduct cost of object.");
-   }
-
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "Object created as: %s",obj_name($self,$dbref) ],
-        );
+   give_money($dbref,$cost,1) ||
+      return "Couldn't give " . obj_name($dbref) . " " . pennies($cost) . ".";
 
    set_quota($self,"sub");
+   return $dbref;
 }
 
 sub cmd_link
@@ -5323,28 +5363,68 @@ sub cmd_link
 sub cmd_dig
 {
    my ($self,$prog,$txt,$switch,$flag) = (obj(shift),shift,shift,shift,shift);
-   my ($loc,$room_name,$room,$in,$out,$cost,$quota);
 
-   hasflag($self,"GUEST") &&
-      return err($self,$prog,"Permission Denied.");
-
-   # parse command line
    my ($room_name,$rest) = bsplit($txt,"=");
    my $room_name = evaluate($self,$prog,$room_name);
-   ($in,$out) = besplit($self,$prog,$rest,",");
+   my ($in,$out) = besplit($self,$prog,$rest,",");
 
-   if(!$flag) {
+   my $result = dig_room($self,$prog,$room_name,$in,$out,$flag);
+
+   if($result =~ /^(\d+)$/) {                                    # success
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s created as #%s.",obj_name($result),$result ],
+           );
+   } else {                                                         # error
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s", $result ],
+           );
+   }
+}
+
+#
+# empty
+#    Determine if a string is empty or not. Unfortunately the ansi functions
+#    are not optimized to use less characters and a string can be empty but
+#    contain ansi escape codes.
+#
+sub empty
+{
+   my $txt = ansi_remove(shift);
+
+   if($txt eq undef || $txt =~ /^\s*$/) {
+      return 1;
+   } else {
+      return 0;
+   }
+}
+
+sub dig_room
+{
+   my ($self,$prog,$room_name,$in,$out,$flag) = @_;
+   my ($loc,$cost,$quota);
+
+   printf("NAME: '$room_name'\n");
+   printf("IN  : '$in'\n");
+   printf("OUT : '$out'\n");
+
+   hasflag($self,"GUEST") &&
+      return "Permission Denied.";
+
+   if(!$flag && !(empty($in) && empty($out))) {
       $loc = loc($self) ||
-         return err($self,$prog,"Unable to determine your location");
+         return "Unable to determine your location for exit creation";
    }
 
    $quota = 1;                            # determine required quota & cost
    $cost = conf("digcost");
-   if($in ne undef) {
+   if(!empty($in)) {
       $cost += conf("linkcost");
       $quota++;
    }
-   if($out ne undef) {
+
+   if(!empty($out)) {
       $cost += conf("linkcost");
       $quota++;
    }
@@ -5353,30 +5433,30 @@ sub cmd_dig
    if(hasflag($self,"WIZARD") || hasflag($self,"GOD")) {
       # ignore QUOTA restrictions
    } elsif(quota($self,"left") < $quota) {
-      return err($self,$prog,"A quota of $quota is needed for this \@dig.");
+      return "A quota of $quota is needed for this \@dig.";
    } elsif($cost > money($self)) {
-      return err($self,$prog,"%s is needed for this \@dig.",pennies($cost));
-   } elsif($out ne undef && !(controls($self,$loc)||hasflag($loc,"LINK_OK"))) {
-      return err($self,
-                 $prog,
-                 "You do not own this room or it is not LINK_OK"
-                 );
+      return pennies($cost) . "is needed for this \@dig.";
+   } elsif((!empty($out) || !empty($in)) && 
+           !(controls($self,$loc)||hasflag($loc,"LINK_OK"))) {
+      return "Permission denied (your location is not owned by you or LINK_OK)";
    }
 
    # non-quota / permisison checks.
-   if($room_name eq undef) {                                 # no room name
-      return err($self,$prog,"Dig what?");
-   } elsif($in ne undef && find_exit($self,$prog,loc($self),$in)) {
-      return err($self,$prog,"Exit '%s' already exists in this location",$in);
-   } elsif(hasflag($loc,"EXIT")) {
-      return err($self,$prog,"You can not \@dig from inside an exit.");
+   if(empty($room_name)) {                                   # no room name
+      return "Dig what?";
+   } elsif(!empty($in) && find_exit($self,$prog,loc($self),$in)) {
+      return "Exit '$in' already exists in this location";
+   } elsif(!empty($in) && hasflag($loc,"EXIT")) {
+      return "You can not \@dig from inside an exit.";
+   } elsif(!empty($in) && !(controls($self,$loc) || hasflag($loc,"LINK_OK"))){
+      return "Permission denied (your location is not owned by you or LINK_OK)";
    } else {                                           # okay to start @digging
       # create room
       my $room = create_object($self,$prog,$room_name,undef,"ROOM")||
-         return err($self,$prog,"Unable to create a new object");
+         return "Unable to create a new object";
 
       give_money($self,"-" . $cost) ||
-         return err($self,$prog,"Couldn't debit %s",pennies($cost));
+         return "Couldn't debit " . pennies($cost);
 
       set_quota($self,"sub") ||
          return err($self,$prog,"Couldn't update quota.");
@@ -5384,111 +5464,85 @@ sub cmd_dig
       give_money($room,conf("digcost"),1) ||
          return err($self,$prog,"Couldn't debit %s",pennies($cost));
 
-
-      necho(self   => $self,
-            prog   => $prog,
-            source => [ "%s created as #%s.",$room_name,$room ],
-           );
-
-      if($in ne undef) {                    # create exit going into the room
-         my $in_dbref = create_exit($self,$prog,$in,$loc,$room);
-
-         if($in_dbref eq undef) {
-            return err($self,
-                       $prog,
-                       "Unable to create exit '%s' going in to room",
-                       $in
-                      );
-         }
-
-         give_money($in_dbref,conf("linkcost"),1) ||
-           return err($self,$prog,"Couldn't give #$in_dbref %s",pennies($cost));
-         set_quota($self,"sub");
-
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "   In exit created as:   %s(#%sE)",$in,$in_dbref ],
-              );
-      }
-
-      if($out ne undef) {                # create exit going out of the room
-         my $out_dbref = create_exit($self,$prog,$out,$room,$loc);
-         if($out_dbref eq undef) {
-            return err($self,
-                       $prog,
-                       "Unable to create exit '%s' going out of room",
-                       $out
-                      );
-         }
-
-         set_quota($self,"sub");
-         give_money($out_dbref,conf("linkcost"),1) ||
-            return err($self,
-                       $prog,
-                       "Couldn't give #%s %s",
-                       $out_dbref,
-                       pennies($cost)
-                      );
-
-         necho(self   => $self,
-               prog   => $prog,
-               source => [ "   Out exit created as:  %s(#%sE)",
-                           $out,$out_dbref
-                         ],
-              );
-      }
+      # create exit going into the room
+      my $result = open_exit($self,$prog,$loc,$in,$room) if(!empty($in));
+      printf("Result1: '%s'\n",$result);
+      # create exit going into the room
+      my $result = open_exit($self,$prog,$room,$out,$loc) if(!empty($out));
+      printf("Result2: '%s'\n",$result);
+   
+      return $room;
    }
 }
 
 sub cmd_open
 {
    my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
-   my ($exit,$destination,$dest);
+
+   my ($name,$dbref) = besplit($txt,"=");
+
+   my $result = open_exit($self,$prog,loc($self),$name,$dbref);
+   
+   if($result =~ /^(\d+)$/) {                                    # success
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "Opened." ],
+           );
+   } else {                                                         # error
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "%s", $result ],
+           );
+   }
+}
+   
+sub open_exit
+{
+   my ($self,$prog,$loc,$exit,$destination) = @_;
+   my $dest;
+   print("open_exit: '$exit' -> '$destination'\n");
 
    hasflag($self,"GUEST") &&
-      return err($self,$prog,"Permission denied.");
-
-   if($txt =~ /^\s*([^=]+)\s*=\s*([^ ]+)\s*$/ ||
-      $txt =~ /^\s*([^ ]+)\s*$/) {
-      ($exit,$destination) = ($1,$2);
-   } else {
-      return err($self,$prog,"syntax: \@open <ExitName> = <destination>\n" .
-                             "        \@open <ExitName>");
-   }
+      return "Permission denied.";
 
    if(quota($self,"left") < 1) {
-      return err($self,$prog,"You are out of QUOTA to create objects");
+      return "You are out of QUOTA to create objects";
    }
 
-   !find_exit($self,$prog,loc($self),$exit,"EXACT") ||
-      return err($self,$prog,"Exit '%s' already exists in this location",$exit);
+   !find_exit($self,$prog,$loc,$exit,"EXACT") ||
+      return "Exit '$exit' already exists in this location";
 
-   my $loc = loc($self) ||
-      return err($self,$prog,"Unable to determine your location");
+#   my $loc = loc($self) ||
+#      return "Unable to determine your location";
 
    if(!(controls($self,$loc) || hasflag($loc,"ABODE"))) {
-      return err($self,$prog,"You do not own this room and it is not ABODE");
+      return "You do not own this room and it is not ABODE";
    }
 
 
-   if($destination ne undef) {
-      $dest = find($self,$prog,$destination) ||
-         return err($self,$prog,"I can't find that destination location");
+   if(!empty($destination)) {
+      if(valid_dbref($destination)) {
+         $dest = obj($destination);
+      } else {
+         return "That's not a valid object - $destination";
+      }
 
       if(!(controls($self,$loc) || hasflag($loc,"LINK_OK"))) {
-         return err($self,$prog,"This is not your room and it is not LINK_OK");
+         return "This is not your room and it is not LINK_OK";
+      }
+
+      if(!or_flags($dest,"ROOM","OBJECT")) {
+         return "You may only open exits to rooms or objects";
       }
    }
 
    my $dbref = create_exit($self,$prog,$exit,$loc,$dest) ||
-      return err($self,$prog,"Internal error, unable to create the exit");
+      return "Internal error, unable to create the exit";
 
    set_quota($self,"sub");
 
-   necho(self   => $self,
-         prog   => $prog,
-         source => [ "Exit created as %s(#%sE)",$exit,$dbref ],
-        );
+
+   return $dbref;
 }
 
 sub mushhash
@@ -5524,7 +5578,6 @@ sub invalid_player
    } elsif(!valid_dbref(@player{trim(ansi_remove(lc($name)))}) ||
       get(@player{trim(ansi_remove(lc($name)))},"obj_password") ne
          mushhash($pass)) {
-      $$self{obj_id} = @player{trim(ansi_remove(lc($name)))};
       return 1;
    } else {
       $$self{obj_id} = @player{trim(ansi_remove(lc($name)))};
@@ -5576,7 +5629,7 @@ sub cmd_connect
 {
    my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    my $sock = @$user{sock};
-   my ($atr,$player);
+   my ($atr,$player,$count);
 
    if($txt =~ /^\s*"\s*([^"]+)\s*"\s+([^ ]+)\s*$/ ||    #parse player password
       $txt =~ /^\s*([^ ]+)\s+([^ ]+)\s*$/ ||            #parse player password
@@ -5587,6 +5640,7 @@ sub cmd_connect
       # --- Valid User ------------------------------------------------------#
 
       if(invalid_player($self,$username,$pass)) {
+         delete $$self{obj_id};                               # be paranoid
          if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
             ws_echo($sock,"Either that player does not exist, or has a " .
                     "different password.\n");
@@ -5620,12 +5674,16 @@ sub cmd_connect
 
       # --- Provide users visual feedback / MOTD --------------------------#
       $prog = prog($user,$user);
-      necho(self   => $user,                 # show message of the day file
-            prog   => $prog,
-            source => [ "%s\n", motd($user,$prog) ]
-           );
+      $$prog{created_by} = $user;    # force output to only connected socket
+      $$prog{cmd}->{source} = 1;
+      $$user{sock} = $sock;
+      echo_socket($user,
+                  $prog,
+                  "%s%s",
+                  motd($user,$prog),
+                 );
 
-      cmd_mail($user,prog($user,$user),"short");
+      cmd_mail($user,$prog,"short");
 
       if(defined conf("paycheck") && conf("paycheck") > 0) {
          if(ts_date(lasttime($user)) ne ts_date()) {
@@ -5634,23 +5692,39 @@ sub cmd_connect
       }
 
       necho(self   => $user,
-            prog   => prog($user,$user),
+            prog   => $prog,
             source => [ "\n" ]
            );
 
-      cmd_look($user,prog($user,$user));                    # show room
+      cmd_look($user,$prog);                                 # show room
 
       con("    %s@%s\n",name($user),$$user{hostname});
 
 
       # notify users local and users with monitor flag
-      necho(self   => $user,
-            prog   => prog($user,$user),
-            room   => [ $user , "%s has connected.",name($user) ],
-           );
+      $$prog{cmd}->{source} = 0;
+      for my $key (keys %connected) {
+         if(defined @connected{$key} &&
+            $$user{obj_id} == @connected{$key}->{obj_id}) {
+            $count++;
+         }
+      }
+      if($count > 1) {
+         necho(self   => $user,
+               prog   => prog($user,$user),
+               room   => [ $user , "%s has re-connected.",name($user) ],
+               source => [ "%s has re-connected.", name($user) ],
+              );
+      } else {
+         necho(self   => $user,
+               prog   => prog($user,$user),
+               room   => [ $user , "%s has connected.",name($user) ],
+              );
+      }
+      $$prog{cmd}->{source} = 1;
 
       echo_flag($user,
-                prog($user,$user),
+                $prog,
                 "CONNECTED,PLAYER,MONITOR",
                 "[Monitor] %s has connected.",name($user));
 
@@ -6094,7 +6168,7 @@ sub cmd_inventory
 #
 sub cmd_look
 {
-   my ($self,$prog,$txt) = (obj(shift),shift,shift);
+   my ($self,$prog,$txt,$switch,$always) = (obj(shift),shift,shift,shift,shift);
    my ($flag,$desc,$target,@exit,@con,$out,$name,$attr);
    my $owner = owner_id($self);
    my $perm = hasflag($self,"WIZARD");
@@ -6168,10 +6242,18 @@ sub cmd_look
    $out .= "\n" . color("h","Exits") . ":\n" .
             join("  ",@exit) if($#exit >= 0);  # add any exits
 
-   necho(self   => $self,
-         prog   => $prog,
-         source => ["%s",$out ]
-        );
+   if($always) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => ["%s",$out ],
+            always => 1
+           );
+   } else {
+      necho(self   => $self,
+            prog   => $prog,
+            source => ["%s",$out ]
+           );
+   }
 
    generic_action($self,
                   $prog,
@@ -6234,6 +6316,7 @@ sub cmd_pose
          prog   => $prog,
          source => [ "%s%s%s",name($self),$space,$pose ],
          room   => [ $self, "%s%s%s",name($self),$space,$pose ],
+         always => 1,
         );
 }
 
@@ -6472,6 +6555,7 @@ sub cmd_say
          prog   => $prog,
          source => [ "You say, \"%s\"",$out],
          room   => [ $self, "%s says, \"%s\"",name($self),$out ],
+         always => 1
         );
 }
 
@@ -6519,7 +6603,7 @@ sub get_source_checksums
 
 sub reload_code
 {
-   my ($self,$prog) = @_;
+   my ($self,$prog,$sub) = @_;
    my $count = 0;
    my $prev = @info{source_prev};
    my $curr = get_source_checksums(1);
@@ -6532,7 +6616,8 @@ sub reload_code
 
 
    for my $key (sort keys %$curr) {
-      if(@{$$prev{$key}}{chk} ne @{$$curr{$key}}{chk} || @info{reload_init}) {
+      if(($key eq $sub || $sub eq undef) &&
+         (@{$$prev{$key}}{chk} ne @{$$curr{$key}}{chk} || @info{reload_init})) {
          $count++;
 
          con("Reloading: %-40s",$key) if($self ne undef);
@@ -6557,6 +6642,8 @@ sub reload_code
                     );
             }
          }
+      } else {
+         $$curr{$key}->{chk} = $$prev{$key}->{chk};
       }
       @{$$curr{$key}}{src} = undef;
    }
@@ -6589,8 +6676,8 @@ sub cmd_reload_code
       return err($self,$prog,"#-1 \@RELOAD DISABLED (MD5 MODULE DISABLED)");
    }
 
-   audit($self,$prog,"\@reload");
-   $count = reload_code($self,$prog);
+   audit($self,$prog,"\@reload $txt");
+   $count = reload_code($self,$prog,$txt);
 
    if($count == 0) {
       necho(self   => $self,
@@ -8623,17 +8710,6 @@ sub mush_command
 }
 
 
-sub priority
-{
-   my $obj = shift;
-
-   return 100;
-
-   $obj = owner($obj) if(!hasflag($obj,"PLAYER"));
-
-   return (perm($obj,"HIGH_PRORITY") ? 50 : 1);
-}
-
 sub inattr
 {
    my ($self,$source) = @_;
@@ -8659,7 +8735,6 @@ sub prog
       user => $runas,
       var => {},
       invoker => $invoker,
-      priority => priority($self),
       calls => 0
    };
 }
@@ -9252,6 +9327,7 @@ sub spin_run
    my ($hash,$arg,%switch);
    $$cmd{origcmd} = $$cmd{cmd};
    $$prog{cmd} = $cmd;
+#   printf("RUN %s -> %s\n",obj_name($$cmd{runas}),$$cmd{cmd});
 
    # determine which command set to use
    if($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") {
@@ -9348,7 +9424,9 @@ sub find_in_list
    for my $obj (@list) {
       my $name = lc(name($obj,1));
       if($name eq $thing) {                                    # exact match
-         return obj($obj);
+         my $obj = obj($obj);
+         $$obj{find_type} = 1;
+         return $obj;
       } elsif($start > 1 || $middle > 1) {              # fuzzy match failed
          # skip
       } else {
@@ -9363,9 +9441,13 @@ sub find_in_list
    }
 
    if($start_count == 1) {                  # one match at begining of string
-      return obj($start_obj);
+      my $obj = obj($start_obj);
+      $$obj{find_type} = 2;
+      return $obj;
    } elsif($middle_count == 1) {              # one match in middle of string
-      return obj($middle_obj);
+      my $obj = obj($middle_obj);
+      $$obj{find_type} = 2;
+      return $obj;
    } else {
       return undef;                               # too many matches, or none
    }
@@ -9373,13 +9455,19 @@ sub find_in_list
 
 #
 # find
-#    Find something in
+#    Try to find something. Search order:
+#
+#       1 Exact match in contents
+#       2 Exact match in current location
+#       3 Exact match in exit list
+#       4 First indirect match in above list.
+#
 sub find
 {
    my ($self,$prog,$thing,$debug) = (shift,shift,trim(lc(shift)),shift);
-   my ($partial, $dup);
+   my ($partial, $dup, $indirect);
 
-   my $debug = 0;
+    my $debug = 0;
 
    if(ansi_remove($thing) eq undef) {
       return undef;
@@ -9409,16 +9497,28 @@ sub find
        }
    }
 
-   # search in contents of object
+   # search in contents of object for exact match, save indirect for later.
    my $obj = find_in_list($thing,lcon($self));
-   return $obj if($obj ne undef);
+   return $obj if($obj ne undef && $$obj{find_type} == 1);
+   if(ref($obj) eq "HASH" && $$obj{find_type} == 2 && $indirect eq undef) {
+      $indirect = $obj;
+   }
 
-   # search around object
+   # search around object for exact match, save indirect for later.
    my $obj = find_in_list($thing,lcon(loc($self)));
-   return $obj if($obj ne undef);
+   return $obj if($obj ne undef && $$obj{find_type} == 1);
+   if(ref($obj) eq "HASH" && $$obj{find_type} == 2 && $indirect eq undef) {
+      $indirect = $obj;
+   }
 
-   # search exits around object
-   return find_exit($self,$prog,loc($self),$thing);
+   # search exits around object for exact match, save indirect for later.
+   my $obj = find_exit($self,$prog,loc($self),$thing);
+   return $obj if(ref($obj) eq "HASH" && $$obj{find_type} == 1);
+   if(ref($obj) eq "HASH" && $$obj{find_type} == 2 && $indirect eq undef) {
+      $indirect = $obj;
+   }
+
+   return $indirect;                                          # its later
 }
 
 #
@@ -9427,7 +9527,8 @@ sub find
 #
 sub find_exit
 {
-   my ($self,$prog,$loc,$thing) = (obj(shift),shift,shift,trim(lc(shift)));
+   my ($self,$prog,$loc,$thing) =
+      (obj(shift),shift,shift,trim(ansi_remove(lc(shift))));
    my ($partial,$dup);
 
    if($thing =~ /^\s*#(\d+)\s*$/) {
@@ -9439,7 +9540,9 @@ sub find_exit
          my $part = trim($partial);
 
          if(lc($part) eq $thing) {
-            return obj($obj);
+            my $obj = obj($obj);
+            $$obj{find_type} = 1;
+            return $obj;
          } elsif(lc(substr($part,0,length($thing))) eq $thing) {
             if($partial eq undef) {
                $partial = $obj;
@@ -9448,6 +9551,12 @@ sub find_exit
             }
          }
       }
+   }
+
+   if($partial ne undef) {
+      my $obj = obj($partial);
+      $$obj{find_type} = 2;
+      return $obj;
    }
 }
 
@@ -10151,6 +10260,7 @@ sub initialize_functions
    @fun{delete}     = sub { return &fun_delete(@_);                };
    @fun{findable}   = sub { return &fun_findable(@_);              };
    @fun{power}      = sub { return &fun_power(@_);                 };
+   @fun{create}     = sub { return &fun_create(@_);                 };
 }
 
 
@@ -10337,6 +10447,87 @@ sub fun_haspower
      return "#-1 FUNCTION (ZONE) EXPECTS 2 ARGUMENTS";
 
    return 0;
+}
+
+
+sub fun_create 
+{
+   my ($self,$prog) = (obj(shift),shift);
+   my $result;
+
+   hasflag($self,"GUEST") &&
+      return "#-1 PERMISSION DENIED";
+
+   return "#-1 FUNCTION (CREATE EXPECTS AT LEAST 2 ARGUMENTS" if($#_ <= 0 );
+
+   my $type = lc(trim(ansi_remove(evaluate($self,$prog,pop(@_)))));
+   my $name = ansi_substr(trim(evaluate($self,$prog,shift)),0,399);
+
+   if($type eq "t") {                                   # create thing/object
+
+      good_args($#_,0,1) ||
+        return "#-1 FUNCTION (CREATE) EXPECTS 2 OR 3 ARGUMENTS FOR 'T' TYPE";
+      my $value = evaluate($self,$prog,shift);
+      $result = create_thing($self,$prog,$name,$value);
+
+   } elsif($type eq "r") {
+
+      good_args($#_,0,1,2) ||
+        return "#-1 FUNCTION (CREATE) EXPECTS 2 TO 4 ARGUMENTS FOR 'R' TYPE";
+      my $in = ansi_substr(trim(evaluate($self,$prog,shift)),0,399);
+      my $out = ansi_substr(trim(evaluate($self,$prog,shift)),0,399);
+      $result = dig_room($self,$prog,$name,$in,$out);
+
+   } elsif($type eq "e") {                                              # exit
+
+      good_args($#_,0,1) ||
+        return "#-1 FUNCTION (CREATE) EXPECTS 1 OR 2 ARGUMENTS FOR 'E' TYPE";
+
+      my $name = ansi_substr(trim(evaluate($self,$prog,shift)),0,399);
+      my $dbref = trim(evaluate($self,$prog,shift));
+      $result = open_exit($self,$prog,loc($self),$name,$dbref);
+
+   } elsif($type eq "p") {
+      return "#-1 NOT SUPPORTED AT THIS TIME.";
+      # player
+   } else {
+      return "#-1 INVALID TYPE '$type'"
+   }
+
+   if($result =~ /^(\d+)$/) {                                    # success
+      return "#$result";
+   } else {                                                         # error
+      return "#-1 $result";
+   }
+   
+#   good_args($#_,2) ||
+#     return "#-1 FUNCTION (ZONE) EXPECTS 2 ARGUMENTS";
+
+#    if(hasflag($self,"GUEST")) {
+#       return err($self,$prog,"Permission denied.");
+#    } elsif(quota($self,"left") <= 0) {
+#       return err($self,$prog,"You are out of QUOTA to create objects.");
+#    } elsif(length($txt) > 50) {
+#       return err($self,$prog,
+#                  "Object name may not be greater then 50 characters"
+#                 );
+#    } elsif(money($self) < conf("createcost")) {
+#       return err($self,$prog,"You need at least ".pennies("createcost").".");
+#    }
+# 
+#    my $dbref = create_object($self,$prog,$txt,undef,"OBJECT") ||
+#       return err($self,$prog,"Unable to create object");
+# 
+#    if(!give_money($self,"-" . conf("createcost"))) {
+#       return err($self,$prog,"Unable to deduct cost of object.");
+#    }
+# 
+#    necho(self   => $self,
+#          prog   => $prog,
+#          source => [ "Object created as: %s",obj_name($self,$dbref) ],
+#         );
+# 
+#    set_quota($self,"sub");
 }
 
 #
@@ -15435,9 +15626,7 @@ sub banable_urls
    } elsif($$data{get} =~ /testget/i) {                        # woot woot!
       # example: http://110.249.212.46/testget?q=23333&port=80
       return 1;
-   } elsif($$data{get} =~ /\.php/i) {                          # no php here
-      return 1;
-   } elsif($$data{get} =~ /\.cgi/i) {                          # or cgi
+   } elsif($$data{get} =~ /\.(php|cgi|asp)$/i) {      # no php/cgi/asp here
       return 1;
    } else {
       return 0;
@@ -15808,6 +15997,7 @@ sub generic_action
       necho(self =>   $self,
             prog =>   $prog,
             source => [ "%s", evaluate($self,$prog,$msg) ],
+            always => 1,
            );
    }
 
@@ -15821,6 +16011,7 @@ sub generic_action
                         name($self),
                         evaluate($self,$prog,$atr)
                       ],
+            always => 1,
       );
    } else {                                            # oACTION message
       my ($tfmt,@targs) = @$target_msg;
@@ -15829,6 +16020,7 @@ sub generic_action
          necho(self   =>   $self,
                prog   =>   $prog,
                room   => [ $self, "%s %s", name($self), $msg ],
+               always => 1,
               );
       }
    }
@@ -16468,24 +16660,45 @@ sub echo_socket
    my ($obj,$prog,$fmt,@args) = (obj(shift),shift,shift,@_);
 
    my $msg = sprintf($fmt,@args);
+   $msg = ansi_remove($msg) if !hasflag($obj,"ANSI");
+   
+   if(defined $$obj{sock} && (!defined $$obj{raw} || $$obj{raw} == 0)) {
+      if(defined @connected{$$obj{sock}} &&
+         @connected{$$obj{sock}}->{type} eq "WEBSOCKET") {
+         ws_echo($$obj{sock},$msg);
+      } else {
+         my $s = $$obj{sock};
+         printf($s "%s",$msg);
+      }
+   } elsif(defined @connected_user{$$obj{obj_id}}) {        # connected player
+      # manually inputed going to creator of comand, direct to socket
+      if(defined $$prog{created_by} &&
+         defined $$prog{cmd}->{source} &&
+         defined $$prog{created_by}->{sock} &&                  # have socket
+         $$obj{obj_id} == $$prog{created_by}->{obj_id} &&   # going to invoker
+         $$prog{cmd}->{source} == 1 &&                      # manually inputed
+         !defined $$prog{always}) {                   # to all sockets override
 
-   if(defined @connected_user{$$obj{obj_id}}) {
-      my $list = @connected_user{$$obj{obj_id}};
-
-      for my $socket (keys %$list) {
-         my $s = $$list{$socket};
-
-         if(@{@connected{$s}}{type} eq "WEBSOCKET" && !hasflag($obj,"ANSI")) {
-             ws_echo($s,ansi_remove($msg));
-         } elsif(@{@connected{$s}}{type} eq "WEBSOCKET") {
-             ws_echo($s,$msg);
-         } elsif(!hasflag($obj,"ANSI")) {
-             printf($s "%s",ansi_remove($msg));
+         if(defined @connected{$$prog{creasted_by}} &&
+            @connected{$$prog{created_by}->{sock}}->{type} eq "WEBSOCK") {
+            ws_echo($$prog{created_by}->{sock},ansi_remove($msg));
          } else {
-            printf($s "%s",$msg);
+            my $s = $$prog{created_by}->{sock};
+            printf($s "%s", $msg);
+         }
+      } else {                             # fall back to "indirect" to socket
+         my $list = @connected_user{$$obj{obj_id}};
+
+         for my $socket (keys %$list) {
+            my $s = $$list{$socket};
+            if(defined @connected{$s} && @connected{$s}->{type} eq "WEBSOCKET"){
+                ws_echo($s,$msg);
+            } else {
+               printf($s "%s",$msg);
+            }
          }
       }
-   } elsif(hasflag($obj,"PUPPET") && !hasflag($obj,"PLAYER")) {
+   } elsif(hasflag($obj,"PUPPET") && !hasflag($obj,"PLAYER")) { # puppet output
       my $owner = owner($obj);
       if(defined @connected_user{$$owner{obj_id}}) {
          my $list = @connected_user{$$owner{obj_id}};
@@ -16493,24 +16706,12 @@ sub echo_socket
          for my $socket (keys %$list) {
             my $s = $$list{$socket};
 
-            if(@{@connected{$s}}{type} eq "WEBSOCKET" && hasflag($obj,"ANSI")) {
+            if(@{@connected{$s}}{type} eq "WEBSOCKET") {
                 ws_echo($s,name($obj) . "> " .$msg);
-            } elsif(@{@connected{$s}}{type} eq "WEBSOCKET") {
-                ws_echo($s,name($obj) . "> " . ansi_remove($msg));
-            } elsif(!hasflag($obj,"ANSI")) {
-               printf($s "%s> %s",name($obj),ansi_remove($msg));
             } else {
                printf($s "%s> %s",name($obj),$msg);
             }
          }
-      }
-   } elsif(defined $$obj{sock} && (!defined $$obj{raw} || $$obj{raw} == 0)) {
-      if(defined @connected{$$obj{sock}} &&
-         @{@connected{$$obj{sock}}}{type} eq "WEBSOCKET") {
-         ws_echo($$obj{sock},ansi_remove($msg));
-      } else {
-         my $s = $$obj{sock};
-         printf($s "%s", ansi_remove($msg));
       }
    }
 }
@@ -16522,6 +16723,12 @@ sub necho
    my $prog = $arg{prog};
    my $self = obj($arg{self});
    my $loc;
+   my $always;
+ 
+   if(defined $$prog{always}) {
+      $always = $$prog{always};
+   }
+   $$prog{always} = $arg{always} if defined $arg{always};
 
 #   if($arg{self} eq undef) {
 #      con("%s\n",print_var(\%arg));
@@ -16580,6 +16787,11 @@ sub necho
       next if !defined $arg{$type};
 
       if(ref($arg{$type}) ne "ARRAY") {
+         if($always eq undef) {
+            delete $$prog{always};
+         } else {
+            $$prog{always} = $always;
+         }
          return err($self,$prog,"Argument $type is not an array");
       }
 
@@ -16658,27 +16870,36 @@ sub necho
                     );
       }
    }
+   if($always eq undef) {
+      delete $$prog{always};
+   } else {
+      $$prog{always} = $always;
+   }
 }
 
 sub echo_flag
 {
    my ($self,$prog,$flags,$fmt,@args) = @_;
+   my $echo;
 
    for my $key (keys %connected) {
-      my $echo = 1;
-
-      if(defined @{@connected{$key}}{obj_id}) {
+      if(defined @connected{$key}->{obj_id}) {
+         $echo = 1;
          for my $flag (split(/,/,$flags)) {
-            if(!hasflag(@{@connected{$key}}{obj_id},$flag)) {
+            if(!hasflag(@connected{$key},$flag)) {
                $echo = 0;
                last;
             }
          }
-         if($echo) {
-            necho(self => $self,
-                  prog => $prog,
-                  target => [ obj(@{@connected{$key}}{obj_id}), $fmt, @args ]
-                 );
+         next if !$echo;
+
+         my $msg = sprintf($fmt,@args);
+         if(defined @connected{$key}->{type} &&
+            @connected{$key}->{type} eq "WEBSOCKET") {
+            ws_echo(@connected{$key}->{sock},ansi_remove($msg));
+         } else {
+            my $s = @connected{$key}->{sock};
+            printf($s "%s\n", $msg);
          }
       }
    }
@@ -16821,42 +17042,6 @@ sub set_atr_flag
    }
 }
 
-sub perm
-{
-   my ($target,$perm) = (obj(shift),shift);
-
-   return 0 if(defined $$target{loggedin} && !$$target{loggedin});
-   return 1;
-
-   $perm =~ s/@//;
-   my $owner = owner($$target{obj_id});
-   my $result = one_val(
-                  "select min(fpr_permission) value " .
-                  "  from flag_permission fpr1, ".
-                  "       flag flg1 " .
-                  " where fpr1.fde_flag_id = flg1.fde_flag_id " .
-                  "   and flg1.obj_id = ? " .
-                  "   and fpr1.fpr_name in ('ALL', upper(?) )" .
-                  "   and atr_id is null " .
-                  "   and not exists ( " .
-                  "      select 1 " .
-                  "        from flag_permission fpr2, flag flg2 " .
-                  "       where fpr1.fpr_priority > fpr2.fpr_priority " .
-                  "         and flg2.fde_flag_id = fpr2.fde_flag_id " .
-                  "         and flg2.fde_flag_id = flg1.fde_flag_id " .
-                  "         and flg2.obj_id = flg1.obj_id " .
-                  "   ) " .
-                  "group by obj_id",
-                  $$owner{obj_id},
-                  $perm
-                 );
-    if($result eq undef) {
-       return 0;
-    } else {
-       return ($result > 0) ? 1 : 0;
-    }
-}
-
 sub first_room
 {
    my $skip = shift;
@@ -16903,7 +17088,7 @@ sub destroy_object
       set_home($self,$prog,$obj,$home);
       teleport($self,$prog,$obj,$home);
 
-      cmd_look($obj,prog($obj,$obj,$obj));
+      cmd_look($obj,prog($obj,$obj,$obj),undef,undef,1);
    }
 
    if(!hasflag($target,"ROOM")) {
@@ -17077,6 +17262,8 @@ sub give_money
    $target = owner($target) if(!$flag);
 
    # $money doesn't contain a number
+
+   printf("Got this far: 1\n");
    return 0 if($amount !~ /^\s*\-{0,1}(\d+)\s*$/);
 
    if($flag) {
@@ -17086,6 +17273,7 @@ sub give_money
       db_set($target,"obj_money",$money + $amount);
    }
 
+   printf("Got this far: 99\n");
    return 1;
 }
 
@@ -17329,6 +17517,7 @@ sub obj
    if(ref($id) eq "HASH") {
       return $id;
    } else {
+      $id =~ s/#//g;
       if($id !~ /^\s*\d+\s*$/) {
          con("ID: '%s' -> '%s'\n",$id,code());
          croak();
@@ -18208,10 +18397,17 @@ sub server_disconnect
             }
          }
 
-         necho(self => $hash,
-               prog => $prog,
-               room => [ $hash, "%s has disconnected.",name($hash) ]
-              );
+#         necho(self => $hash,
+#               prog => $prog,
+#               room => [ $hash, "%s has disconnected.",name($hash) ]
+#              );
+         generic_action($hash,
+                        $prog,
+                        $hash,
+                        "disconnect",
+                        [ "has disconnected." ],
+                        [ "" ]);
+
          echo_flag($hash,$prog,"CONNECTED,PLAYER,MONITOR",
                    "[Monitor] %s has disconnected.",name($hash));
       }

@@ -835,11 +835,12 @@ Example:
 & @reload
 command:
 
-   @reload
+   @reload <subroutine>
 
    If any changes to the perl script have been made, then this command will
    load those changes into the currently running TeenyMUSH server. You must
-   be set GOD to use this command.
+   be set GOD to use this command. If a subroutine is specified, then only
+   that subroutine is reloaded.
 
 & pose
 command:

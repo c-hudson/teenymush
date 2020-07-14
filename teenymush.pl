@@ -275,7 +275,9 @@ sub main
 {
    @info{run} = 1;
 
-   printf("%s\n",conf("version"));
+   @info{shell} = ($0 =~ /tmshell/i) ? 1 : 0;
+
+   printf("%s\n",conf("version")) if !@info{shell};
 
    # trap signal HUP and try to reload the code
    $SIG{HUP} = sub {
@@ -295,7 +297,8 @@ sub main
    initialize_commands();
    initialize_flags();
 
-   if(module_enabled("md5")) {
+   # not needed for tmshell, should be faster startup too
+   if(module_enabled("md5") && !@info{shell}) {
       @info{source_prev} = get_source_checksums(1);
       reload_code();
    }
@@ -308,7 +311,20 @@ sub main
    process_commandline();
 
    fun_mush_address(obj(0),{});                      # cache public address
-   server_start();                                      #!# start only once
+
+   if(@info{shell}) {
+      mushrun(self   => obj(0),
+              runas  => obj(0),
+              invoker=> obj(0),
+              source => 1,
+              cmd    => join(" ",@ARGV[0 .. $#ARGV])
+             );
+      while(scalar keys %engine) {      # command will remove itself when done
+         spin();
+      }
+   } else {
+      server_start();                                     #!# start only once
+   }
 }
 
 #
@@ -663,100 +679,102 @@ sub initialize_commands
    @command{"\@parent"}     ={ fun => sub { return &cmd_parent(@_); }       };
    @command{"look"}         ={ fun => sub { return &cmd_look(@_); }         };
    @command{"l"}            ={ fun => sub { return &cmd_look(@_); }         };
-   @command{quit}           ={ fun => sub { return &cmd_quit(@_); }          };
-   @command{"\@trigger"}    ={ fun => sub { return &cmd_trigger(@_); }       };
-   @command{"\@set"}        ={ fun => sub { return &cmd_set(@_); }           };
-   @command{"\@cls"}        ={ fun => sub { return &cmd_clear(@_); }         };
-   @command{"\@create"}     ={ fun => sub { return &cmd_create(@_); }        };
-   @command{"print"}        ={ fun => sub { return &cmd_print(@_); }         };
-   @command{"go"}           ={ fun => sub { return &cmd_go(@_); }            };
-   @command{"home"}         ={ fun => sub { return &cmd_home(@_); }          };
-   @command{"examine"}      ={ fun => sub { return &cmd_ex(@_); }            };
-   @command{"ex"}           ={ fun => sub { return &cmd_ex(@_); }            };
-   @command{"e"}            ={ fun => sub { return &cmd_ex(@_); }            };
-   @command{"\@last"}       ={ fun => sub { return &cmd_last(@_); }          };
-   @command{page}           ={ fun => sub { return &cmd_page(@_); }          };
-   @command{p}              ={ fun => sub { return &cmd_page(@_); }          };
-   @command{take}           ={ fun => sub { return &cmd_take(@_); }          };
-   @command{get}            ={ fun => sub { return &cmd_take(@_); }          };
-   @command{drop}           ={ fun => sub { return &cmd_drop(@_); }          };
-   @command{"\@force"}      ={ fun => sub { return &cmd_force(@_); }         };
-   @command{inventory}      ={ fun => sub { return &cmd_inventory(@_); }     };
-   @command{i}              ={ fun => sub { return &cmd_inventory(@_); }     };
-   @command{enter}          ={ fun => sub { return &cmd_enter(@_); }         };
-   @command{leave}          ={ fun => sub { return &cmd_leave(@_); }         };
-   @command{"\@name"}       ={ fun => sub { return &cmd_name(@_); }          };
-   @command{"\@moniker"}    ={ fun => sub { return &cmd_name(@_); }          };
-   @command{"\@describe"}   ={ fun => sub { return &cmd_generic_set(@_); }   };
-   @command{"\@pemit"}      ={ fun => sub { return &cmd_pemit(@_); }         };
-   @command{"\@emit"}       ={ fun => sub { return &cmd_emit(@_); }          };
-   @command{"think"}        ={ fun => sub { return &cmd_think(@_); }         };
-   @command{"version"}      ={ fun => sub { return &cmd_version(@_); }       };
-   @command{"\@version"}    ={ fun => sub { return &cmd_version(@_); }       };
-   @command{"\@link"}       ={ fun => sub { return &cmd_link(@_); }          };
-   @command{"\@teleport"}   ={ fun => sub { return &cmd_teleport(@_); }      };
-   @command{"\@tel"}        ={ fun => sub { return &cmd_teleport(@_); }      };
-   @command{"\@open"}       ={ fun => sub { return &cmd_open(@_); }          };
-   @command{"\@uptime"}     ={ fun => sub { return &cmd_uptime(@_); }        };
-   @command{"\@destroy"}    ={ fun => sub { return &cmd_destroy(@_); }       };
-   @command{"\@wipe"}       ={ fun => sub { return &cmd_wipe(@_); }          };
-   @command{"\@toad"}       ={ fun => sub { return &cmd_toad(@_); }          };
-   @command{"\@sleep"}      ={ fun => sub { return &cmd_sleep(@_); }         };
-   @command{"\@wait"}       ={ fun => sub { return &cmd_wait(@_); }          };
-   @command{"\@sweep"}      ={ fun => sub { return &cmd_sweep(@_); }         };
-   @command{"\@list"}       ={ fun => sub { return &cmd_list(@_); }          };
-   @command{"\@mail"}       ={ fun => sub { return &cmd_mail(@_); }          };
-   @command{"score"}        ={ fun => sub { return &cmd_score(@_); }         };
-   @command{"\@telnet"}     ={ fun => sub { return &cmd_telnet(@_); }        };
-   @command{"\@close"}      ={ fun => sub { return &cmd_close(@_); }         };
-   @command{"\@reset"}      ={ fun => sub { return &cmd_reset(@_); }         };
-   @command{"\@send"}       ={ fun => sub { return &cmd_send(@_); }          };
-   @command{"\@password"}   ={ fun => sub { return &cmd_password(@_); }      };
-   @command{"\@newpassword"}={ fun => sub { return &cmd_newpassword(@_); }   };
-   @command{"\@switch"}     ={ fun => sub { return &cmd_switch(@_); }        };
-   @command{"\@select"}     ={ fun => sub { return &cmd_switch(@_); }        };
-   @command{"\@ps"}         ={ fun => sub { return &cmd_ps(@_); }            };
-   @command{"\@kill"}       ={ fun => sub { return &cmd_killpid(@_); }       };
-   @command{"\@var"}        ={ fun => sub { return &cmd_var(@_); }           };
-   @command{"\@dolist"}     ={ fun => sub { return &cmd_dolist(@_); }        };
-   @command{"\@notify"}     ={ fun => sub { return &cmd_notify(@_); }        };
-   @command{"\@drain"}      ={ fun => sub { return &cmd_drain(@_); }         };
-   @command{"\@while"}      ={ fun => sub { return &cmd_while(@_); }         };
-   @command{"\@crash"}      ={ fun => sub { return &cmd_crash(@_); }         };
-   @command{"\@\@"}         ={ fun => sub { return;}                         };
-   @command{"\@lock"}       ={ fun => sub { return &cmd_lock(@_);}           };
-   @command{"\@boot"}       ={ fun => sub { return &cmd_boot(@_);}           };
-   @command{"\@halt"}       ={ fun => sub { return &cmd_halt(@_);}           };
-   @command{"\@sex"}        ={ fun => sub { return &cmd_generic_set(@_);}    };
-   @command{"\@apay"}       ={ fun => sub { return &cmd_generic_set(@_);}    };
-   @command{"\@opay"}       ={ fun => sub { return &cmd_generic_set(@_);}    };
-   @command{"\@pay"}        ={ fun => sub { return &cmd_generic_set(@_);}    };
-   @command{"give"}         ={ fun => sub { return &cmd_give(@_);}           };
-   @command{"\@squish"}     ={ fun => sub { return &cmd_squish(@_);}         };
-   @command{"\@websocket"}  ={ fun => sub { return &cmd_websocket(@_); }     };
-   @command{"\@find"}       ={ fun => sub { return &cmd_find(@_); }          };
-   @command{"\@bad"}        ={ fun => sub { return &cmd_bad(@_); }           };
-   @command{"\@dump"}       ={ fun => sub { return &cmd_dump(@_); }          };
-   @command{"\@dirty_dump"} ={ fun => sub { return &cmd_dirty_dump(@_); }    };
-   @command{"\@import"}     ={ fun => sub { return &cmd_import(@_); }        };
-   @command{"\@stats"}      ={ fun => sub { return &cmd_stats(@_); }         };
-   @command{"\@cost"}       ={ fun => sub { return &cmd_generic_set(@_); }   };
-   @command{"\@quota"}      ={ fun => sub { return &cmd_quota(@_); }         };
-   @command{"\@player"}     ={ fun => sub { return &cmd_player(@_); }        };
-   @command{"\@big"}        ={ fun => sub { return &cmd_big(@_); }           };
-   @command{"huh"}          ={ fun => sub { return &cmd_huh(@_); }           };
-   @command{"\@capture"}    ={ fun => sub { return &cmd_capture(@_); }       };
-   @command{"\@\@"}         ={ fun => sub { return 1; }                      };
-   @command{"\@shutdown"}   ={ fun => sub { return &cmd_shutdown(@_); }      };
-   @command{"train"}        ={ fun => sub { return &cmd_train(@_); }         };
-   @command{"teach"}        ={ fun => sub { return &cmd_train(@_); }         };
-   @command{"\@restore"}    ={ fun => sub { return &cmd_restore(@_); }       };
-   @command{"\@ping"}       ={ fun => sub { return &cmd_ping(@_); }          };
-   @command{"\@ban"}        ={ fun => sub { return &cmd_ban(@_); }           };
-   @command{"\@missing"}    ={ fun => sub { return &cmd_missing(@_); }       };
-   @command{"\@motd"}       ={ fun => sub { return &cmd_motd(@_); }          };
-   @command{"\@chown"}      ={ fun => sub { return &cmd_chown(@_); }         };
-   @command{"\@nohelp"}     ={ fun => sub { return &cmd_nohelp(@_); }         };
+   @command{quit}           ={ fun => sub { return &cmd_quit(@_); }         };
+   @command{"\@trigger"}    ={ fun => sub { return &cmd_trigger(@_); }      };
+   @command{"\@set"}        ={ fun => sub { return &cmd_set(@_); }          };
+   @command{"\@cls"}        ={ fun => sub { return &cmd_clear(@_); }        };
+   @command{"\@create"}     ={ fun => sub { return &cmd_create(@_); }       };
+   @command{"print"}        ={ fun => sub { return &cmd_print(@_); }        };
+   @command{"go"}           ={ fun => sub { return &cmd_go(@_); }           };
+   @command{"home"}         ={ fun => sub { return &cmd_home(@_); }         };
+   @command{"examine"}      ={ fun => sub { return &cmd_ex(@_); }           };
+   @command{"\@edit"}       ={ fun => sub { return &cmd_edit(@_); }         };
+   @command{"ex"}           ={ fun => sub { return &cmd_ex(@_); }           };
+   @command{"e"}            ={ fun => sub { return &cmd_ex(@_); }           };
+   @command{"\@last"}       ={ fun => sub { return &cmd_last(@_); }         };
+   @command{page}           ={ fun => sub { return &cmd_page(@_); }         };
+   @command{p}              ={ fun => sub { return &cmd_page(@_); }         };
+   @command{take}           ={ fun => sub { return &cmd_take(@_); }         };
+   @command{get}            ={ fun => sub { return &cmd_take(@_); }         };
+   @command{drop}           ={ fun => sub { return &cmd_drop(@_); }         };
+   @command{"\@force"}      ={ fun => sub { return &cmd_force(@_); }        };
+   @command{inventory}      ={ fun => sub { return &cmd_inventory(@_); }    };
+   @command{i}              ={ fun => sub { return &cmd_inventory(@_); }    };
+   @command{enter}          ={ fun => sub { return &cmd_enter(@_); }        };
+   @command{leave}          ={ fun => sub { return &cmd_leave(@_); }        };
+   @command{"\@name"}       ={ fun => sub { return &cmd_name(@_); }         };
+   @command{"\@moniker"}    ={ fun => sub { return &cmd_name(@_); }         };
+   @command{"\@describe"}   ={ fun => sub { return &cmd_generic_set(@_); }  };
+   @command{"\@pemit"}      ={ fun => sub { return &cmd_pemit(@_); }        };
+   @command{"\@emit"}       ={ fun => sub { return &cmd_emit(@_); }         };
+   @command{"think"}        ={ fun => sub { return &cmd_think(@_); }        };
+   @command{"version"}      ={ fun => sub { return &cmd_version(@_); }      };
+   @command{"\@version"}    ={ fun => sub { return &cmd_version(@_); }      };
+   @command{"\@link"}       ={ fun => sub { return &cmd_link(@_); }         };
+   @command{"\@teleport"}   ={ fun => sub { return &cmd_teleport(@_); }     };
+   @command{"\@tel"}        ={ fun => sub { return &cmd_teleport(@_); }     };
+   @command{"\@open"}       ={ fun => sub { return &cmd_open(@_); }         };
+   @command{"\@uptime"}     ={ fun => sub { return &cmd_uptime(@_); }       };
+   @command{"\@destroy"}    ={ fun => sub { return &cmd_destroy(@_); }      };
+   @command{"\@cpattr"}     ={ fun => sub { return &cmd_cpattr(@_); }      };
+   @command{"\@wipe"}       ={ fun => sub { return &cmd_wipe(@_); }         };
+   @command{"\@toad"}       ={ fun => sub { return &cmd_toad(@_); }         };
+   @command{"\@sleep"}      ={ fun => sub { return &cmd_sleep(@_); }        };
+   @command{"\@wait"}       ={ fun => sub { return &cmd_wait(@_); }         };
+   @command{"\@sweep"}      ={ fun => sub { return &cmd_sweep(@_); }        };
+   @command{"\@list"}       ={ fun => sub { return &cmd_list(@_); }         };
+   @command{"\@mail"}       ={ fun => sub { return &cmd_mail(@_); }         };
+   @command{"score"}        ={ fun => sub { return &cmd_score(@_); }        };
+   @command{"\@telnet"}     ={ fun => sub { return &cmd_telnet(@_); }       };
+   @command{"\@close"}      ={ fun => sub { return &cmd_close(@_); }        };
+   @command{"\@reset"}      ={ fun => sub { return &cmd_reset(@_); }        };
+   @command{"\@send"}       ={ fun => sub { return &cmd_send(@_); }         };
+   @command{"\@password"}   ={ fun => sub { return &cmd_password(@_); }     };
+   @command{"\@newpassword"}={ fun => sub { return &cmd_newpassword(@_); }  };
+   @command{"\@switch"}     ={ fun => sub { return &cmd_switch(@_); }       };
+   @command{"\@select"}     ={ fun => sub { return &cmd_switch(@_); }       };
+   @command{"\@ps"}         ={ fun => sub { return &cmd_ps(@_); }           };
+   @command{"\@kill"}       ={ fun => sub { return &cmd_killpid(@_); }      };
+   @command{"\@var"}        ={ fun => sub { return &cmd_var(@_); }          };
+   @command{"\@dolist"}     ={ fun => sub { return &cmd_dolist(@_); }       };
+   @command{"\@notify"}     ={ fun => sub { return &cmd_notify(@_); }       };
+   @command{"\@drain"}      ={ fun => sub { return &cmd_drain(@_); }        };
+   @command{"\@while"}      ={ fun => sub { return &cmd_while(@_); }        };
+   @command{"\@crash"}      ={ fun => sub { return &cmd_crash(@_); }        };
+   @command{"\@\@"}         ={ fun => sub { return;}                        };
+   @command{"\@lock"}       ={ fun => sub { return &cmd_lock(@_);}          };
+   @command{"\@boot"}       ={ fun => sub { return &cmd_boot(@_);}          };
+   @command{"\@halt"}       ={ fun => sub { return &cmd_halt(@_);}          };
+   @command{"\@sex"}        ={ fun => sub { return &cmd_generic_set(@_);}   };
+   @command{"\@apay"}       ={ fun => sub { return &cmd_generic_set(@_);}   };
+   @command{"\@opay"}       ={ fun => sub { return &cmd_generic_set(@_);}   };
+   @command{"\@pay"}        ={ fun => sub { return &cmd_generic_set(@_);}   };
+   @command{"give"}         ={ fun => sub { return &cmd_give(@_);}          };
+   @command{"\@squish"}     ={ fun => sub { return &cmd_squish(@_);}        };
+   @command{"\@websocket"}  ={ fun => sub { return &cmd_websocket(@_); }    };
+   @command{"\@find"}       ={ fun => sub { return &cmd_find(@_); }         };
+   @command{"\@bad"}        ={ fun => sub { return &cmd_bad(@_); }          };
+   @command{"\@dump"}       ={ fun => sub { return &cmd_dump(@_); }         };
+   @command{"\@dirty_dump"} ={ fun => sub { return &cmd_dirty_dump(@_); }   };
+   @command{"\@import"}     ={ fun => sub { return &cmd_import(@_); }       };
+   @command{"\@stats"}      ={ fun => sub { return &cmd_stats(@_); }        };
+   @command{"\@cost"}       ={ fun => sub { return &cmd_generic_set(@_); }  };
+   @command{"\@quota"}      ={ fun => sub { return &cmd_quota(@_); }        };
+   @command{"\@player"}     ={ fun => sub { return &cmd_player(@_); }       };
+   @command{"\@big"}        ={ fun => sub { return &cmd_big(@_); }          };
+   @command{"huh"}          ={ fun => sub { return &cmd_huh(@_); }          };
+   @command{"\@capture"}    ={ fun => sub { return &cmd_capture(@_); }      };
+   @command{"\@\@"}         ={ fun => sub { return 1; }                     };
+   @command{"\@shutdown"}   ={ fun => sub { return &cmd_shutdown(@_); }     };
+   @command{"train"}        ={ fun => sub { return &cmd_train(@_); }        };
+   @command{"teach"}        ={ fun => sub { return &cmd_train(@_); }        };
+   @command{"\@restore"}    ={ fun => sub { return &cmd_restore(@_); }      };
+   @command{"\@ping"}       ={ fun => sub { return &cmd_ping(@_); }         };
+   @command{"\@ban"}        ={ fun => sub { return &cmd_ban(@_); }          };
+   @command{"\@missing"}    ={ fun => sub { return &cmd_missing(@_); }      };
+   @command{"\@motd"}       ={ fun => sub { return &cmd_motd(@_); }         };
+   @command{"\@chown"}      ={ fun => sub { return &cmd_chown(@_); }        };
+   @command{"\@nohelp"}     ={ fun => sub { return &cmd_nohelp(@_); }       };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -1044,6 +1062,15 @@ sub cmd_ping
    }
 }
 
+sub fn_secs
+{
+   my $fn = shift;
+
+   if($fn =~ /\.(\d{2})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})\./){
+      return timelocal($6,$5,$4,$3,$2,$1);
+   }
+}
+
 sub cmd_restore
 {
    my ($self,$prog) = (obj(shift),shift);
@@ -1092,6 +1119,10 @@ sub cmd_restore
             }
          }
          closedir($dir);
+
+         # sort list by filenames not stat();
+         my $list = $$cmd{restore_file};
+         $$cmd{restore_file} = [ sort {fn_secs($a) <=> fn_secs($b)} @$list ];
 
          necho(self    => $self,
                prog   => $prog,
@@ -3728,24 +3759,6 @@ sub cmd_read
    }
 }
 
-#
-# get_segment
-#    Get a single segment of a $delim delimited string. Strings can
-#    be enclosed in "quotes" or {brackets} to avoid breaking apart the
-#    string in the wrong location.
-#
-sub get_segment2
-{
-   my ($txt,$delim) = @_;
-
-    if($txt =~ /^\s*"(.*?)(?<!(?<!\\)\\)"($delim|$)/s ||
-       $txt =~ /^\s*{(.*?)(?<!(?<!\\)\\)}($delim|$)/s ||
-       $txt =~ /^(.*?)($delim|$)/s) {
-       return ($1,$');
-    } else {
-       return ($txt,undef);
-    }
-}
 
 sub cmd_squish
 {
@@ -3825,24 +3838,14 @@ sub code_history
 
 sub cmd_switch
 {
-#    printf("SWITCH: '%s'\n",$_[2]);
-#    for my $i (balanced_split($_[2],',',3)) {
-#       printf("#  '%s'\n",$i);
-#    }
     my ($self,$prog,@list) = (obj(shift),shift,balanced_split(shift,',',3));
     my $switch = shift;
     my (%last, $pat,$done);
-#    for my $i (0 .. $#list) {
-#       printf("$i : '%s'\n",@list[$i]);
-#    }
-
 
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission denied.");
-#
-#    printf("FIRST: '%s'\n",@list[0]);
-    my ($first,$second) = (get_segment2(shift(@list),"="));
-#    printf("FIRST: '%s'\n",$first);
+
+    my ($first,$second) = bsplit(shift(@list),"=");
     $first = trim(ansi_remove(evaluate($self,$prog,$first)));
     $first =~ s/[\r\n]//g;
     $first =~ tr/\x80-\xFF//d;
@@ -3854,17 +3857,12 @@ sub cmd_switch
           shift(@list);
        }
        if($#list >= 1) {
-#          printf("1BEFORE_TXT: '%s'\n",@list[0]);
-#          printf("2BEFORE_TXT: '%s'\n",evaluate($self,$prog,@list[0]));
           my $txt=ansi_remove(single_line(evaluate($self,$prog,shift(@list))));
-#          printf("TXT: '%s'\n",$txt);
 
           if(defined $$switch{regexp}) {
              $pat = $txt;
           } else {
              $pat = glob2re($txt);
-#             printf("PAT1: '%s'\n",$pat);
-#             printf("PAT2: '%s'\n",$txt);
           }
           my $cmd = shift(@list);
           $cmd =~ s/^[\s\n]+//g;
@@ -3884,8 +3882,6 @@ sub cmd_switch
           } else {
              eval {                    # assume $pat could be a bad regexp
                 if($first =~ /$pat/) {
-#                   printf("PAT:   '%s'\n",$pat);
-#                   printf("First: '%s'\n",$first);
                    $cmd =~ s/\\,/,/g;
                    mushrun(self   => $self,
                            prog   => $prog,
@@ -4625,6 +4621,75 @@ sub cmd_take
    cmd_look($target,$prog,undef,undef,1);
 }
 
+sub cmd_cpattr
+{
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
+   my ($i, $data, @todo, @out);
+
+   my ($left,$right) = bsplit($txt,"=");
+   my ($src_obj,$src_atr) = besplit($self,$prog,$left,"/");
+
+   my $src = find($self,$prog,$src_obj) ||
+      return err($self,$prog,"I don't see '%s' here.",$src_obj);
+
+   if(!(hasflag($src,"VISUAL") || controls($self,$src))) {
+      return err($self,$prog,"Permission denied on object '%s'.",
+         obj_name($self,$src));
+   }
+   
+   # Do not do anything unless iall the checks look good, so
+   # enqueue and go when checks are complete.
+   #
+   my $pat = glob2re(trim($src_atr));
+   for my $name (lattr($src)) {
+      if($name !~ /^obj_/ && $name =~ /$pat/) {
+#         printf("   NAME: '%s' -> '$src_atr'\n",$name);
+         my $txt = $right;
+         $i = 0;
+         while($i++ < 20 && $txt ne undef) {
+            ($data,$txt) = bsplit($txt,",");
+            my ($dst_obj,$dst_atr) = besplit($self,$prog,$data,"/");
+            $dst_obj = trim(ansi_remove($dst_obj));
+            $dst_atr = trim(ansi_remove($dst_atr));
+            $dst_atr = $name if(empty($dst_atr));   # default to same name
+
+            # verify information before doing work.
+            my $dest = find($self,$prog,evaluate($self,$prog,$dst_obj)) ||
+               return err($self,$prog,"I don't see '%s' here.",$dst_obj);
+
+            good_atr_name($dst_atr) ||
+               return err($self,$prog,"Invalid attribute name '%s'",$dst_atr);
+
+            controls($self,$dest) ||
+               return err($self,$prog,"Permission denied on object '%s'.",
+                  obj_name($self,$dest));
+
+            push(@todo,{ src_atr => $name,                    # enqueue todo
+                         dst_obj => $dest,
+                         dst_atr => $dst_atr 
+                       }
+                )
+         }
+      }
+   }
+
+   for my $i (0 .. $#todo) {                              # do it, do it now!
+      my $hash = @todo[$i];
+      my $atr = get($src,$$hash{src_atr});                     # get attribute
+      set($self,$prog,$$hash{dst_obj},$$hash{dst_atr},$atr,1); # copy it over
+      push(@out, "Set " . 
+                 obj_name($self,$$hash{dst_obj}) . 
+                 "/" . 
+                 $$hash{dst_atr}
+          );
+   }
+   push(@out,"No matching attributes.") if($#out == -1);
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ join("\n",@out) ]
+        );
+}
+
 sub cmd_name
 {
    my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
@@ -5023,33 +5088,29 @@ sub cmd_go
 sub cmd_teleport
 {
    my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
-   my ($target,$location);
+   my ($target,$location,$obj,$dst);
 
-   if($txt =~ /^\s*([^ ]+)\s*=\s*([^ ]+)\s*/) {
-      ($target,$location) = ($1,$2);
-   } elsif($txt =~ /^\s*([^ ]+)\s*/) {
-      ($target,$location) = ("#$$self{obj_id}",$1);
-   } else {
-      err($self,
-          $prog,
-          "syntax: \@teleport <object> = <location>\n" .
-          "        \@teleport <location>");
+   my ($left,$right) = besplit($self,$prog,$txt,"=");
+
+   if(empty($right)) {                        # one arguement, @tel $self
+      $obj = "#$$self{obj_id}";
+      $dst = $left;
+   } else {                                        # @tel specified object
+      $obj = $left;
+      $dst = $right;
    }
 
-   $target = find($self,$prog,$target) ||
+   $target = find($self,$prog,$obj) || 
       return err($self,$prog,"I don't see that object here.");
 
-   $location = find($self,$prog,evaluate($self,$prog,$location)) ||
-      return err($self,$prog,"I can't find that location");
+   $location = find($self,$prog,$dst) ||
+      return err($self,$prog,"I don't see that object here.");
 
-   controls($self,$target) ||
-      return err($self,$prog,"Permission Denied.");
-
-   (controls($self,$location) || hasflag($location,"JUMP_OK")) ||
+   controls($self,$target) ||              # must control object to teleport
       return err($self,$prog,"Permission Denied.");
 
    if(hasflag($location,"EXIT")) {
-      if((owner(loc($location)) == $$self{obj_id} &&
+      if((owner_id(loc($location)) == $$self{obj_id} &&
          loc($location) == loc($target)) ||
          hasflag($self,"WIZARD")) {
          $location = dest($location);
@@ -5060,6 +5121,8 @@ sub cmd_teleport
       } else {
          return err($self,$prog,"Permission Denied.");
       }
+   } elsif(!(controls($self,$location) || hasflag($location,"JUMP_OK"))) {
+      return err($self,$prog,"Permission Denied.");
    }
 
    necho(self   => $self,
@@ -5074,7 +5137,6 @@ sub cmd_teleport
          prog   => $prog,
          all_room   => [ $target, "%s has arrived.",name($target) ]
         );
-
 
    cmd_look($target,$prog,undef,undef,1);
 }
@@ -5109,7 +5171,7 @@ sub cmd_clear
 {
    my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
 
-   if(!or_hasflag($self,"WIZARD","GOD")) {
+   if(!or_flag($self,"WIZARD","GOD")) {
       err($self,$prog,"Permission denied.");
    } elsif($txt ne undef) {
       err($self,$prog,"\@clear expect no arguments");
@@ -5294,14 +5356,15 @@ sub create_thing
    $name = ansi_trim($name);
    $cost = trim(ansi_remove($cost));
    $cost = conf("createcost") if $cost eq undef;
+   my $owner = owner($self);
 
-   if(hasflag($self,"GUEST")) {
+   if(hasflag($owner,"GUEST")) {
       return "Permission denied.";
-   } elsif(quota($self,"left") <= 0) {
+   } elsif(quota($owner,"left") <= 0) {
       return "You are out of QUOTA to create an object.";
    } elsif(length($name) > 160) {
       return "Thats a silly name for a thing.";
-   } elsif(money($self) < $cost) {
+   } elsif(money($owner) < $cost) {
       return "You need at least " . pennies($cost) . ".";
    } elsif($cost < conf("createcost")) {
       return "Objects cost at least " . pennies("createcost") . ".";
@@ -5991,6 +6054,74 @@ sub list_attr
 }
 
 
+sub cmd_edit
+{
+   my ($self,$prog) = (obj(shift),shift);
+   my (@out,$change,$txt,$new,$start,$type);
+
+   my ($left,$right) = bsplit(shift,"=");           # parse text coming in
+   my ($object,$atr) = besplit($self,$prog,$left,"\/");
+   my ($search,$replace) = besplit($self,$prog,$right,",");
+   $search = trim($search);
+   $replace = trim($replace);
+   
+   my $target = find($self,$prog,$object) ||
+      return err($self,$prog,"I don't see that here.");
+
+   !controls($self,$target) &&
+      return err($self,$prog,"Permission denied");
+
+   my $pat = glob2re($atr);
+
+   my $size   = ansi_length($search);
+
+   for my $name (lattr($target)) {
+      if($name =~ /$pat/) {
+         if($search eq "\$") {
+            $txt = get($target,$name);
+            set($self, $prog, $target, $name, $txt . $replace);
+            push(@out,"Set - $name: $txt$replace");
+         } elsif($search eq "^") {
+            $txt = get($target,$name);
+            set($self, $prog, $target, $name, $replace . $txt);
+            push(@out,"Set - $name: $replace$txt");
+         } else {
+            $change = 0;
+            $new = undef;
+            $txt = ansi_init(get($target,$name));
+            for(my $i = 0, $start=0;$i <= $#{$$txt{ch}};$i++) {
+               if(ansi_remove(ansi_substr($txt,$i,$size)) eq $search) {
+                  $change = 1;
+                  if($start ne undef || $i != $start) {
+                     $new .= ansi_substr($txt,$start,$i - $start);
+                  }
+                  $new .= ansi_clone($txt,$i,$replace);
+                  $i += $size;
+                  $start = $i;
+                  last if($type);
+               }
+            }
+            if($start ne undef or $start >= $#{$$txt{ch}}) {  # add left over
+               $new .= ansi_substr($txt,$start,$#{$$txt{ch}} - $start + 1);
+            }
+
+            if($change) {
+               push(@out,"Set - $name: $new");
+               set($self, $prog, $target, $name, $new);
+            }
+         }
+      }
+   }
+
+   push(@out,"No matching attribute") if($#out == -1);
+   necho(self   => $self,
+         prog   => $prog,
+         source => [ "%s",join("\n",@out) ],
+        );
+}
+
+
+
 sub cmd_ex
 {
    my ($self,$prog) = (obj(shift),shift);
@@ -6415,7 +6546,7 @@ sub cmd_set2
    if(!controls($self,$target)) {                                    # nope
       return err($self,$prog,"Permission denied");
    } elsif(!good_atr_name($attr,$flag)) {
-      return err($self,$prog,"Thats not a good name for an attribute.");
+      return err($self,$prog,"Thats not a good name for an attribute. '$attr'");
    } elsif($sub ne undef && !good_atr_name($sub,$flag)) {
       return err($self,$prog,"Thats not a good name for an sub attribute.");
    } elsif($sub ne undef && !db_set_hashable($target,$attr)) {
@@ -6603,6 +6734,7 @@ sub get_source_checksums
 
 sub reload_code
 {
+   return if @info{shell};
    my ($self,$prog,$sub) = @_;
    my $count = 0;
    my $prev = @info{source_prev};
@@ -7703,6 +7835,12 @@ sub initialize_flags
                           ord         => 29,
                           target_type => ""
                         };
+   @flag{COMPAT}       ={ letter      => "*",
+                          perm        => "PLAYER",
+                          type        => 1,
+                          ord         => 30,
+                          target_type => ""
+                        };
    @flag{PLAYER}       ={ letter => "P", perm => "GOD",    type => 1, ord=>1  };
    @flag{ROOM}         ={ letter => "R", perm => "GOD",    type => 1, ord=>2  };
    @flag{EXIT}         ={ letter => "e", perm => "GOD",    type => 1, ord=>3  };
@@ -7978,7 +8116,6 @@ sub can_set_flag
    $flag = trim($') if($flag =~ /^\s*!/);
 
    if(!defined @flag{uc($flag)}) {                          # not a flag
-      printf("can_set: 0\n");
       return 0;
    }
 
@@ -7987,7 +8124,9 @@ sub can_set_flag
    if(defined $$hash{target_type} && $$hash{target_type} =~ /^!/ &&
            hasflag($obj,$')) {
       return 0;
-   } elsif(defined $$hash{target_type} && $$hash{target_type} !~ /^!/ &&
+   } elsif(defined $$hash{target_type} && 
+           !empty($$hash{target_type}) &&
+           $$hash{target_type} !~ /^!/ &&
            !hasflag($obj,$$hash{target_type})) {
       return 0;
    } elsif($$hash{perm} =~ /^!/) {     # can't have this perm flag and set flag
@@ -8487,20 +8626,20 @@ sub db_process_line
    } elsif($$state{obj} eq undef && $line =~ /^obj\[(\d+)]\s*{\s*$/) {
       $$state{obj} = $1;                                    # start of object
    } elsif($$state{obj} ne undef &&
-      $line =~ /^\s*([^ \/:]+):(\d+):(\d+):([^:]*):M:/) {
+      $line =~ /^\s*([^ :]+):(\d+):(\d+):([^:]*):M:/) {
       if($obj eq undef || $$state{obj} eq $obj) {
          db_set($$state{obj},$1,db_unsafe($'),$2,$3);       # MIME attribute
          db_set_flag($$state{obj},$1,$4,1) if($4 ne undef);
       }
    } elsif($$state{obj} ne undef &&
-      $line =~ /^\s*([^ \/:]+):(\d+):(\d+):([^:]*):A:/) {
+      $line =~ /^\s*([^ :]+):(\d+):(\d+):([^:]*):A:/) {
       if($obj eq undef || $$state{obj} eq $obj) {
          db_set($$state{obj},$1,$',$2,$3);              # standard attribute
          db_set_flag($$state{obj},$1,$4,1) if($4 ne undef);
       }
       $$state{loc} = $' if($1 eq "obj_location");
    } elsif($$state{obj} ne undef &&
-      $line =~ /^\s*([^ \/:]+):(\d+):(\d+):([^:]*):L:/) {
+      $line =~ /^\s*([^ :]+):(\d+):(\d+):([^:]*):L:/) {
       my ($attr,$list,$created,$modified) = ($1,$',$2,$3);   # list attribute
       if($obj eq undef || $$state{obj} eq $obj) {
          for my $item (split(/,/,$list)) {
@@ -8511,7 +8650,7 @@ sub db_process_line
          }
       }
    } elsif($$state{obj} ne undef &&
-      $line =~ /^\s*([^ \/:]+):(\d+):(\d+):([^:]*):H:/) {
+      $line =~ /^\s*([^ :]+):(\d+):(\d+):([^:]*):H:/) {
       my ($attr,$list,$created,$mod) = ($1,$');         # hash attribute
       if($obj eq undef || $$state{obj} eq $obj) {
          for my $item (split(/;/,$list)) {
@@ -9013,7 +9152,7 @@ sub mushrun_done
             $$prog{function_duration} + $$prog{command_duration},
             nvl($$prog{command},0),
             nvl($$prog{function},0)
-           );
+           ) if !@info{shell};
 #      for my $key (grep {/^fun_/} keys %$prog) {
 #         printf("   $key = $$prog{$key}\n");
 #      }
@@ -9466,10 +9605,11 @@ sub find
 {
    my ($self,$prog,$thing,$debug) = (shift,shift,trim(lc(shift)),shift);
    my ($partial, $dup, $indirect);
+   $thing = ansi_remove($thing);
 
     my $debug = 0;
 
-   if(ansi_remove($thing) eq undef) {
+   if(empty($thing)) {
       return undef;
    } elsif($thing =~ /^\s*#(\d+)\s*$/) {
       return valid_dbref($1) ? obj($1) : undef;
@@ -10078,6 +10218,7 @@ sub initialize_functions
 {
    delete @fun{keys %fun};
    @fun{info}       = sub { return &fun_info(@_);                  };
+   @fun{cat}        = sub { return &fun_cat(@_);                   };
    @fun{dump}       = sub { return &fun_dump(@_);                  };
    @fun{variables}  = sub { return &fun_variables(@_);             };
    @fun{lvariable}  = sub { return &fun_lvariable(@_);             };
@@ -10085,6 +10226,8 @@ sub initialize_functions
    @fun{s}          = sub { return &fun_s(@_);                     };
    @fun{set}        = sub { return &fun_set(@_);                   };
    @fun{EVAL}       = sub { return &fun_u(@_);                     };
+   @fun{ulocal}     = sub { return &fun_ulocal(@_);                };
+   @fun{edefault}   = sub { return &fun_edefault(@_);              };
    @fun{html_strip} = sub { return &fun_html_strip(@_);            };
    @fun{tohex}      = sub { return &fun_tohex(@_);                 };
    @fun{foreach}    = sub { return &fun_foreach(@_);               };
@@ -10116,7 +10259,6 @@ sub initialize_functions
    @fun{substr}     = sub { return &fun_substr(@_);                };
    @fun{mul}        = sub { return &fun_mul(@_);                   };
    @fun{file}       = sub { return &fun_file(@_);                  };
-   @fun{cat}        = sub { return &fun_cat(@_);                   };
    @fun{space}      = sub { return &fun_space(@_);                 };
    @fun{repeat}     = sub { return &fun_repeat(@_);                };
    @fun{time}       = sub { return &fun_time(@_);                  };
@@ -10140,6 +10282,7 @@ sub initialize_functions
    @fun{rjust}      = sub { return &fun_rjust(@_);                 };
    @fun{loc}        = sub { return &fun_loc(@_);                   };
    @fun{extract}    = sub { return &fun_extract(@_);               };
+   @fun{elements}   = sub { return &fun_elements(@_);              };
    @fun{lwho}       = sub { return &fun_lwho(@_);                  };
    @fun{remove}     = sub { return &fun_remove(@_);                };
    @fun{get}        = sub { return &fun_get(@_);                   };
@@ -10260,7 +10403,8 @@ sub initialize_functions
    @fun{delete}     = sub { return &fun_delete(@_);                };
    @fun{findable}   = sub { return &fun_findable(@_);              };
    @fun{power}      = sub { return &fun_power(@_);                 };
-   @fun{create}     = sub { return &fun_create(@_);                 };
+   @fun{create}     = sub { return &fun_create(@_);                };
+   @fun{isdbref}    = sub { return &fun_isdbref(@_);               };
 }
 
 
@@ -10444,9 +10588,23 @@ sub fun_haspower
    my ($self,$prog) = (obj(shift),shift);
 
    good_args($#_,2) ||
-     return "#-1 FUNCTION (ZONE) EXPECTS 2 ARGUMENTS";
+     return "#-1 FUNCTION (POWER) EXPECTS 2 ARGUMENTS";
 
    return 0;
+}
+
+sub fun_cat
+{
+   my ($self,$prog) = (obj(shift),shift);
+   my @out;
+
+   good_args($#+,0 .. 100) ||        # only so many cats or they are bunnies
+      return "#-1 FUNCTION(CAT) EXPECTS 0 TO 100 ARGS";
+
+   for my $i (0 .. $#_) {                   # trim spaces for expected output
+      push(@out,ansi_trim(evaluate($self,$prog,shift)));
+   }
+   return join(" ",@out);
 }
 
 
@@ -10463,14 +10621,7 @@ sub fun_create
    my $type = lc(trim(ansi_remove(evaluate($self,$prog,pop(@_)))));
    my $name = ansi_substr(trim(evaluate($self,$prog,shift)),0,399);
 
-   if($type eq "t") {                                   # create thing/object
-
-      good_args($#_,0,1) ||
-        return "#-1 FUNCTION (CREATE) EXPECTS 2 OR 3 ARGUMENTS FOR 'T' TYPE";
-      my $value = evaluate($self,$prog,shift);
-      $result = create_thing($self,$prog,$name,$value);
-
-   } elsif($type eq "r") {
+   if($type eq "r") {
 
       good_args($#_,0,1,2) ||
         return "#-1 FUNCTION (CREATE) EXPECTS 2 TO 4 ARGUMENTS FOR 'R' TYPE";
@@ -10490,9 +10641,24 @@ sub fun_create
    } elsif($type eq "p") {
       return "#-1 NOT SUPPORTED AT THIS TIME.";
       # player
-   } else {
-      return "#-1 INVALID TYPE '$type'"
+   } else {                 # create thing/object
+      my $value;
+
+      if($type ne "t") {
+         $value = $type;
+      } else {
+         $value = evaluate($self,$prog,shift);
+      }
+
+      if(!isint($value) && $value > 0) {
+         return "#-1 INVALID CREATION AMOUNT";
+      }
+      
+      good_args($#_,0,1) ||
+        return "#-1 FUNCTION (CREATE) EXPECTS 2 OR 3 ARGUMENTS FOR 'T' TYPE";
+      $result = create_thing($self,$prog,$name,$value);
    }
+
 
    if($result =~ /^(\d+)$/) {                                    # success
       return "#$result";
@@ -12791,7 +12957,19 @@ sub fun_mudname
 
 sub fun_version
 {
-   return conf("version");
+   my ($self,$prog) = @_;
+
+   if(hasflag($self,"COMPAT")) {
+      my $atr = get($self,"TEENY_VERSION");
+
+      if(empty($atr)) {
+         return "TinyMUSH version 3.1 patchlevel 3 #1 [06/06/2006]";
+      } else {
+         return $atr;
+      }
+   } else {
+      return conf("version");
+   }
 }
 
 #
@@ -13213,7 +13391,7 @@ sub fun_and
 
    while($#_ >= 0) {
       my $num = evaluate($self,$prog,shift);
-      return 0 if($num eq 0);
+      return 0 if($num eq 0 || !isint($num));
    }
    return 1;
 }
@@ -13837,6 +14015,26 @@ sub fun_num
    }
 }
 
+#
+# fun_isdbref
+#    Determine if the passed in text is a valid dbref.
+#
+sub fun_isdbref
+{
+   my ($self,$prog) = (shift,shift);
+
+   good_args($#_,1) ||
+      return "#-1 FUNCTION (ISDBREF) EXPECTS 1 ARGUMENT";
+
+   my $dbref =evaluate($self,$prog,shift);
+
+   if($dbref =~ /^\s*#(\d+)\s*$/ && valid_dbref($1)) {
+      return 1;
+   } else {
+      return 0;
+   }
+}
+
 sub fun_locate
 {
    my ($self,$prog) = (shift,shift);
@@ -14083,6 +14281,88 @@ sub fun_u
    return $result;
 }
 
+sub fun_ulocal
+{
+   my ($self,$prog) = (shift,shift);
+   my ($txt,$obj,$attr,@arg,%temp);
+
+#   stack_print();
+
+   if(defined $$prog{mush_function_name}) {
+      if(defined @info{mush_function} &&
+         defined @{@info{mush_function}}{$$prog{mush_function_name}}) {
+         $txt =  @{@info{mush_function}}{$$prog{mush_function_name}};
+      } else {
+         return "#-1 INVALID USER DEFINED FUNCTION";
+      }
+   } else {
+      $txt = evaluate($self,$prog,shift);
+   }
+
+   for my $i (0 .. $#_) {
+      @arg[$i] = evaluate($self,$prog,$_[$i]);
+   }
+
+   if($txt =~ /\//) {                    # input in object/attribute format?
+      ($obj,$attr) = (find($self,$prog,$`,"LOCAL"),$');
+   } else {                                  # nope, just contains attribute
+      ($obj,$attr) = ($self,$txt);
+   }
+
+   if($obj eq undef) {
+      return "#-1 Unknown object";
+   } elsif(!(controls($self,$obj) ||
+             hasflag($obj,"VISUAL") ||
+             atr_hasflag($obj,$attr,"VISUAL")
+          )) {
+      return "#-1 PerMISSion Denied";
+   }
+
+   my $prev = get_digit_variables($prog);                   # save %0 .. %9
+   set_digit_variables($self,$prog,"",@arg);          # update to new values
+#   printf("---[ start ]-----\n");
+#   for my $i (0 .. $#arg) {
+#      printf("$i : '%s'\n",@arg[$i]);
+#   }
+#   printf("---[  end  ]-----\n");
+   if(defined $$prog{var}) {
+      for my $key (grep {/^setq_/} keys %{$$prog{var}}) { # store prev values
+         @temp{$key} = $$prog{var}->{$key};
+         delete @$prog{var}->{$key};
+      }
+   }
+   my $result = evaluate($obj,$prog,single_line(pget($obj,$attr)));
+   set_digit_variables($self,$prog,"",$prev);            # restore %0 .. %9
+
+   if(defined $$prog{var}) {
+      for my $key (grep {/^setq_/} keys %{$$prog{var}}) { # store prev values
+         delete @$prog{var}->{$key};
+      }
+      for my $key (keys %temp) {
+         $$prog{var}->{$key} = @temp{$key};
+      }
+   }
+   return $result;
+}
+
+sub fun_edefault
+{
+   my ($self,$prog) = (shift,shift);
+   my ($txt,$obj,$attr,@arg,%temp);
+
+   good_args($#_,2) ||
+     return "#-1 FUNCTION (EDEFAULT) EXPECTS 2 ARGUMENTS";
+
+   my ($target,$atr) = besplit($self,$prog,shift);
+
+   my $target = find($self,$prog,evaluate($self,$prog,$obj));
+   return evaluate($self,$prog,shift) if($target eq undef);
+
+   my $dat = get($target,$atr);
+   return evaluate($self,$prog,shift) if($target eq $dat);
+
+   return evalate($self,$prog,$dat);
+}
 
 sub hash_item
 {
@@ -14289,6 +14569,33 @@ sub fun_r
    } else {
       return undef;
    }
+}
+
+sub fun_elements
+{
+   my ($self,$prog) = (shift,shift);
+   my (@list,@number,@out);
+
+   good_args($#_,2,3,4) ||
+      return "#-1 FUNCTION (ELEMENTS) EXPECTS BETWEEN 2 AND 4 ARGUMENTS";
+
+   my $txt     = evaluate($self,$prog,shift);
+   my $numbers = ansi_remove(evaluate($self,$prog,shift));
+   my $idelim  = ansi_remove(evaluate($self,$prog,shift));
+   my $odelim  = evaluate($self,$prog,shift);
+   $idelim = " " if($idelim eq undef);
+   $odelim = " " if($odelim eq undef);
+
+   @list = safe_split($txt,$idelim);
+   @number = safe_split($numbers," ");
+
+   for my $num (@number) {
+      if(isint($num) && $num > 0 && $num <= $#list+1) {
+         push(@out,@list[$num-1]);
+      }
+   }
+
+   return join($odelim,@out);
 }
 
 sub fun_extract
@@ -14683,20 +14990,6 @@ sub fun_timezone
     return scalar strftime("%Z",localtime());
 }
 
-#
-# fun_cat
-#   Concatination function
-#
-sub fun_cat
-{
-   my ($self,$prog) = (shift,shift);
-   my $out;
-
-   good_args($#_,1 .. 100) ||
-      return "#-1 FUNCTION (CAT) EXPECTS BETWEEN 1 AND 100 ARGS";
-
-   return join(" ",@_);
-}
 
 #
 # fun_lattr
@@ -15584,6 +15877,8 @@ sub http_reply_simple
    http_out($s,"Connection: close");
    if(lc($type) eq "pdf") {
       http_out($s,"Content-Type: application/pdf; charset=ISO-8859-1");
+   } elsif(lc($type) eq "png") {
+      http_out($s,"Content-Type: image/png; charset=ISO-8859-1");
    } else {
       http_out($s,"Content-Type: text/$type; charset=ISO-8859-1");
    }
@@ -15910,7 +16205,7 @@ sub load_db
    close($file);
 
    printf(" + Database: %s [%s Version, %s bytes]\n",
-      $fn,@state{ver},@state{chars});
+      $fn,@state{ver},@state{chars}) if !@info{shell};
 
    recover_db();
 
@@ -15924,6 +16219,7 @@ sub recover_db
       load_archive_log(sprintf("@info{dump_name}.%06d",@info{change}));
    }
 
+   return if @info{shell};                  # tmshell should  less verbose
    if(@info{change} == 1) {
       printf(" +           DB Sequence 1 loaded.\n");
    } elsif(@info{change} > 1) {
@@ -16187,7 +16483,9 @@ sub renumber_code
    my $prev = @info{source_prev};
 
    for my $line (split(/\n/,shift)) {
-      if($line =~ / at ([^ ]+) line (\d+)/ && defined $$prev{$1}) {
+      if(!@info{shell} && 
+         $line =~ / at ([^ ]+) line (\d+)/ &&
+         defined $$prev{$1}){
          push(@out,"$` at $1 line " . ($2 + @{$$prev{$1}}{ln}));
       } else {
          push(@out,$line . " [*]");
@@ -16297,7 +16595,7 @@ sub evaluate_substitutions
          }
       } elsif($seq =~ /^%q([0-9a-z])$/i) {
          if(defined $$prog{var}) {
-            $out .= @{$$prog{var}}{"setq_$1"} if(defined $$prog{var});
+            $out .= @{$$prog{var}}{"setq_" . lc($1)} if(defined $$prog{var});
          }
       } elsif($seq =~ /^%m([0-9])$/ ||
               $seq =~ /^%\{m([0-9])\}$/) {
@@ -16610,11 +16908,13 @@ sub logit
 
 sub web
 {
+   return if(@info{shell});                     # less verbose in shell mode
    logit("weblog",@_) if(conf_true("weblog"));
 }
 
 sub con
 {
+   return if(@info{shell});                     # less verbose in shell mode
    logit("conlog",@_) if(conf_true("conlog"));
 }
 
@@ -16622,6 +16922,7 @@ sub audit
 {
    my ($self,$prog,$fmt,@args) = @_;
    return if(!conf_true("auditlog"));
+   return if(@info{shell});                     # less verbose in shell mode
 
    my $info = sprintf("[%s] $fmt by " . obj_name($self,$self),ts(),@args);
 
@@ -16716,6 +17017,22 @@ sub echo_socket
    }
 }
 
+sub necho_tmshell
+{
+   my ($self,$arg) = @_;
+
+   my $type;
+   if(defined $$arg{"source"}) {
+      $type = "source";
+      unshift(@{$$arg{source}},$self);
+   } elsif(defined $$arg{"target"}) {
+      $type = "target";
+   }
+   my ($target,$fmt) = (obj(shift(@{$$arg{$type}})), shift(@{$$arg{$type}}));
+   return if $$target{obj_id} != 0;
+   my $msg = filter_chars(sprintf($fmt,@{$$arg{$type}}));
+   printf("%s\n",$msg);
+}
 
 sub necho
 {
@@ -16724,6 +17041,8 @@ sub necho
    my $self = obj($arg{self});
    my $loc;
    my $always;
+
+   return necho_shell($self,\%arg) if(@info{shell});
  
    if(defined $$prog{always}) {
       $always = $$prog{always};
@@ -17103,8 +17422,11 @@ sub destroy_object
    }
 
    push(@free,$$target{obj_id});
-   give_money($owner,money($target,1));                        # refund money
-   set_quota($owner,"add");                                    # refund quota
+
+   if(valid_dbref($$owner{obj_id})) {                      # shouldn't happen
+      give_money($owner,money($target,1));                      # refund money
+      set_quota($owner,"add");                                  # refund quota
+   }
    db_delete($target);
    return 1;
 }
@@ -17129,7 +17451,7 @@ sub create_object
       $who = $$user{hostname};
       $owner = 0;
    } elsif($type eq "OBJECT") {
-      $where = $$user{obj_id};
+      $where = $$self{obj_id};
    } elsif($type eq "ROOM") {
       $where = -1;
    } elsif($type eq "EXIT") {
@@ -17155,7 +17477,6 @@ sub create_object
            );
       db_delete($id);
       push(@free,$id);
-      printf("abort: couldn't set flag?\n");
       return undef;
    }
 
@@ -17170,7 +17491,7 @@ sub create_object
       db_set($id,"obj_home",$$self{obj_id});
    }
 
-   db_set($id,"obj_owner",$$self{obj_id});
+   db_set($id,"obj_owner",$owner);
    db_set($id,"obj_created_date",scalar localtime());
 
    # #0 was just created, don't move it around
@@ -17263,7 +17584,6 @@ sub give_money
 
    # $money doesn't contain a number
 
-   printf("Got this far: 1\n");
    return 0 if($amount !~ /^\s*\-{0,1}(\d+)\s*$/);
 
    if($flag) {
@@ -17273,7 +17593,6 @@ sub give_money
       db_set($target,"obj_money",$money + $amount);
    }
 
-   printf("Got this far: 99\n");
    return 1;
 }
 
@@ -17288,7 +17607,7 @@ sub good_atr_name
 
    if(reserved($attr) && !$flag) {                     # don't set that!
       return 0;
-   } elsif($attr =~ /^\s*([#a-z0-9\_\-\.\/]+)\s*$/i) {
+   } elsif($attr =~ /^\s*([#a-z0-9\_\-\.\/\\++]+)\s*$/i) {
       return 1;
    } else {
       return 0;

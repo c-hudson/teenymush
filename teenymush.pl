@@ -3256,7 +3256,7 @@ sub cmd_dump
          necho(self   => $self,
                prog   => $prog,
                source => [ "\@dump completed." ],
-              );
+              ) if !@info{shell};
       }
       con("**** Dump Complete: Exiting ******\n") if($type eq "CRASH");
 
@@ -9231,8 +9231,7 @@ sub spin
 
       if(!defined @info{dump_time}) {
          @info{dump_time} = time();
-      } elsif(@info{dump_name} eq "" ||  # initial db?
-              time()-@info{dump_time} > nvl(conf("dump_interval"),86400)) {
+      } elsif(time()-@info{dump_time} > nvl(conf("dump_interval"),86400)) {
          @info{dump_time} = time();
          my $self = obj(0);
          mushrun(self   => $self,
@@ -16166,26 +16165,37 @@ sub load_db
 
    if($fn eq undef) {
       printf("\nNo database found, loading starter database.\n\n");
-      printf("Connect as: god potrzebie\n\n");
+      printf("Connect as: god potrzebie\n\n") if !@info{shell};
       my $obj = {obj_id => 0};
       my $prog = prog($obj,$obj,$obj);
       cmd_pcreate($obj,$prog,"god potrzebie",{},1);             # create god
       set_flag($obj,$prog,$obj,"GOD",,1);                  # set god wizard
 
       create_object($obj,$prog,"The Void",undef,"ROOM",1);
-      set($obj,$prog,$obj,"CONF.STARTING_ROOM","#1");   # set starting room
+      set($obj,$prog,$obj,"CONF.STARTING_ROOM","#1",1);   # set starting room
       teleport($obj,$prog,$obj,1);             # teleport god into the void
 
       cmd_pcreate($obj,$prog,"webuser potrzebie",{},1);        # create webuser
       cmd_give(3,$prog,"#0 = 9999999");             # give webobject money
       teleport(3,$prog,$obj,1);             # teleport god into the void
-      set($obj,$prog,$obj,"CONF.WEBUSER","#2");         # set webuser object
+      set($obj,$prog,$obj,"CONF.WEBUSER","#2",1);         # set webuser object
       create_object(obj(2),$prog,"WebSecurityObject",undef,"OBJECT",1);
-      set($obj,$prog,$obj,"CONF.WEBOBJECT","#3");        # set webuser object
+      set($obj,$prog,$obj,"CONF.WEBOBJECT","#3",1);        # set webuser object
       set_flag($obj,$prog,3,"!NO_COMMAND",,1);       # remove NO_COMMAND
       set($obj,$prog,3,"DEFAULT",
          "\$default:\@pemit %#=This is the minimal default web page for " .
-         "[version()]. Please update this with: &default #3=Your web page");
+         "[version()]. Please update this with: &default #3=Your web page",1);
+      set($obj,$prog,$obj,"CONF.MUDNAME","TeenyMUSH",1);   # set mudname
+
+      mushrun(self   => obj(0),
+              runas  => obj(0),
+              invoker=> obj(0),
+              source => 1,
+              cmd    => "\@dump",
+             );
+      while(scalar keys %engine) {      # command will remove itself when done
+         spin();
+      }
 
       return;
    }

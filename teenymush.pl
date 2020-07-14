@@ -17017,7 +17017,7 @@ sub echo_socket
    }
 }
 
-sub necho_tmshell
+sub necho_shell
 {
    my ($self,$arg) = @_;
 

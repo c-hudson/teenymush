@@ -2058,3 +2058,19 @@ LOCATE() (continued)
 
   This command lists @commands or functions() without any help.
   This is useful for determing which things need help entries written.
+
+& @edit
+  Command: @edit <object>/<wild-attr> = <search>,<replace>
+           @edit[<switch>] <object>/<wild-attr> = ^,<text>
+           @edit[<switch>] <object>/<wild-attr> = $,<text>
+
+  This command edits the contents of one or more attributes of an object,
+  eliminating the need to retype a long attribute in order to make a simple
+  change.  In the first form, all occurrences of <search> in the specified
+  attribute of the named object are replaced with <replace>.  Use curly
+  braces ({ and }) around <search> or <replace> if they contain commas.
+  The second and third form prepend and append <text> to the selected
+  attributes, respectively.  
+
+  If <wild-attr> contains wildcard characters, then all attributes that
+  match are edited.

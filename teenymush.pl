@@ -310,7 +310,7 @@ sub main
 
    process_commandline();
 
-   fun_mush_address(obj(0),{});                      # cache public address
+   fun_mush_address(obj(0),{}) if !@info{shell};       # cache public address
 
    if(@info{shell}) {
       mushrun(self   => obj(0),

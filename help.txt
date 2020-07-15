@@ -2074,3 +2074,83 @@ LOCATE() (continued)
 
   If <wild-attr> contains wildcard characters, then all attributes that
   match are edited.
+& secure()
+  Function: secure(<string>)
+
+  Returns <string> after replacing the characters [](){};%\^,$ with spaces.
+  This prevents strings entered by players from causing undesired side
+  effects when used, such as making your object perform unintended commands
+  or give out information to which you have access.  Note that this function
+  is only needed when the resulting string is to be passed through the @force
+  command or be used as an attribute for an object (like the success message
+  for a mail message object).
+
+  Examples:
+    > @va me=Sneak a peek at Wiz's desc... [get(#1/desc)]
+    > say secure(%va)
+    You say "Sneak a peek at Wiz's desc...  get #1/desc  "
+    > say secure($foobar:this {is} a really, tough ; test.)
+    You say " foobar:this is a really tough   test."
+
+  Note: 'say secure(Sneak a peek at Wiz's desc... [get(#1/desc)])' does not
+  produce the expected result because the argument is evaluated BEFORE being
+  processed by secure(), therefore the [get()] call has already been
+  performed.
+
+  See Also: escape()
+& ulocal()
+  Function:  ulocal([<obj>/]<attr>[,<arg>]...)
+
+  The ulocal() function is almost identical to u() in function:  it
+  evaluates an attribute, either from the object performing the function,
+  or another object that you control or has the same owner as you, passing
+  in arguments and returning the result. When evaluating the fetched
+  attribute, %# refers to the original enactor and not the 'calling' object;
+  'me' refers to the object that supplied the attribute.
+
+  However, unlike the u() function, the global registers r(0) through r(9)
+  (%q0 - %q9) are preserved in their initial state. This means that functions
+  "below" the level of the u() can reset global registers for temporary
+  calculations, without needing to worry about "clobbering" the original
+  values.
+
+  This makes ulocal() particularly useful for global or shared code which
+  calls arbitrary u() functions, where global register values need to be
+  preserved from accidental user clobbering.
+
+{ See "help ulocal2" for examples. }
+& ulocal2
+  Example of ulocal():
+    > &FRUIT me=apples bananas oranges pears
+    > &SUB-FUNCTION me=[setq(0,v(FRUIT))][extract(%q0,match(%q0,%0),1)]
+    > &TOP-FUNCTION me=[setq(0,are delicious!)][ulocal(SUB-FUNCTION,%0)] %q0
+    > say u(TOP-FUNCTION,b*)
+    You say "bananas are delicious!"
+
+  If SUB-FUNCTION had been called with u() instead of ulocal():
+    > &TOP-FUNCTION me=[setq(0,are delicious!)][u(SUB-FUNCTION,%0)] %q0
+    > say u(TOP-FUNCTION,b*)
+    You say "bananas apples bananas oranges pears"
+
+  In this second example, in SUB-FUNCTION, %q0 was set to "apples bananas
+  oranges pears", so that when the u() "returned" and TOP-FUNCTION evaluated
+  %q0, this is what was printed. In the first example, ulocal() reset the
+  value of %q0 to its original "are delicious!"
+& map()
+  FUNCTION: map([<obj>/]<attr>,<list>[,<input delim>[,<output delim>[,<arg1>[,<
+arg2>[,...]]]]])
+
+  This function is nearly identical to an iter() operating on u() function.
+  Each member of <list> is passed to the result of fetching <attr> as %0, and
+  the results are used to form a new list.  Arguments %1, %2, ... are taken
+  from <arg1>, <arg2>, ... respectively, if present.
+
+  In addition to any single character, <output delim> can also be the null-
+  delimiter, @@, or a newline, %r.  By default, input and output delimiters
+  are both space.
+
+  Examples:
+    > &ADD_ONE object=add(%0,1)
+    > say map(object/add_one,1 2 3 4 5)
+    You say, "2 3 4 5 6"
+

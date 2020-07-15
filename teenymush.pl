@@ -3492,8 +3492,12 @@ sub cmd_dolist
 
    if(!defined $$cmd{dolist_list}) {                      # initialize dolist
        my ($first,$second) = balanced_split($txt,"=",4);
+#       printf("FIRST:  '%s'\n",$first);
+#       printf("SECOND: '%s'\n",$second);
+       
        $$cmd{dolist_cmd}   = $second;
        my $txt = evaluate($self,$prog,$first);
+#       printf("TXT:    '%s'\n",$txt);
        $$cmd{dolist_list} = [safe_split($txt,$delim)];
        $$cmd{dolist_count} = 0;
        $$prog{iter_stack} = [] if(!defined $$prog{iter_stack});
@@ -3522,6 +3526,7 @@ sub cmd_dolist
    }
 
    my $item = trim(shift(@{$$cmd{dolist_list}}));
+#   printf("ITEM: '%s'\n",$item);
    if($item !~ /^\s*$/) {
 #      $item = fun_escape($self,$prog,$item);
       my $cmds = $$cmd{dolist_cmd};
@@ -7912,14 +7917,14 @@ sub parent
 {
    my $obj = obj(shift);
 
-   my $parent = mget($obj,"obj_parent");
+   my $parent = get($obj,"obj_parent");
    $parent =~ s/^\s*#\s*//g;
    return ($parent ne undef && valid_dbref($parent)) ? $parent : undef;
 }
 
 sub hasattr
 {
-   my ($obj,$attr,$parent) = (obj(shift),ansi_remove(shift),shift);
+   my ($obj,$attr,$parent,$debug) = (obj(shift),ansi_remove(shift),shift,shift);
    my $data;
 
    # handle if object exists
@@ -7930,7 +7935,8 @@ sub hasattr
    $parent = 1 if(lc($parent) eq "parent");
 
    # handle if attribute exits on object
-   if(defined $$data{lc($attr)}) {           # check if attribute exists
+   printf("hasattr: '%s'\n",$$data{obj_id}) if $debug;
+   if(!$parent && defined $$data{lc($attr)}) {  # check if attribute exists
       return 1;                                                  # exists
    } elsif($parent && hasparent($obj)) {                   # check parent?
       my $parent = parent($obj);
@@ -10273,6 +10279,7 @@ sub initialize_functions
    @fun{left}       = sub { return &fun_left(@_);                  };
    @fun{lattr}      = sub { return &fun_lattr(@_);                 };
    @fun{iter}       = sub { return &fun_iter(@_);                  };
+   @fun{map}        = sub { return &fun_map(@_);                   };
    @fun{list}       = sub { return &fun_list(@_);                  };
    @fun{citer}      = sub { return &fun_citer(@_);                 };
    @fun{parse}      = sub { return &fun_iter(@_);                  };
@@ -10404,6 +10411,7 @@ sub initialize_functions
    @fun{power}      = sub { return &fun_power(@_);                 };
    @fun{create}     = sub { return &fun_create(@_);                };
    @fun{isdbref}    = sub { return &fun_isdbref(@_);               };
+   @fun{secure}     = sub { return &fun_secure(@_);                };
 }
 
 
@@ -14280,9 +14288,75 @@ sub fun_u
    return $result;
 }
 
-sub fun_ulocal
+sub fun_map
 {
    my ($self,$prog) = (shift,shift);
+   my (@out);
+
+   my ($obj,$atr)= bsplit(evaluate($self,$prog,shift),"/");
+   my $list = evaluate($self,$prog,shift);
+   my $idelim = trim(ansi_remove(evaluate($self,$prog,shift)));
+   my $odelim = evaluate($self,$prog,shift);
+   $odelim = " " if(empty($odelim));
+   $idelim = " " if(empty($idelim));
+
+   my $target = find($self,$prog,$obj) ||
+      return undef;                                  # no error in TinyMUSH
+   
+   if(!(controls($self,$target) ||
+        hasflag($target,"VISUAL") ||
+        atr_hasflag($target,$atr,"VISUAL")
+       )
+      ) {
+      return undef;                                  # no error in TinyMUSH
+   }
+
+   return undef if(empty($atr));
+
+   my $attribute = pget($target,$atr);
+   my $prev = get_digit_variables($prog);                   # save %0 .. %9
+   for my $i (safe_split($list,$idelim)) {
+      set_digit_variables($self,$prog,"",$i,@_);
+      push(@out,ansi_trim(evaluate($self,$prog,$attribute)));
+   }
+
+   return join($odelim,@out);
+}
+
+sub fun_secure
+{
+   my ($self,$prog) = (obj(shift),shift);
+   my @out;
+
+   while($#_ > -1) {
+      my $txt = ansi_init(evaluate($self,$prog,shift));
+      my $len = ansi_length($txt);
+
+      for(my $i = 0;$i < $len;$i++) {
+         my $str = $$txt{ch};
+         if($$str[$i] eq "["  ||
+            $$str[$i] eq "]"  ||
+            $$str[$i] eq "("  ||
+            $$str[$i] eq ")"  ||
+            $$str[$i] eq "{"  ||
+            $$str[$i] eq "}"  ||
+            $$str[$i] eq "\;" ||
+            $$str[$i] eq "%"  ||
+            $$str[$i] eq "\\" ||
+            $$str[$i] eq "^"  ||
+            $$str[$i] eq ","  ||
+            $$str[$i] eq "\$") {
+            $$str[$i] = " ";
+         }
+      }
+      push(@out,ansi_string($txt));
+   }
+   return join(" ",@out);
+}
+
+sub fun_ulocal
+{
+   my ($self,$prog) = (obj(shift),shift);
    my ($txt,$obj,$attr,@arg,%temp);
 
 #   stack_print();
@@ -14298,14 +14372,13 @@ sub fun_ulocal
       $txt = evaluate($self,$prog,shift);
    }
 
-   for my $i (0 .. $#_) {
-      @arg[$i] = evaluate($self,$prog,$_[$i]);
-   }
-
    if($txt =~ /\//) {                    # input in object/attribute format?
       ($obj,$attr) = (find($self,$prog,$`,"LOCAL"),$');
    } else {                                  # nope, just contains attribute
       ($obj,$attr) = ($self,$txt);
+   }
+   for my $i (0 .. $#_) {
+      @arg[$i] = evaluate($self,$prog,$_[$i]);
    }
 
    if($obj eq undef) {
@@ -14319,22 +14392,19 @@ sub fun_ulocal
 
    my $prev = get_digit_variables($prog);                   # save %0 .. %9
    set_digit_variables($self,$prog,"",@arg);          # update to new values
-#   printf("---[ start ]-----\n");
-#   for my $i (0 .. $#arg) {
-#      printf("$i : '%s'\n",@arg[$i]);
-#   }
-#   printf("---[  end  ]-----\n");
    if(defined $$prog{var}) {
       for my $key (grep {/^setq_/} keys %{$$prog{var}}) { # store prev values
          @temp{$key} = $$prog{var}->{$key};
          delete @$prog{var}->{$key};
       }
    }
-   my $result = evaluate($obj,$prog,single_line(pget($obj,$attr)));
+
+   my $result = evaluate($self,$prog,single_line(pget($obj,$attr)));
+
    set_digit_variables($self,$prog,"",$prev);            # restore %0 .. %9
 
    if(defined $$prog{var}) {
-      for my $key (grep {/^setq_/} keys %{$$prog{var}}) { # store prev values
+      for my $key (grep {/^setq_/} keys %{$$prog{var}}) { # restore prev values
          delete @$prog{var}->{$key};
       }
       for my $key (keys %temp) {
@@ -14523,7 +14593,9 @@ sub fun_setq
    my $register = lc(trim(evaluate($self,$prog,shift)));
 
    if($register =~ /^\s*([0-9a-z])\s*$/) {
+#      printf("SETQ: '%s' -> '%s'\n",$register,$_[0]);
       @{$$prog{var}}{"setq_$register"} = evaluate($self,$prog,shift);
+#      printf("      '%s'\n",@{$$prog{var}}{"setq_$register"});
    } else {
       @{$$prog{var}}{$register} = evaluate($self,$prog,shift);
    }
@@ -14540,7 +14612,9 @@ sub fun_setr
    my $register = lc(trim(evaluate($self,$prog,shift)));
 
    if($register =~ /^\s*([0-9a-z])\s*$/) {
+#      printf("SETR: '%s' -> '%s'\n",$register,$_[0]);
       @{$$prog{var}}{"setq_$register"} = evaluate($self,$prog,shift);
+#      printf("      '%s'\n",@{$$prog{var}}{"setq_$register"});
       return @{$$prog{var}}{"setq_$register"};
    } else {
       @{$$prog{var}}{$register} = evaluate($self,$prog,shift);

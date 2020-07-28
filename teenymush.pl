@@ -182,6 +182,8 @@ sub load_defaults
 {
    delete @default{keys %default};
    @default{max}                      = 78;
+   @default{memory_prog_limit}        = 122880;
+   @default{memory_db_limit}          = 122880;
    @default{dump_interval}            = 3600;
    @default{master_override}          = "no";
    @default{money_name_plural}        = "Pennies";
@@ -688,6 +690,8 @@ sub initialize_commands
    @command{"go"}           ={ fun => sub { return &cmd_go(@_); }           };
    @command{"home"}         ={ fun => sub { return &cmd_home(@_); }         };
    @command{"examine"}      ={ fun => sub { return &cmd_ex(@_); }           };
+   @command{"brief"}        ={ fun => sub { return &cmd_ex($_[0],$_[1],
+                                                      $_[2],{brief => 1});} };
    @command{"\@edit"}       ={ fun => sub { return &cmd_edit(@_); }         };
    @command{"ex"}           ={ fun => sub { return &cmd_ex(@_); }           };
    @command{"e"}            ={ fun => sub { return &cmd_ex(@_); }           };
@@ -775,6 +779,7 @@ sub initialize_commands
    @command{"\@motd"}       ={ fun => sub { return &cmd_motd(@_); }         };
    @command{"\@chown"}      ={ fun => sub { return &cmd_chown(@_); }        };
    @command{"\@nohelp"}     ={ fun => sub { return &cmd_nohelp(@_); }       };
+   @command{"\@debug"}      ={ fun => sub { return &cmd_debug(@_); }        };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -884,6 +889,41 @@ sub restore_process_line
 #      con("Unable to parse[$$state{obj}]: '%s'\n",$line);
 #      printf("Unable to parse[$$state{obj}]: '%s'\n",$line);
 #      printf("%s\n",code("long"));
+   }
+}
+
+sub cmd_debug
+{
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
+
+   if(defined $$prog{cmd} && $$prog{cmd}->{source} == 1) {
+      if(!managed_var_set($prog,"debug",1)) {
+         necho(self   => $self,
+               prog   => $prog,
+               source => [ managed_var_set_error() ]
+              );
+      }
+      
+      necho(self => $self,
+            prog => $prog,
+            source => [ "\@debug running: '%s'\n",$txt ],
+           );
+
+      mushrun(self   => $self,                         # run initial command
+              prog   => $prog,
+              runas  => $self,
+              source => 0,
+              cmd    => $txt
+             );
+   } elsif(defined $$prog{var} && 
+           defined $$prog{var}->{debug} && $$prog{var}->{debug} == 1) {
+      mushrun(self   => $self,                # run only if debug is enabled
+              prog   => $prog,
+              runas  => $self,
+              source => 0,
+              child  => 2,
+              cmd    => $txt
+             );
    }
 }
 
@@ -1002,6 +1042,15 @@ sub cmd_ban
 
    if(defined $$switch{unban}) {                           # delete entries
       my $count = 0;
+      for my $key (keys %$hash) {
+         eval {                                # protect against bad patterns?
+            if($pat eq undef || $key =~ /$pat/) {
+               $count++;
+               delete @$hash{$key};
+            }
+         };
+      }
+      my $hash = @info{httpd_invalid_data};
       for my $key (keys %$hash) {
          eval {                                # protect against bad patterns?
             if($pat eq undef || $key =~ /$pat/) {
@@ -2554,7 +2603,7 @@ sub cmd_huh
       $$prog{missing}->{cmd}->{fun_extract($self,$prog,$txt,1,1)}++;
    }
 
-#   printf("HUH: '%s'\n",$txt);
+   printf("HUH: '%s'\n",$txt);
 
    if(lord(@{$$prog{cmd}}{cmd}) ne 0) {
       # printf("HuH: '%s' -> '%s'\n",$$self{obj_id},@{$$prog{cmd}}{cmd});
@@ -2692,6 +2741,12 @@ BEGIN {
    }
 }
 
+#
+# set_var
+#    Set a variable. Since this is controlled by the MUSH and is used
+#    to control the flow of the program, do not use managed_var_set to
+#    prevent using to much memory.
+#
 sub set_var
 {
    my ($prog,$var,$value) = @_;
@@ -2705,6 +2760,7 @@ sub set_var
 sub cmd_var
 {
    my ($self,$prog,$var,$rest);
+   my $value;
 
    if($#_ == 2) {                                         # current behavior
       ($self,$prog,$var,$rest) = (obj(shift),shift,trim(shift),shift);
@@ -2725,44 +2781,47 @@ sub cmd_var
             source => [ "Variables may not start with numbers\n" ],
            );
    } elsif($rest =~ /^\s*\+\+\s*$/) {                           # increment
-       @{$$prog{var}}{$var}++;
+      $value = @{$$prog{var}}{$var} + 1;
    } elsif($rest =~ /^\s*\-\-\s*$/) {                            # decrement
-      @{$$prog{var}}{$var}--;
+      $value = @{$$prog{var}}{$var} - 1;
    } elsif($rest =~ /^\s*\+=\s*/) {                                  # add
-      @{$$prog{var}}{$var} += evaluate($self,$prog,$');
+      $value = @{$$prog{var}}{$var} + evaluate($self,$prog,$');
    } elsif($rest =~ /^\s*-=\s*/) {                                  # sub
-      @{$$prog{var}}{$var} -= evaluate($self,$prog,$');
+      $value = @{$$prog{var}}{$var} - evaluate($self,$prog,$');
    } elsif($rest =~ /^\s*\*=\s*/) {                                  # mult
-      @{$$prog{var}}{$var} *= evaluate($self,$prog,$');
+      $value = @{$$prog{var}}{$var} *= evaluate($self,$prog,$');
    } elsif($rest =~ /^\s*\/=\s*/) {                                  # divide
       my $num = evaluate($self,$prog,$');
 
       if($num == 0) {
          return err($self,$prog,"Divide by Zero not allowed.");
       } else {
-         @{$$prog{var}}{$var} = @{$$prog{var}}{$var} / $num;
+         $value = @{$$prog{var}}{$var} / $num;
       }
    } elsif($rest =~ /^\s*\.=\s*/) {                                  # append
       if(@{$$prog{cmd}}{source} == 0) {
-         @{$$prog{var}}{$var} .=  evaluate($self,$prog,$');
+         $value = @{$$prog{var}}{$var} . evaluate($self,$prog,$');
       } else {
-         @{$$prog{var}}{$var} = $';
+         $value = $';
       }
    } elsif($rest =~ /^\s*=\s*/) {                                      # set
       if(trim($') eq undef) {                             # no value, delete
-         delete @{$$prog{var}}{$var};
+         # do nothing
       } elsif(@{$$prog{cmd}}{source} == 0) {           # from prog, evaluate
-         @{$$prog{var}}{$var} = evaluate($self,$prog,$');
+         $value = evaluate($self,$prog,$');
       } else {                                # from person, do not evaluate
-         @{$$prog{var}}{$var} = $';
+         $value = $';
       }
    } else {
       return err($self,$prog,"Invalid command.");
    }
-#   necho(self   => $self,
-#         prog   => $prog,
-#         source => [ "Set." ],
-#        );
+
+   if(!managed_var_set($prog,$var,$value)) {
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ managed_var_set_error() ]
+           );
+   }
 }
 
 sub cmd_boot
@@ -2979,71 +3038,6 @@ sub cmd_ps
          prog   => $prog,
          source => [ "%s", join("\n",@out) ]
         );
-
-#    my ($self,$prog,$txt,$switch) = @_;
-#    my (@out, $var);
-#
-#    verify_switches($self,$prog,$switch,"var") || return;
-#
-#    push(@out,"----[ Start ]----");
-#
-#    for my $pid (keys %engine) {
-#       my $p = @engine{$pid};
-#       $$p{command} = 0 if !defined $$prog{command};
-#       $$p{function} = 0 if !defined $$p{function};
-#       $var = undef;
-#
-#       if(defined $$p{stack} && ref($$p{stack}) eq "ARRAY" &&
-#          controls($self,$$p{created_by}) &&
-#          (!hasflag($$p{created_by},"GOD") || hasflag($self,"GOD"))) {
-#          # can only see processes they control
-#          # non-gods can not see god processes
-#
-#          push(@out,sprintf("  PID: %s for %s [%sc/%sf]",
-#                               $pid,
-#                               obj_name($self,$$p{created_by}),
-#                               $$p{command},
-#                               $$p{function}
-#                          )
-#              );
-#
-#          for my $i (0 .. $#{$$p{stack}}) {
-#             my $cmd = @{$$p{stack}}[$i];
-#             my $left;
-#
-#             if(defined @{$$p{stack}}[0] && @{@{$$p{stack}}[0]}{runas}) {
-#                $left = " for " .
-#                   obj_name($self,@{@{@{$$p{stack}}[0]}{runas}}{obj_id},1);
-#             }
-#             if(defined $$cmd{sleep}) {
-#                $left .= "  [" . ($$cmd{sleep} - time()) . " seconds left]";
-#             }
-#             push(@out,sprintf("    '%s%s'%s",
-#                               substr(single_line($$cmd{cmd}),0,64),
-#                               (length(single_line($$cmd{cmd})) > 67)?"..." : "",
-#                               $left
-#                              )
-#                 );
-#          }
-#
-#          if(defined $$switch{var}) {
-#             for my $key (keys %{@$p{var}}) {
-#                if(@{$$p{var}}{$key} !~ /^\s*$/) {
-#                   if($var eq undef) {
-#                      push(@out,"  ### Variables ###");
-#                      $var = 1;
-#                   }
-#                   push(@out, "    $key : " . substr(@{$$p{var}}{$key},1,60));
-#                }
-#             }
-#          }
-#       }
-#    }
-#    push(@out,"----[  End  ]----");
-#    necho(self   => $self,                           # target's room
-#          prog   => $prog,
-#          source => [ "%s", join("\n",@out) ]
-#         );
 }
 
 #
@@ -3055,19 +3049,31 @@ sub cmd_halt
    my ($self,$prog) = (obj(shift),shift);
    my $obj = owner($self);
    my $count = 0;
+   my ($ldbref,$lpid);
 
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission denied.");
 
+   my $lookfor = ansi_remove(evaluate($self,$prog,shift));
    my $iswiz = hasflag($self,"WIZARD");
+
+   if($lookfor =~ /^\s*#(\d+)\s*$/) {
+      $ldbref = $1;
+   } elsif($lookfor =~ /^\s*(\d+)\s*$/) {
+      $lpid = $1;
+   } elsif($lookfor ne undef) {
+      return err($self,$prog,"Invalid PID or dbref '%s' specified.");
+   }
 
    for my $pid (keys %engine) {                          # look at each pid
       my $program = @engine{$pid};
 
+      my $cmd = @{$$program{stack}}[0];
       # kill only your stuff but not the halt command
       if($$prog{pid} != $pid &&
-         ($$obj{obj_id} == @{$$program{created_by}}{obj_id} || $iswiz)) {
-         my $cmd = @{$$program{stack}}[0];
+         ($$obj{obj_id} == @{$$program{created_by}}{obj_id} || $iswiz) &&
+         ($lookfor eq undef || $lpid eq $pid || 
+          $ldbref eq $cmd->{runas}->{obj_id})) {
          necho(self => $self,
                prog => $prog,
                source => [ "Pid %s stopped : %s%s" ,
@@ -3851,7 +3857,7 @@ sub cmd_switch
       return err($self,$prog,"Permission denied.");
 
     my ($first,$second) = bsplit(shift(@list),"=");
-    $first = trim(ansi_remove(evaluate($self,$prog,$first)));
+    $first = ansi_trim(evaluate($self,$prog,$first));
     $first =~ s/[\r\n]//g;
     $first =~ tr/\x80-\xFF//d;
     unshift(@list,$second);
@@ -3885,23 +3891,34 @@ sub cmd_switch
                               );
              }
           } else {
-             eval {                    # assume $pat could be a bad regexp
-                if($first =~ /$pat/) {
-                   $cmd =~ s/\\,/,/g;
-                   mushrun(self   => $self,
-                           prog   => $prog,
-                           source => 0,
-                           cmd    => $cmd,
-                           child  => 1,
-                           invoker=> invoker($prog,$self),
-                           match  => { 0 => $1, 1 => $2, 2 => $3,
-                                       3 => $4, 4 => $5, 5 => $6,
-                                       6 => $7, 7 => $8, 8 => $9 }
-                          );
-                   $done = 1;
-                }
-             };
-             return if $done;
+             my @wild = ansi_match($first,$txt);
+             if($#wild >=0) {
+                $cmd =~ s/\\,/,/g;
+
+                @$prog{cmd}->{mdigits} = {
+                   0 => @wild[0], 1 => @wild[1], 2 => @wild[2], 
+                   3 => @wild[3], 4 => @wild[4], 5 => @wild[5],
+                   6 => @wild[6], 7 => @wild[7],
+                   8 => @wild[8], 9 => @wild[9],
+                };
+                mushrun(self   => $self,
+                        prog   => $prog,
+                        source => 0,
+                        cmd    => $cmd,
+                        child  => 1,
+                        invoker=> invoker($prog,$self),
+                        match  => { 0 => $1, 1 => $2, 2 => $3,
+                                    3 => $4, 4 => $5, 5 => $6,
+                                    6 => $7, 7 => $8, 8 => $9 }
+                       );
+                @$prog{cmd}->{mdigits} = {
+                   0 => @wild[0], 1 => @wild[1], 2 => @wild[2], 
+                   3 => @wild[3], 4 => @wild[4], 5 => @wild[5],
+                   6 => @wild[6], 7 => @wild[7],
+                   8 => @wild[8], 9 => @wild[9],
+                };
+                return;
+             }
           }
        } else {
           @list[0] = $1 if(@list[0] =~ /^\s*{(.*)}\s*$/);
@@ -4119,46 +4136,32 @@ sub cmd_uptime
 
 sub cmd_force
 {
-    my ($self,$prog,$txt) = (obj(shift),shift,shift);
+    my ($self,$prog) = (obj(shift),shift);
 
     hasflag($self,"GUEST") &&
        return err($self,$prog,"Permission denied.");
 
-    if($txt =~ /^\s*([^ ]+)\s*=\s*/) {
-       my $target = find($self,$prog,$1) ||
-          return err($self,$prog,"I can't find that");
+    my ($left,$right) = besplit($self,$prog,shift,"=");
 
-       if(!controls($self,$target)) {
-          return err($self,$prog,"Permission Denied.");
-       }
+    my $target = find($self,$prog,$left) ||
+       return err($self,$prog,"I can't find that - '$left'");
 
-       if(hasflag($target,"GOD") && !hasflag($self,"GOD")) {
-          return err($self,$prog,"Permission Denied.");
-       }
+    if(!controls($self,$target)) {
+       return err($self,$prog,"Permission Denied.");
+    }
 
-#       mushrun(self   => $target,
-##               prog   => prog($target,$target$prog,
-#               runas  => $target,
-#               source => 0,
-#               cmd    => evaluate($self,$prog,$'),
-##               cmd    => $',
-#               hint   => "INTERNAL"
-#              );
+    if(owner_id($self) != owner_id($target)) {
+       audit($self,$prog,"%s \@forced",obj_name($target,$target));
+    }
 
-       if(owner_id($self) != owner_id($target)) {
-          audit($self,$prog,"%s \@forced",obj_name($target,$target));
-       }
-       mushrun(self     => $target,
-               prog     => $prog,
-               runas    => $target,
-               source   => 0,
-               cmd      => evaluate($self,$prog,$'),
-               child    => 2,
-               hint     => "ALWAYS_RUN"
-              );
-   } else {
-     err($self,$prog,"syntax: \@force <object> = <command>");
-   }
+    mushrun(self     => $target,
+            prog     => $prog,
+            runas    => $target,
+            source   => 0,
+            cmd      => $right,
+            child    => 2,
+            hint     => "ALWAYS_RUN"
+           );
 }
 
 #   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -6138,7 +6141,7 @@ sub cmd_ex
 
    my $switch = shift;
 
-   verify_switches($self,$prog,$switch,"raw","command","detail") || return;
+   verify_switches($self,$prog,$switch,"raw","command","detail","brief") || return;
 
    if($txt =~ /^\s*$/) {
       $target = loc_obj($self);
@@ -6216,7 +6219,7 @@ sub cmd_ex
       }
    }
 
-   if($perm) {                                             # show attributes
+   if($perm && !$$switch{brief}) {                           # show attributes
       my $attr = list_attr($target,$atr,$sub,$switch);
       $out .= "\n" . $attr if($attr ne undef);
    }
@@ -6356,9 +6359,14 @@ sub cmd_look
 
    if($attr ne undef) {
       my $prev = get_digit_variables($prog);              # save %0 .. %9
-      set_digit_variables($self,$prog,"",join(' ',@con)); # update to new
-      $out .= "\n" . evaluate($target,$prog,$attr);
-      set_digit_variables($self,$prog,"",$prev);        # restore %0 .. %9
+      if(!set_digit_variables($self,$prog,"",join(' ',@con))) {# update to new
+         $out .= "\n" . managed_var_set_error("#-1");
+      } else {
+         $out .= "\n" . evaluate($target,$prog,$attr);
+      }
+      if(!set_digit_variables($self,$prog,"",$prev)) {    # restore %0 .. %9
+         $out .= "\n" . managed_var_set_error("#-1");
+      }
    }
 
    for my $obj (lexits($target)) {
@@ -6633,7 +6641,9 @@ sub remove_punctuation
 {
    my $txt = shift;
 
-   if($txt =~ /\s*([:;.,"\(\)\[\]]+)\s*$/) {
+   if($txt =~ /'s\s*$/) {
+      return $`;
+   } elsif($txt =~ /\s*([:;.,"\(\)\[\]]+)\s*$/) {
       return $`;
    } else {
       return $txt;
@@ -6643,26 +6653,38 @@ sub remove_punctuation
 sub colorize
 {
    my ($self,$prog,$txt) = @_;
-   my $out;
+   my (%list,$out);
+
+   # instead of creating a list each word, just initialize it once
+   # per call.
+   for my $key (keys %connected) {
+      next if defined @connected{$key}->{raw} && @connected{$key}->{raw} != 0;
+      @list{lc(name(@connected{$key},1))} = @connected{$key}->{obj_id};
+   }
+
+   for my $obj (lcon(loc($self))) {
+      if(hasflag($obj,"PLAYER") && time()-lasttime($obj,1) < 604800) {
+         @list{lc(name($obj,1))} = $$obj{obj_id};
+      }
+   }
 
    for my $word (safe_split($txt," ",1)) {
-      my $lookfor = trim(lc(ansi_remove(remove_punctuation($word))));
-      my $target = find($self,$prog,$lookfor);
+      my $look = lc(ansi_remove($word));
+      my $before;
 
-      # don't colorize non-connected players who haven't connected in a week.
-      if($target eq undef || (!hasflag($target,"CONNECTED") &&
-         time()-lasttime($target,1) > 604800)){
-         $out .= (($out eq undef) ? "" : " ") . $word;
-      } elsif(lc(name($target,1)) eq $lookfor) {
-         my ($before,$after);
-         $before = $1 if($word =~ /^(\s+)/);           # preserve spaces
-         $after = $1 if($word =~ /([ :;.,"\(\)\[\]]+)$/);
-         $out .= (($out eq undef) ? "" : " ") .
-                 $before .
-                 name($target) .
-                 $after;
+      if($word =~ /^([=\s\.;,'"?!\(\[\]\-):]+)/) {
+         ($before,$look) = ($1,$');
+      }
+      $before = " " . $before if($out ne undef);
+
+      if($look =~ /'s([=\s\.;,'"?!\(\):\[\]\-{}<>]*)$/&&defined @list{$`}) {
+         $out .= $before . name(@list{$`}) . "'s$1";
+      } elsif($look =~ /([=\s\.;,'"?!\(\):\[\]\-{}<>]+)$/&&defined @list{$`}) {
+         $out .= $before . name(@list{$`}) . "$1";
+      } elsif(defined @list{$look}) {
+         $out .= $before . name(@list{$look});
       } else {
-         $out .= (($out eq undef) ? "" : " ") . $word;
+         $out .= (($out ne undef) ? " " : "") . $word;
       }
    }
    return $out;
@@ -9011,7 +9033,7 @@ sub mushrun
 
    if(!$multi) {
       return if($arg{cmd} =~ /^\s*$/);
-      @arg{cmd} = $1 if($arg{cmd} =~ /^\s*{(.*)}\s*$/s);
+      @arg{cmd} = $1 if(ansi_remove($arg{cmd}) =~ /^\s*{(.*)}\s*$/s);
    }
 
    if(@arg{prog} eq undef) {                                       # new prog
@@ -9061,7 +9083,7 @@ sub mushrun
       return;
    } elsif(multiline(\%arg,$multi)) {          # multiline handled in function
       return;
-   } elsif(@arg{source} == 1) {                    # from user input, no split
+   } elsif(@arg{source} == 1 || @arg{nosplit} == 1) {# from user input, no split
       mushrun_add_cmd(\%arg,@arg{cmd});
    } else {                                   # non-user input, slice and dice
       mushrun_add_cmd(\%arg,balanced_split(@arg{cmd},";",3,1));
@@ -9088,21 +9110,22 @@ sub set_digit_variables
 
    # clear previous variables > 9
    for my $i ( grep {/^$sub\d+$/} keys %{$$prog{var}}) {
-      delete @{$$prog{var}}{$sub . $i};
+      return 0 if(!managed_var_set($prog,$sub . $i,undef));
    }
 
    if(ref($_[0]) eq "HASH") {
       my $new = shift;
        for my $i (0 .. 9) {
-         @{$$prog{var}}{$sub . $i} = $$new{$i};
+         return 0 if(!managed_var_set($prog,$sub . $i,$$new{$i}));
       }
    } else {
       my @var = @_;
 
       for my $i ( 0 .. 9 ) {
-         @{$$prog{var}}{$sub . $i} = $var[$i];
+         return 0 if (!managed_var_set($prog,$sub . $i,$var[$i]));
       }
    }
+   return 1;
 }
 
 sub get_digit_variables
@@ -9152,12 +9175,13 @@ sub mushrun_done
          $attr = "#@{$$prog{attr}}{atr_owner}/@{$$prog{attr}}{atr_name} => ";
       }
       logit($$prog{hint} eq "WEB" ? "weblog" : "conlog",
-            "Cost: %s%.3f pennies in %.3fs [%sc/%sf]\n",
+            "Cost: %s%.3f pennies [%.1fs/%sb/%sc/%sf]\n",
             $attr,
             $cost,
             $$prog{function_duration} + $$prog{command_duration},
+            nvl($$prog{max_bytes_used},0),
             nvl($$prog{command},0),
-            nvl($$prog{function},0)
+            nvl($$prog{function},0),
            ) if !@info{shell};
 #      for my $key (grep {/^fun_/} keys %$prog) {
 #         printf("   $key = $$prog{$key}\n");
@@ -9395,12 +9419,19 @@ sub run_internal
       $runas eq conf("webobject") ||
       $$command{source} == 1  ||
       money($$command{runas}) > 0) {
+      my $target = $$command{runas};
       if(defined $$command{wild}) {
-         set_digit_variables($$command{runas},                    # copy %0-%9
-                             $prog,
-                             "",
-                             @{$$command{wild}}
-                            );
+         if(!set_digit_variables($$command{runas},               # copy %0-%9
+                                 $prog,
+                                 "",
+                                 @{$$command{wild}}
+                                )) {
+             necho(self   => $target,
+                   prog   => $prog,
+                   source => [ managed_var_set_error("#-1") ]
+                  );
+             return;
+         }
       }
 
       # command is just a @ping, echo to user but do not run.
@@ -9411,7 +9442,6 @@ sub run_internal
               );
          return;
       }
-      my $target = $$command{runas};
       $target = $$target{obj_id} if(ref($target) eq "HASH");
       $result = &{@{$$hash{$cmd}}{fun}}($target,
                                         $prog,
@@ -10331,6 +10361,7 @@ sub initialize_functions
    @fun{eq}         = sub { return &fun_eq(@_);                    };
    @fun{not}        = sub { return &fun_not(@_);                   };
    @fun{match}      = sub { return &fun_match(@_);                 };
+   @fun{regedit}    = sub { return &fun_regedit(@_);               };
    @fun{strmatch}   = sub { return &fun_strmatch(@_);              };
    @fun{isnum}      = sub { return &fun_isnum(@_);                 };
    @fun{gt}         = sub { return &fun_gt(@_);                    };
@@ -10412,6 +10443,7 @@ sub initialize_functions
    @fun{create}     = sub { return &fun_create(@_);                };
    @fun{isdbref}    = sub { return &fun_isdbref(@_);               };
    @fun{secure}     = sub { return &fun_secure(@_);                };
+   @fun{uri_escape} = sub { return &fun_uri_escape(@_);            };
 }
 
 
@@ -10473,7 +10505,8 @@ sub tomush
       } elsif($ch eq "\n") {
          $out = "%r";
       } elsif($ch eq '[' || $ch eq ']' || $ch eq '%' || $ch eq '\\' ||
-         $ch eq '{' || $ch eq '}' || $ch eq '(' || $ch eq ')' || ($ch eq "," && $flag)) { # escape char
+         $ch eq '{' || $ch eq '}' || $ch eq '(' || $ch eq ')' || $ch eq ",") { # escape char
+#         $ch eq '{' || $ch eq '}' || $ch eq '(' || $ch eq ')' || ($ch eq "," && $flag)) { # escape char
          $out = "\\$ch";
       } else {
          $out = $ch;                                          # normal char
@@ -10586,6 +10619,17 @@ sub crypt_code
    return $out;
 }
 
+
+sub fun_uri_escape
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   if(module_enabled("uri_escape")) {
+      return uri_escape(join(',',@_));
+   } else {
+      return "#-1 FUNCTION DISABLED (URI_ESCAPE MODULE DISABLED)";
+   }
+}
 #
 # fun_haspower
 #    Place holder for when powers are implimented.
@@ -10996,6 +11040,7 @@ sub fun_ansi2mush
    );
 
    my $txt = evaluate($self,$prog,shift);
+#   printf("TXT: '%s'\n",ansi_remove($txt));
    $txt =~ s/\r//g;
 #   $txt =~ s/ /%b/g;
    my $str = ansi_init($txt);
@@ -11277,11 +11322,15 @@ sub fun_foreach
    my $count = 0;
 
    for(my ($i,$len)=(0,length($str));$i < $len;$i++) {
-      set_digit_variables($self,$prog,"",substr($str,$i,1),$count++);
+      if(!set_digit_variables($self,$prog,"",substr($str,$i,1),$count++)) {
+         return managed_var_set_error("#-1");
+      }
       $out .= evaluate($self,$prog,$atr);
    }
 
-   set_digit_variables($self,$prog,"",$prev);              # restore %0 .. %9
+   if(!set_digit_variables($self,$prog,"",$prev)) {        # restore %0 .. %9
+      return managed_var_set_error("#-1");
+   }
 
    return $out . $left;
 }
@@ -11442,7 +11491,6 @@ sub fun_trim
    my $input = evaluate($self,$prog,shift);
    $input =~ s/\r//mg;
 
-   my $txt    = ansi_init($input);
    my $type   = trim(ansi_remove(evaluate($self,$prog,shift)));
    my $chars  = trim(ansi_remove(evaluate($self,$prog,shift)));
 
@@ -11455,11 +11503,13 @@ sub fun_trim
    if($chars eq undef) {                               # set chars to filter
       @filter{" "} = 1;
       @filter{chr(9)} = 1;
+      $input =~ s/ +/ /g;
    } else {
       for my $i (0 .. length($chars)) {
          @filter{substr($chars,$i,1)} = 1;
       }
    }
+   my $txt    = ansi_init($input);
 
    if($type eq "b" || $type eq "l") {                  # find starting point
       for my $i (0 .. ansi_length($txt)) {
@@ -11979,9 +12029,9 @@ sub fun_url
          my $data = shift(@$buff);
 
 # wttr.in debug
-#         if($data =~ /mph/)  {
-#            printf("%s -> %s\n",$data,lord($`));
-#             printf("      '%s'\n",$data);
+#         if($data =~ /\d mi/)  {
+#            printf("%s -> %s\n",lord($`));
+#            printf("      '%s'\n",ansi_debug($data));
 #         }
 
          set_var($prog,"data",$data);
@@ -12119,7 +12169,9 @@ sub fun_shift
 
    for my $i ( sort {$a <=> $b} grep {/^\d+$/} keys %{$$prog{var}}) {
       $result = @{$$prog{var}}{$i} if($i == 0);
-      @{$$prog{var}}{$i} = @{$$prog{var}}{$i+1};
+      if(!managed_var_set($prog,$i,@{$$prog{var}}{$i+1})) {
+         return managed_var_set_error("#-1");
+      }
    }
    return $result;
 }
@@ -12134,10 +12186,14 @@ sub fun_unshift
    my $result;
 
    for my $i ( reverse sort {$a <=> $b} grep {/^\d+$/} keys %{$$prog{var}}) {
-      @{$$prog{var}}{$i+1} = @{$$prog{var}}{$i};
+      if(!managed_var_set($prog,$i+1,@{$$prog{var}}{$i})) {
+         return managed_var_set_error("#-1");
+      }
    }
 
-   @{$$prog{var}}{0} = shift;
+   if(!managed_var_set($prog,0,shift)) {
+      return managed_var_set_error("#-1");
+   }
    return undef;
 }
 
@@ -12153,7 +12209,9 @@ sub fun_pop
    for my $i (sort {$b <=> $a} grep {/^\d+$/} keys %{$$prog{var}}) {
       if(@{$$prog{var}}{$i} ne undef) {
          my $result = @{$$prog{var}}{$i};
-         delete @{$$prog{var}}{$i};
+         if(!managed_var_set($prog,$i,undef)) {
+            return managed_var_set_error("#-1");
+         }
          return $result;
       }
    }
@@ -12172,11 +12230,15 @@ sub fun_push
 
    for my $i (sort {$b <=> $a} grep {/^\d+$/} keys %{$$prog{var}}) {
       if(@{$$prog{var}}{$i} ne undef) {
-         @{$$prog{var}}{$i+1} = $value;
+         if(!managed_var_set($prog,$i+1,$$prog{var}->{$i})) {
+            return managed_var_set_error("#-1");
+         }
          return undef;
       }
    }
-   @{$$prog{var}}{0} = $value;
+   if(!managed_var_set($prog,0,$value)) {
+      return managed_var_set_error("#-1");
+   }
    return undef;
 }
 
@@ -12356,12 +12418,16 @@ sub fun_fold
          ($zero,$one) = ($last,shift(@list));
       }
 
-      set_digit_variables($self,$prog,"",$zero,$one);
+      if(!set_digit_variables($self,$prog,"",$zero,$one)) {
+         return managed_var_set_error("#-1");
+      }
       $last  = evaluate($self,$prog,$atr);
       $count++;
    }
 
-   set_digit_variables($self,$prog,"",$prev);
+   if(!set_digit_variables($self,$prog,"",$prev)) {
+      return managed_var_set_error("#-1");
+   }
 
    return $last;
 }
@@ -12552,8 +12618,8 @@ sub fun_telnet
 
    my $txt = evaluate($self,$prog,shift);
 
-   if($txt =~ /^#-1 Connection Closed$/i ||
-      $txt =~ /^#-1 Unknown Socket /) {
+   if($txt eq "#-1 Connection closed" ||
+      $txt eq "#-1 Unknown Socket") {
       return 0;
    } else {
       return 1;
@@ -13457,6 +13523,52 @@ sub fun_match
 }
 
 #
+# fun_match
+#    Match a string against a pattern with an optional delimiter.
+#
+sub fun_regedit
+{
+   my ($self,$prog) = (obj(shift),shift);
+   my ($tmp, $count);
+
+   my $txt   = evaluate($self,$prog,shift);
+
+   $$prog{reg} = {} if !defined $$prog{reg};
+   for my $i (0 .. 9) {                      # backup existing variables?
+      if(defined $$prog{reg}->{$i}) {
+         $$tmp{$i} = $$prog{var}->{$i};
+      }
+   }
+
+   while($#_ > -1 && $count++ < 15) {
+      my $pat   = trim(ansi_remove(evaluate($self,$prog,shift)));
+      my $replace = ansi_trim(shift);
+      eval {
+         if($txt =~ /$pat/) {
+            $$prog{reg} = {} if !defined $$prog{reg};
+            $$prog{reg} = {
+               0 => $&, 1 => $1, 2 => $2, 3 => $3, 4 => $4, 5 => $5,
+               6 => $6, 7 => $7, 8 => $8, 9 => $9
+            };
+            $txt = $` . evaluate($self,$prog,$replace) . $';
+         }
+      };
+      return "#-1 INVALID REGEXP" if($@);
+   }
+
+   for my $i (0 .. 9) {                      # restore existing variables?
+      if(defined $$tmp{$i}) {
+         $$prog{var}->{$i} = $$tmp{$i};
+      } else {
+         delete @$prog{reg}->{$i};
+      }
+   }
+   delete @$prog{reg} if(scalar keys %{$$prog{reg}} == 0);
+
+   return $txt;
+}
+
+#
 # fun_strmatch
 #    Match a string against a pattern with an optional delimiter.
 #
@@ -13572,7 +13684,11 @@ sub fun_switch
             my @wild = ansi_match($first,$txt);
             if($#wild >=0) {
                my $prev = get_digit_variables($prog);
-               my $tmp = @{$$prog{cmd}}{mdigit};
+               my $tmp = {};
+               my $mdig = $$prog{cmd}->{mdigits};
+               for my $key (keys %$mdig) {
+                  @$tmp{$key} = $$mdig{$key};
+               }
                @{$$prog{cmd}}{mdigits} = {
                   0 => @wild[0], 1 => @wild[1], 2 => @wild[2], 3 => @wild[3],
                   4 => @wild[4], 5 => @wild[5], 6 => @wild[6], 7 => @wild[7],
@@ -13691,6 +13807,7 @@ sub fun_after
    }
 }
 
+
 sub fun_rest
 {
    my ($self,$prog) = (shift,shift);
@@ -13742,26 +13859,33 @@ sub fun_last
    good_args($#_,1,2) ||
       return "#-1 Function (LAST) EXPECTS 1 or 2 ARGUMENTS";
 
-   my $txt   = evaluate($self,$prog,shift);
-   my $delim = evaluate($self,$prog,shift);
+   my $txt = evaluate($self,$prog,shift);
+#   $txt =~ s/°//g;
+   my $txt = ansi_init($txt);
+   my $delim = ansi_remove(evaluate($self,$prog,shift));
+   $delim = " " if($delim eq undef);
+   my $dsize = length($delim);
+   my $array = $$txt{ch};
+   my $endable = ($delim eq " ") ? 0 : 1;
 
-   if($delim eq undef || $delim eq " ") {
-      $txt =~ s/^\s+|\s+$//g;
-      $txt =~ s/\s+/ /g;
-      $delim = " ";
-   }
-
-   my $loc = rindex($txt,$delim);
-
-   if($loc == -1) {
-      return $txt;
-   } else {
-      my $result = substr($txt,$loc+1);
-      $result =~ s/^\s+//g;
-      return $result;
-   }
+   for(my $i = $#$array;$i >= 0;$i--) {
+      next if $$array[$i] eq undef;
+       if($endable && join('',@$array[$i .. ($i + $dsize - 1)]) eq $delim) {
+          if($delim eq " ") {
+             return ansi_trim(ansi_substr($txt,$i + $dsize));
+          } else {
+             return ansi_substr($txt,$i + $dsize);
+          }
+       } elsif(!$endable && $$array[$i] ne " ") {
+          $endable = 1;             # look for non-space for space delim
+       }
+    }
 }
 
+#
+# fun_before
+#    Moddled after fun_last except regular order..
+#
 sub fun_before
 {
    my ($self,$prog) = (shift,shift);
@@ -13770,17 +13894,26 @@ sub fun_before
       return "#-1 Function (BEFORE) EXPECTS 1 or 2 ARGUMENTS";
 
    my $txt = evaluate($self,$prog,shift);
-   my $delim = evaluate($self,$prog,shift);
+   my $txt = ansi_init($txt);
+   my $delim = ansi_remove(evaluate($self,$prog,shift));
+   $delim = " " if($delim eq undef);
+   my $dsize = length($delim);
+   my $array = $$txt{ch};
+   my $endable = ($delim eq " ") ? 0 : 1;
 
-   my $loc = index($txt,$delim);
-
-   if($loc == -1) {
-      return undef;
-   } else {
-      my $result = substr($txt,0,$loc);
-      $result =~ s/\s+$//;
-      return $result;
-   }
+   for(my $i = 0;$i <= $#$array;$i++) {
+      next if $$array[$i] eq undef;
+       if($endable && join('',@$array[$i .. ($i + $dsize - 1)]) eq $delim) {
+          if($delim eq " ") {
+             return ansi_trim(ansi_substr($txt,0,$i));
+          } else {
+             return ansi_substr($txt,0,$i);
+          }
+       } elsif(!$endable && $$array[$i] ne " ") {
+          $endable = 1;             # look for non-space for space delim
+       }
+    }
+    return ansi_string($txt);
 }
 
 
@@ -13986,15 +14119,16 @@ sub fun_edit
       }
    } else {                                         # don't edit ansi strings
       $txt = ansi_init($txt);
-      my $size   = ansi_length($from);
+      my $size   =  length($from);
       for(my $i = 0, $start=0;$i <= $#{$$txt{ch}};$i++) {
-         if(ansi_remove(ansi_substr($txt,$i,$size)) eq $from) {
+         next if @{$$txt{ch}}[$i] eq undef;
+         if(join('',@{$$txt{ch}}[$i .. ($i + $size - 1)]) eq $from) {
             if($start ne undef || $i != $start) {
                $out .= ansi_substr($txt,$start,$i - $start);
             }
             $out .= ansi_clone($txt,$i,$to);
-            $i += $size;
-            $start = $i;
+            $i += $size - 1;
+            $start = $i + 1;
             last if($type);
          }
       }
@@ -14227,13 +14361,17 @@ sub fun_filter
    my $prev = get_digit_variables($prog);                   # save %0 .. %9
 
    for my $word (safe_split($list,$delim)) {
-      set_digit_variables($self,$prog,"",$word);       # update to new values
+      if(!set_digit_variables($self,$prog,"",$word)) { # update to new values
+         return managed_var_set_error("#-1");
+      }
       if(evaluate($self,$prog,$value)) {
          push(@result,$word);
       }
    }
 
-   set_digit_variables($self,$prog,"",$prev);            # restore %0 .. %9
+   if(!set_digit_variables($self,$prog,"",$prev)) {        # restore %0 .. %9
+      return managed_var_set_error("#-1");
+   }
 
    return join($odelim,@result);
 }
@@ -14276,7 +14414,9 @@ sub fun_u
    }
 
    my $prev = get_digit_variables($prog);                   # save %0 .. %9
-   set_digit_variables($self,$prog,"",@arg);          # update to new values
+   if(!set_digit_variables($self,$prog,"",@arg)) {      # update to new values
+      return managed_var_set_error("#-1");
+   }
 #   printf("---[ start ]-----\n");
 #   for my $i (0 .. $#arg) {
 #      printf("$i : '%s'\n",@arg[$i]);
@@ -14284,7 +14424,9 @@ sub fun_u
 #   printf("---[  end  ]-----\n");
    my $result = evaluate($obj,$prog,single_line(pget($obj,$attr)));
 
-   set_digit_variables($self,$prog,"",$prev);            # restore %0 .. %9
+   if(!set_digit_variables($self,$prog,"",$prev)) {         # restore %0 .. %9
+      return managed_var_set_error("#-1");
+   }
    return $result;
 }
 
@@ -14316,8 +14458,13 @@ sub fun_map
    my $attribute = pget($target,$atr);
    my $prev = get_digit_variables($prog);                   # save %0 .. %9
    for my $i (safe_split($list,$idelim)) {
-      set_digit_variables($self,$prog,"",$i,@_);
+      if(!set_digit_variables($self,$prog,"",$i,@_)) {
+         return managed_var_set_error("#-1");
+      }
       push(@out,ansi_trim(evaluate($self,$prog,$attribute)));
+   }
+   if(!set_digit_variables($self,$prog,"",$prev)) {       # restore %0 .. %9
+      return managed_var_set_error("#-1");
    }
 
    return join($odelim,@out);
@@ -14391,24 +14538,34 @@ sub fun_ulocal
    }
 
    my $prev = get_digit_variables($prog);                   # save %0 .. %9
-   set_digit_variables($self,$prog,"",@arg);          # update to new values
+   if(!set_digit_variables($self,$prog,"",@arg)) {    # update to new values
+      return managed_var_set_error("#-1");
+   }
    if(defined $$prog{var}) {
       for my $key (grep {/^setq_/} keys %{$$prog{var}}) { # store prev values
          @temp{$key} = $$prog{var}->{$key};
-         delete @$prog{var}->{$key};
+         if(!managed_var_set($prog,$key,undef)) {
+            return managed_var_set_error("#-1");
+         }
       }
    }
 
    my $result = evaluate($self,$prog,single_line(pget($obj,$attr)));
 
-   set_digit_variables($self,$prog,"",$prev);            # restore %0 .. %9
+   if(!set_digit_variables($self,$prog,"",$prev)) {        # restore %0 .. %9
+      return managed_var_set_error("#-1");
+   }
 
    if(defined $$prog{var}) {
       for my $key (grep {/^setq_/} keys %{$$prog{var}}) { # restore prev values
-         delete @$prog{var}->{$key};
+         if(!managed_var_set($prog,$key,undef)) {
+            return managed_var_set_error("#-1");
+         }
       }
       for my $key (keys %temp) {
-         $$prog{var}->{$key} = @temp{$key};
+         if(!managed_var_set($prog,$key,@temp{$key})) {
+            return managed_var_set_error("#-1");
+         }
       }
    }
    return $result;
@@ -14583,43 +14740,84 @@ sub fun_v
    return pget($self,evaluate($self,$prog,$txt));
 }
 
-sub fun_setq
+#
+# manage_set
+#    Keep track of how much memory a program is using in $$prog{var}
+#    and enforce the cap defined in memory_prog_limit.
+#
+sub managed_var_set
 {
-   my ($self,$prog) = (shift,shift);
+   my ($prog,$var,$new) = @_;
 
-   good_args($#_,2) ||
-      return "#-1 FUNCTION (SETQ) EXPECTS 2 ARGUMENTS";
+   # determine new amount to be allocated
+   my $used = length($new);
 
-   my $register = lc(trim(evaluate($self,$prog,shift)));
+   # subtract what is currently being used
+   $used -= length($$prog{var}->{$var}) if(defined $$prog{var}->{$var});
 
-   if($register =~ /^\s*([0-9a-z])\s*$/) {
-#      printf("SETQ: '%s' -> '%s'\n",$register,$_[0]);
-      @{$$prog{var}}{"setq_$register"} = evaluate($self,$prog,shift);
-#      printf("      '%s'\n",@{$$prog{var}}{"setq_$register"});
+   if($used + $$prog{bytes_use} > conf("memory_prog_limit")){
+      @info{bytes_attempted} = $$prog{bytes_used} + $used;
+      return 0;
    } else {
-      @{$$prog{var}}{$register} = evaluate($self,$prog,shift);
+      if($$prog{max_bytes_used} < $$prog{bytes_used} + $used) {
+         $$prog{max_bytes_used}  = $$prog{bytes_used} + $used;
+      }
+      $$prog{bytes_used} += $used;
+
+      if($new eq undef) {
+        delete @$prog{var}->{$var};
+      } else {
+        $$prog{var}->{$var} = $new;
+      }
+      return 1;
    }
-   return undef;
+}
+
+sub managed_var_set_error
+{
+   my $pre = shift;
+   
+   $pre .= " " if($pre ne undef);
+   my $txt = $pre . " " if ($pre ne undef);
+
+   $txt .= "Process exceeded " . conf("memory_prog_limit") . 
+           " bytes. Tried to use ". @info{bytes_attempted};
+
+   return ($pre ne undef) ? uc($txt) : $txt;
 }
 
 sub fun_setr
 {
    my ($self,$prog) = (shift,shift);
+   my ($new_size, $old_size);
 
    good_args($#_,2) ||
       return "#-1 FUNCTION (SETR) EXPECTS 2 ARGUMENTS";
 
    my $register = lc(trim(evaluate($self,$prog,shift)));
 
-   if($register =~ /^\s*([0-9a-z])\s*$/) {
-#      printf("SETR: '%s' -> '%s'\n",$register,$_[0]);
-      @{$$prog{var}}{"setq_$register"} = evaluate($self,$prog,shift);
-#      printf("      '%s'\n",@{$$prog{var}}{"setq_$register"});
-      return @{$$prog{var}}{"setq_$register"};
-   } else {
-      @{$$prog{var}}{$register} = evaluate($self,$prog,shift);
-      return @{$$prog{var}}{$register};
+   # emulate setq register bucket
+   $register = "setq_$register" if($register =~ /^\s*([0-9a-z])\s*$/);
+   my $out = evaluate($self,$prog,shift);
+
+   if(!managed_var_set($prog,$register,$out)) {
+      return managed_var_set_error("#-1");
    }
+
+   return $out;
+}
+
+#
+# fun_setq
+#    Stores a temporary variable for use in mushcode.
+#
+sub fun_setq
+{
+   good_args($#_ - 2,2) ||
+      return "#-1 FUNCTION (SETQ) EXPECTS 2 ARGUMENTS";
+
+   fun_setr(@_);                                              # reuse code
+   return undef;
 }
 
 sub fun_r
@@ -16065,6 +16263,7 @@ sub http_process_line
                 $var =~ s/ //g;                          # removes spaces
                 $dat =~ s/\+/ /g;
                 if(module_enabled("uri_escape")) {
+                   printf("DATA: '%s'\n",$dat);
                    @{$$prog{var}}{$var}=uri_unescape($dat);
                 } else {
                    @{$$prog{var}}{$var}=$dat;
@@ -16187,7 +16386,7 @@ sub http_process_line
          }
       }
    } else {
-      printf("---BAD REQUEST---\n");
+      printf("---BAD REQUEST--- '$txt'\n");
       http_error($s,"Malformed Request");
    }
 }
@@ -16618,7 +16817,7 @@ sub evaluate_substitutions
    my ($out,$seq,$debug);
 
    my $orig = $t;
-   while($t =~ /(\\|%m[0-9]|%q[0-9a-z]|%i[0-9]|%[!psaobrtnk#0-9%]|%(v|w)[a-zA-Z]|%=<[^>]+>|%\{[^}]+\}|##|#@)/i) {
+   while($t =~ /(\\|%m[0-9]|%q[0-9a-z]|%i[0-9]|%[!psaobrtnk#0-9%]|%(v|w)[a-zA-Z]|%=<[^>]+>|%\{[^}]+\}|\$[0-9]|##|#@)/i) {
       ($seq,$t)=($1,$');                                   # store variables
       $out .= $`;
       if($seq eq "\\") {                               # skip over next char
@@ -16678,8 +16877,12 @@ sub evaluate_substitutions
             $out .= name($$prog{cmd}->{invoker},undef,$self,$prog);
          }
       } elsif($seq =~ /^%q([0-9a-z])$/i) {
-         if(defined $$prog{var}) {
-            $out .= @{$$prog{var}}{"setq_" . lc($1)} if(defined $$prog{var});
+         if(defined $$prog{var} && defined $$prog{var}->{"setq_" . lc($1)}) {
+            $out .= $$prog{var}->{"setq_" . lc($1)};
+         }
+      } elsif($seq =~ /^\$([0-9])$/i) {
+         if(defined $$prog{reg} && defined $$prog{reg}->{$1}) {
+            $out .= $$prog{reg}->{$1};
          }
       } elsif($seq =~ /^%m([0-9])$/ ||
               $seq =~ /^%\{m([0-9])\}$/) {

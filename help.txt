@@ -2154,3 +2154,129 @@ arg2>[,...]]]]])
     > say map(object/add_one,1 2 3 4 5)
     You say, "2 3 4 5 6"
 
+& add()
+  Function: add(<number1>,<number2>[,<numberN>]...)
+
+  Returns the result of adding its arguments together.
+  You may add up to 30 numbers in one add() call.
+
+  Numbers may be floating point numbers, and a floating point result
+  is returned.
+
+  Example:
+    > say add(2,4)
+    You say "6"
+    > say add(5,3,7,-4)
+    You say "11"
+
+  See Also: div(), mod(), mul(), sub()
+& after()
+  Function: after(<string1>, <string2>
+
+  Returns the portion of <string1> that occurs after <string2>.  If <string2>
+  does not occur in <string1>, a null string is returned.
+  If you want to return the portion of the string after the first space,
+  use the rest() function instead.  This function is case sensitive.
+
+  Examples:
+    > say after(This is a test,a)
+    You say " test"
+    > say after(This is a test,is)
+    You say " is a test"
+    > say after(This is a test, nope)
+    You say ""
+& and()
+  Function: and(<boolean1>,<boolean2>[,<booleanN>]...)
+
+  Takes two or more booleans, and returns 1 if they are all each equivalent
+  to true(1).
+
+  Example:
+    > say [and(1,0)] @ [and(0,0)] @ [and(0,1)] @ [and(1,1)]
+    You say "0 @ 0 @ 0 @ 1"
+
+  See Also: BOOLEAN VALUES, or(), not(), xor(), nand(), nor(), xnor()
+& before()
+  Function: before(<string1>, <string2> [,<key>])
+
+  Returns the portion of <string1> that occurs before <string2>.  If <string2>
+  does not occur in <string1>, the entire string is returned.
+  If you want to return the portion of the string after the first space,
+  use the first() function instead.  This function is case sensitive.
+
+  You may specify a <key> of 1 to disable ansi handling which will speed
+  this function up.  The default is '0' which allows ansi handling.
+
+  Note: the config param 'ansi_default' handles if the ansi handling is
+        configured default or not.  In which case the 'key' is reversed.
+
+  Examples:
+    > say before(This is a test,a)
+    You say "This is "
+    > say before(This is a test,is)
+    You say "Th"
+    > say before(This is a test, nope)
+    You say "This is a test"
+
+  See Also: after(), first(), rest()
+
+& capstr()
+  Function: capstr(<string>)
+
+  Returns <string> with the first character capitalized.  If the first
+  character is not a letter, this function returns the string unmodified.
+
+  Example:
+    > say capstr(this is a string I want capitalized)
+    You say "This is a string I want capitalized"
+
+  See Also: lcstr(), ucstr()
+& cat()
+  Function: cat(<string>[,<stringN>])
+
+  cat returns a string made up of the contents of string1 through stringN,
+  with each string separated from its neighbors by a space.
+
+  Example:
+    > say cat(this is, a test)
+    You say "this is a test"
+    > say cat(This is,another,test of the,CAT function)
+    You say "This is another test of the CAT function"
+
+  See Also: setunion(), setinter(), strcat()
+
+& regedit()
+  Function: regedit(<str>, <regexp>, <repl>[, ... , <regexpN>, <replaceN>])
+
+  This function is a version of edit() that uses regular expressions.
+  The part of <str> that matches the <regexp> is replaced by the
+  evaluated <repl> (replacement), with $<number> in <replacement> expanded to
+  the corresponding matching sub-expression of <regexp>, with $0 the entire
+  matched section.  The <replacement> argument is evaluated once for
+  each match, allowing for more complex transformations than is possible
+  with straight replacement.
+
+  Example:
+  > say regedit(this test is the best string, (.)est, $1rash)
+  You say "this trash is the best string"
+  > say regedit(this test is the best string, (.)est, [capstr($1)]rash)
+  You say "this Trash is the best string"
+
+& @debug
+  COMMAND:   @debug <command>
+
+  @debug commands are ignored when they occure inside mushcode until
+  the a command is invoked by a player using the @debug command;
+
+  Example
+  > &&cmd_useless me = $+useless:
+       @debug @pemit %#=--[ Start ]---;
+       @pemit %#=+Useless is [rand(5)] today;
+       @debug @pemit %#=--[ End ]---;
+  > +useless
+  +Useless is 2 today
+  > @debug +cool
+  @debug running: '+useless'
+  --[ Start ]--
+  +Useless is 4 today
+  --[ End ]--

@@ -17,7 +17,7 @@
 # ^ = Do not attempt to compile with gcc or any other C compiler.
 #
 use strict;
-use Carp;
+Use Carp;
 use IO::Select;
 use IO::Socket;
 use File::Basename;
@@ -108,7 +108,7 @@ sub load_modules
       if(!defined @info{"@mod{$key}"} || @info{"@mod{$key}"} eq undef) {
 	 @info{"@mod{$key}"} = 1;
          eval "use $key; 1;" or @info{"@mod{$key}"} = -1;
-         if(@info{"@mod{$key}"} == -1) {
+         if(@info{"@mod{$key}"} == -1 && !@info{shell}) {
             printf("WARNING: Missing $key module, @mod{$key} disabled\n");
          }
       }
@@ -127,7 +127,7 @@ sub getfile
    my ($fn,$code,$filter) = @_;
    my($file, $out);
 
-   if($fn =~ /^[^\\|\/]+\.(pl|dat|dev|conf)$/i) {
+   if($fn =~ /^[^\\|\/]+\.(pl|dat|dev|conf)$/i || $fn =~ /tmshell$/) {
       open($file,$fn) || return undef;                         # open pl file
    } elsif($fn =~ /^[^\\|\/]+$/i) {
       open($file,"txt\/$fn") || return undef;                 # open txt file
@@ -209,7 +209,6 @@ sub load_defaults
    @default{mudname}                  = "TeenyMUSH";
    @default{port}                     = "4096,4201,6250";
    @default{starting_quota}           = 5;
-   @default{single_dirty_file}        = "yes";
 }
 
 #
@@ -260,10 +259,9 @@ sub process_commandline
    if($hit) {
      printf("\nShutting down as per commandline defines.\n");
      if(defined @info{dump_name}) {
-        cmd_dirty_dump(obj(0),{});
+        do_full_dirty_dump();
      } else {
         do_full_dump();
-        delete @info{dirty};
      }
      exit(0);
    }
@@ -277,8 +275,7 @@ sub main
 {
    @info{run} = 1;
 
-   @info{shell} = ($0 =~ /tmshell/i) ? 1 : 0;
-
+   load_db();
    printf("%s\n",conf("version")) if !@info{shell};
 
    # trap signal HUP and try to reload the code
@@ -304,8 +301,6 @@ sub main
       @info{source_prev} = get_source_checksums(1);
       reload_code();
    }
-
-   load_db();
 
    load_defaults();
    find_free_dbrefs();
@@ -780,6 +775,7 @@ sub initialize_commands
    @command{"\@chown"}      ={ fun => sub { return &cmd_chown(@_); }        };
    @command{"\@nohelp"}     ={ fun => sub { return &cmd_nohelp(@_); }       };
    @command{"\@debug"}      ={ fun => sub { return &cmd_debug(@_); }        };
+   @command{"\@free"}       ={ fun => sub { return &cmd_free(@_); }         };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -945,7 +941,7 @@ sub cmd_chown
 
    if(hasflag($obj,"PLAYER")) {
       return err($self,$prog,"Players can not be \@chowned.");
-   } elsif(quota_left($target) <= 0) {
+   } elsif(quota($target,"left") <= 0) {
       err($self,$prog,name($target) . " does not have enough quota to " .
          "\@chown that object");
    }
@@ -977,11 +973,6 @@ sub cmd_chown
 sub cmd_motd
 {
    my ($self,$prog,$txt,$switch) = @_;
-
-   printf("%s\n",print_var(\%connected));
-#   echo_flag($self,$prog,"CONNECTED,PLAYER,GOD",
-#       "[Monitor] %s has disconnected.",name($self));
-   return;
 
    verify_switches($self,$prog,$switch,"list") ||
       return;
@@ -1036,6 +1027,7 @@ sub cmd_ban
 
    !or_flag($self,"WIZARD","GOD") &&
       return err($self,$prog,"Permission denied.");
+   manage_httpd_bans();
 
    my $hash = @info{httpd_ban};
    my $pat = glob2re(evaluate($self,$prog,$txt)) if($txt ne undef);
@@ -1159,8 +1151,8 @@ sub cmd_restore
          $$cmd{restore_file} = [];
          $$cmd{restore_list} = {};
 
-         opendir($dir,"dumps") ||
-            return err($self,$prog,"Could not open directory dumps.");
+         opendir($dir,"@info{dumps}") ||
+            return err($self,$prog,"Could not open directory @info{dumps}.");
 
          for my $file (readdir($dir)) {
             if($file =~ /\.tdb$/) {
@@ -1175,7 +1167,7 @@ sub cmd_restore
 
          necho(self    => $self,
                prog   => $prog,
-               source => [ "Restoring from %s db files in dumps folder...",
+               source => [ "Restoring from %s db files in @info{dumps} folder...",
                          $#{$$cmd{restore_file}} ],
               );
       }
@@ -1241,7 +1233,7 @@ sub cmd_restore
       return "RUNNING";
    } else {
       my $fd;
-      my $fn = "dumps/" . pop(@{$$cmd{restore_file}});
+      my $fn = "@info{dumps}/" . pop(@{$$cmd{restore_file}});
 #      printf("Restore: $fn\n");
       open($fd,$fn);      # get file to process
       $$cmd{restore_fd} = $fd;
@@ -1333,24 +1325,25 @@ sub cmd_shutdown
 {
    my ($self,$prog) = (obj(shift),shift);
 
-   hasflag($self,"GOD") || hasflag($self,"WIZARD") ||
-      return err("Permission denied.");
-
-   cmd_wall($self,$prog,$_[0]) if($_[0] !~ /^\s*/);
-
-   audit($self,$prog,"\@shutdown");
-
-   for my $key (keys %connected) {
-      my $hash = @connected{$key};
-      necho(self   => $self,
-            prog   => $prog,
-            target => [ $hash, "%s has been shutdown by %s.",
-                        conf("mudname"),obj_name($self,$self,1) ]
-      );
-      cmd_boot($self,$prog,"#" . $$hash{obj_id});
+   if(hasflag($self,"GOD") || hasflag($self,"WIZARD")) {
+      cmd_wall($self,$prog,$_[0]) if($_[0] !~ /^\s*/);
+   
+      audit($self,$prog,"\@shutdown");
+   
+      for my $key (keys %connected) {
+         my $hash = @connected{$key};
+         necho(self   => $self,
+               prog   => $prog,
+               target => [ $hash, "%s has been shutdown by %s.",
+                           conf("mudname"),obj_name($self,$self,1) ]
+         );
+         cmd_boot($self,$prog,"#" . $$hash{obj_id});
+      }
+      @info{run} = 0;                           # signal shutdown
+      @info{shutdown_by} = obj_name($self,$self,1);
+   } else {
+      err($self,$prog,"Permission denied.");
    }
-   @info{run} = 0;                           # signal shutdown
-   @info{shutdown_by} = obj_name($self,$self,1);
 }
 
 sub cmd_slash
@@ -1967,8 +1960,10 @@ sub cmd_while
     $$cmd{while_count}++;
 
     if($$cmd{while_count} >= 5000) {
-       con("#*****# while exceeded maxium loop of 1000, stopped\n");
-       return err($self,$prog,"while exceeded maxium loop of 1000, stopped");
+       con("   %s loop exeeded max of 5000, \@while aborting.\n",ts());
+       con("      cmd: %s by %s\n",$$prog{invoking_command},
+           obj_name($$prog{created_by}));
+       return err($self,$prog,"while exceeded maxium loop of 5000, stopped");
     } elsif(test($self,$prog,$$cmd{while_test})) {
        mushrun(self   => $self,
                prog   => $prog,
@@ -2098,7 +2093,11 @@ sub cmd_bad
           $$cmd{bad_pos} < $#db &&
           $$cmd{bad_pos} - $start < 100;
           $$cmd{bad_pos}++) {
+#      printf("Processing: $$cmd{bad_pos}\n");
       if(valid_dbref($$cmd{bad_pos})) {              # does object match?
+         if(owner($$cmd{bad_pos}) eq undef) {
+            push(@out,"#" . $$cmd{bad_pos} . " has no owner");
+         }
          if(!hasflag($$cmd{bad_pos},"PLAYER")) {
             $$quota{owner_id($$cmd{bad_pos})}++;
          }
@@ -2162,6 +2161,18 @@ sub cmd_bad
                } elsif(!hasflag($obj,"PLAYER") && !hasflag($obj,"OBJECT")) {
                   push(@out,
                        "#$$obj{obj_id} is not an object in #$$cmd{bad_pos}");
+               } elsif(loc($obj) != $$cmd{bad_pos}) {
+                  my $l = loc($obj);
+                  if($l ne undef) {
+                     printf("Remove: $$obj{obj_id} from $$cmd{bad_pos}\n");
+                     printf("   Add: %s to %s\n",$$obj{obj_id},$l);
+
+                     db_remove_list($$cmd{bad_pos},"obj_content",$$obj{obj_id});
+                     db_set_list($l,"obj_content",$$obj{obj_id});
+                  } else {
+                     push(@out,sprintf("#$$obj{obj_id}'s home is %s and " .
+                        "not %s\n",home($obj),$$cmd{bad_pos}));
+                  }
                }
             }
 
@@ -2602,8 +2613,6 @@ sub cmd_huh
    if(defined $$prog{missing} && ref($$prog{missing}) eq "HASH") {
       $$prog{missing}->{cmd}->{fun_extract($self,$prog,$txt,1,1)}++;
    }
-
-   printf("HUH: '%s'\n",$txt);
 
    if(lord(@{$$prog{cmd}}{cmd}) ne 0) {
       # printf("HuH: '%s' -> '%s'\n",$$self{obj_id},@{$$prog{cmd}}{cmd});
@@ -3131,16 +3140,55 @@ sub test
 
 #
 # find_free_dbrefs
+#    Populate @free with recycled database objects without pausing the
+#    mush.
 #
-#    @destroy will keep track of used dbrefs but this function will
-#    populate the list on startup / reload of code.
-#
-sub find_free_dbrefs
+sub cmd_free
 {
-   delete @free[0 .. $#free];
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
+   my $start;
 
-   for my $i (0 .. $#db) {
-      push(@free,$i) if(!valid_dbref($i));
+   my $cmd = $$prog{cmd};
+   if(!defined $$cmd{free_pos}) {
+      delete @free[0 .. $#free];
+      $$cmd{free_pos} = 1;
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "\@free dbref sweep started." ],
+           ) if $self ne undef;
+   }
+
+   for($start=$$cmd{free_pos};                   # loop for 100 objects
+          $$cmd{free_pos} < $#db &&
+          $$cmd{free_pos} - $start < 100;
+          $$cmd{free_pos}++) {
+      push(@free,$$cmd{free_pos}) if(!valid_dbref($$cmd{free_pos}));
+   }
+
+   if($$cmd{bad_pos} >= $#db) {                          # search is done
+      necho(self   => $self,
+            prog   => $prog,
+            source => [ "\@free dbree sweep completed." ],
+           ) if $self ne undef;
+      delete @$cmd{bad_pos};
+   } else {
+      return "RUNNING";
+   }
+}
+
+#
+# find_free_dbref
+#    Search the entire db for free dbrefs. Use @free if you don't want
+#    to pause the mush.
+#
+sub find_free_dbref
+{
+   my $self;
+   my $prog = {};
+   $$prog{cmd} = {};
+ 
+   while(cmd_free($self,$prog) eq "RUNNING") {
+      # cmd_free does all the work.
    }
 }
 
@@ -3168,17 +3216,16 @@ sub cmd_dump
    my ($self,$prog,$type) = (obj(shift),shift,shift);
    my ($file,$start);
 
-   if(conf("mudname") eq undef) {
-      printf("%s\n",code("long"));
-      exit(0);
-   }
+
+   @info{"conf.mudname"} = "TeenyMUSH" if(conf("mudname") eq undef);
+
    if(in_run_function($prog)) {
       return out($prog,"#-1 \@DUMP can not be called from RUN function");
    } elsif(!hasflag($self,"WIZARD") && !hasflag($self,"GOD")) {
       return err($self,$prog,"Permission denied.");
    }
 
-   return if $#db == -1;
+   return if $#db == -1;                               # nothing to dump;
    con("**** Program EXITING ******\n") if($type eq "CRASH");
    $type = "normal" if($type eq undef);
 
@@ -3187,29 +3234,51 @@ sub cmd_dump
    #-----------------------------------------------------------------------#
    my $cmd = $$prog{cmd};
    if(!defined $$cmd{dump_pos}) {                      # initialize "loop"
+      @info{dirty} = {};                               # clear dirty bits
       if(defined @info{backup_mode} && is_running(@info{backup_mode})) {
          return err($self,$prog,"Backup is already running.");
       }
       $$cmd{dump_pos} = 0;
 
-      my ($sec,$min,$hour,$day,$mon,$yr,$wday,$yday,$isdst) =
-                                                localtime(time);
-      $mon++;
-      $yr -= 100;
+      if(@info{shell}) {                                 # rewrite script
+         my $src = getfile($0); # read sourse into memory
+
+         open($file,"> $0") ||
+            return err($self,$prog,"Unable to open $0 for writing");
+
+         for my $line (split(/\n/,$src)) {               # copy over source
+            $line =~ s/\r//g;
+            if($line eq "__END__") {                          # stop at db
+               printf($file "%s\n",$line);
+               last;
+            } else {
+               printf($file "%s\n",$line);
+            }
+         }
+
+      } else {
+         my ($sec,$min,$hour,$day,$mon,$yr,$wday,$yday,$isdst) =
+                                                   localtime(time);
+         $mon++;
+         $yr -= 100;
 #
-      my $fn = sprintf("dumps/%s.%02d%02d%02d_%02d%02d%02d",
-                       conf("mudname"),$yr,$mon,$day,$hour,$min,$sec);
+         my $fn = sprintf("@info{dumps}/%s.%02d%02d%02d_%02d%02d%02d",
+                          conf("mudname"),$yr,$mon,$day,$hour,$min,$sec);
 
-      open($file,"> $fn.tdb") ||
-        return err($self,$prog,"Unable to open $fn for writing");
-      @info{dump_name} = $fn;
+         open($file,"> $fn.tdb") ||
+           return err($self,$prog,"Unable to open $fn for writing");
+         @info{dump_name} = $fn;
 
-      printf($file "server: %s, version=%s, change#=0, exported=%s, type=%s\n",
-         conf("version"),db_version(),scalar localtime(),$type);
+         printf($file "server: %s, version=%s, change#=0, exported=%s, " .
+            "type=%s\n", conf("version"),db_version(),scalar localtime(),
+            $type);
+      }
+
       @info{change} = 0;
 
       $$cmd{dump_file} = $file;
       @info{backup_mode} = $$prog{pid};
+
       if($type ne "CRASH" && $user ne undef) {
          echo_flag($user,
                    prog($user,$user),
@@ -3284,42 +3353,56 @@ sub do_full_dump
    }
 }
 
+sub do_full_dirty_dump
+{
+   my $obj = obj(1);
+   my $prog= prog($obj,$obj,$obj);
+   while(cmd_dirty_dump($obj,$prog,"",{}) eq "RUNNING") {
+      # everything happens in cmd_dump
+   }
+}
 
 sub cmd_dirty_dump
 {
    my ($self,$prog,$txt,$switch) = @_;
    $self = $$self{obj_id} if ref($self) eq "HASH";
-   my ($file,$out,$fn);
+   my ($file,$out);
+   my $count = 0;
 
    my $dirty = @info{dirty};
-
    if(ref($dirty) ne "HASH" || 
       (ref($dirty) eq "HASH" && scalar keys %$dirty == 0)) {
       return;                                               # nothing to dump
    }
 
-   @info{dump_name} = $' if(@info{dump_name} =~ /^dumps\//i);
-   if(is_true(conf("single_dirty_file"))) {
-      @info{change} = 1;
-      $fn = sprintf("%s.%06d",@info{dump_name},1);
-   } else {
-      $fn = sprintf("%s.%06d",@info{dump_name},++@info{change});
+   if(defined @info{backup_mode} && is_running(@info{backup_mode})) {
+      return err($self,$prog,"Backup is already running.");
    }
 
-   if(-e "dumps/$fn" && !is_true(conf("single_dirty_file"))) {
-      return err($self,$prog,"Log file already exists, please wait longer " .
-                 "between creating log files.");
+   my $cmd = $$prog{cmd};
+   if(!defined $$cmd{dirty_list}) {                       # initialize "loop"
+      @info{change} = 0 if !defined @info{change};
+      $$cmd{dirty_list} = [ %{@info{dirty}} ];
+      @info{dump_name} = $' if(@info{dump_name} =~ /^dumps\//i);
+
+      if(@info{shell}) {
+         open($file,">> $0") ||
+            return err($self,$prog,"Unable to open $0 for writing.");
+      } else {
+         open($file,">> @info{dumps}/@info{dump_name}.tdb") ||
+            return err($self,$prog,"Unable to open @info{dumps}/" .
+               "@info{dump_name}.tdb for writing");
+      }
+      $$cmd{dirty_file} = $file;
+      printf($file "server: %s, version=%s, change#=%s, exported=%s, " .
+          "type=archive_log\n",conf("version"),db_version(),@info{change}++,
+          scalar localtime());
    }
-
-   open($file,">> dumps/$fn") ||
-      return err($self,$prog,"Unable to open dumps/$fn for writing");
-
-   printf($file "server: %s, version=%s, change#=%s, exported=%s, " .
-       "type=archive_log\n",conf("version"),db_version(),@info{change},
-       scalar localtime());
-
    my $dirty = @info{dirty};
-   for my $dbref (sort keys %$dirty) {
+   my $list = $$cmd{dirty_list};
+
+   while($#$list >= 0 && $count++ < 51) {             # do 50 objects a cycle
+      my $dbref = pop(@$list);
       my $dobj = $$dirty{$dbref};
       my $obj = dbref($dbref);
 
@@ -3355,15 +3438,17 @@ sub cmd_dirty_dump
             }
          }
       }
+      delete @$dirty{$dbref};
    }
-   printf($file "** Dump Completed %s **\n", scalar localtime());
-   close($file);
 
-#   necho(self   => $self,
-#         prog   => $prog,
-#         source => [ "%s", $out ],
-#        );
-   @info{dirty} = {};                                         # empty pool;
+   if($#$list== -1) {
+      printf($file "** Dump Completed %s **\n", scalar localtime());
+      close($file);
+      delete $$cmd{dirty_list};
+      delete $$cmd{dirty_file};
+   } else {
+      return "RUNNING";
+   }
 }
 
 
@@ -3894,29 +3979,17 @@ sub cmd_switch
              my @wild = ansi_match($first,$txt);
              if($#wild >=0) {
                 $cmd =~ s/\\,/,/g;
-
-                @$prog{cmd}->{mdigits} = {
-                   0 => @wild[0], 1 => @wild[1], 2 => @wild[2], 
-                   3 => @wild[3], 4 => @wild[4], 5 => @wild[5],
-                   6 => @wild[6], 7 => @wild[7],
-                   8 => @wild[8], 9 => @wild[9],
-                };
                 mushrun(self   => $self,
                         prog   => $prog,
                         source => 0,
                         cmd    => $cmd,
                         child  => 1,
                         invoker=> invoker($prog,$self),
-                        match  => { 0 => $1, 1 => $2, 2 => $3,
-                                    3 => $4, 4 => $5, 5 => $6,
-                                    6 => $7, 7 => $8, 8 => $9 }
+                        match  => { 0 => @wild[0], 1 => @wild[1], 2 => @wild[2],
+                                    3 => @wild[3], 4 => @wild[4], 5 => @wild[5],
+                                    6 => @wild[6], 7 => @wild[7], 8 => @wild[8]
+                                  }
                        );
-                @$prog{cmd}->{mdigits} = {
-                   0 => @wild[0], 1 => @wild[1], 2 => @wild[2], 
-                   3 => @wild[3], 4 => @wild[4], 5 => @wild[5],
-                   6 => @wild[6], 7 => @wild[7],
-                   8 => @wild[8], 9 => @wild[9],
-                };
                 return;
              }
           }
@@ -5085,10 +5158,10 @@ sub cmd_go
                   [ "" ]);
 
    # provide some visual feed back to the player
-   necho(self   => $self,
-         prog   => $prog,
-         room   => [ $self, "%s has arrived.",name($self) ]
-        );
+#   necho(self   => $self,
+#         prog   => $prog,
+#         room   => [ $self, "%s has arrived.",name($self) ]
+#        );
 
    cmd_look($self,$prog,undef,undef,1);
 }
@@ -6637,19 +6710,6 @@ sub cf_convert
    return $out . $txt;
 }
 
-sub remove_punctuation
-{
-   my $txt = shift;
-
-   if($txt =~ /'s\s*$/) {
-      return $`;
-   } elsif($txt =~ /\s*([:;.,"\(\)\[\]]+)\s*$/) {
-      return $`;
-   } else {
-      return $txt;
-   }
-}
-
 sub colorize
 {
    my ($self,$prog,$txt) = @_;
@@ -6727,7 +6787,9 @@ sub get_source_checksums
 
     for my $line (<$file>) {
        $ln++;
-       if($_ =~ /ALWAYS_LOAD/ || $_ !~ /#!#/) {
+       if($_ eq "__END__") {
+          last;
+       } elsif($_ =~ /ALWAYS_LOAD/ || $_ !~ /#!#/) {
           if($line =~ /^sub\s+([^ \n\r]+)\s*$/) {
              $pos = $1;
              @data{$pos} = { chk => Digest::MD5->new,
@@ -6814,7 +6876,6 @@ sub reload_code
    initialize_commands();
    initialize_ansi();
    initialize_flags();
-   find_free_dbrefs();
 
    return $count;
 }
@@ -7249,12 +7310,20 @@ sub owner
    my $owner;
 
    if(!valid_dbref($obj)) {
+#      printf("owner: Invalid dbref\n");
       return undef;
    } elsif(hasflag($obj,"PLAYER")) {
+#      printf("owner: player\n");
       return $obj;
    } else {
       my $owner = get($obj,"obj_owner");
-      return obj($owner);
+#      printf("owner: obj_owner -> '%s'\n",$owner);
+
+      if($owner eq undef) {
+         return undef;
+      } else {
+         return obj($owner);
+      }
    }
 }
 
@@ -7273,6 +7342,7 @@ sub hasflag
       return (defined @connected_user{$$target{obj_id}}) ? 1 : 0;
    }
 
+   my $prev = $target;
    $target = owner($target) if($name eq "WIZARD" || $name eq "GOD");
 
    my $attr = mget($target,"obj_flag");
@@ -8121,8 +8191,23 @@ sub get_next_dbref
 {
 
    if($#free > -1) {                        # prefetched list of free objects
-      return shift(@free);
-   } elsif(defined @info{backup_mode} && @info{backup_mode}) { # in backupmode
+      my $dbref = shift(@free);
+     
+      return $dbref if(!valid_dbref($dbref));
+
+      # invalid free list, repopulate in the background.
+      mushrun(self   => $self,
+              runas  => $self,
+              invoker=> $self,
+              source => 0,
+              cmd    => "\@free",
+              from   => "ATTR",
+              hint   => "ALWAYS_RUN"
+             );
+   }
+         
+   # no objects in the free list, grab the next new dbref.
+   if(defined @info{backup_mode} && @info{backup_mode}) { # in backupmode
       if($#delta > $#db) {                  # return the largest next number
          return $#delta + 1;                # in @delt or @db
       } else {
@@ -8639,18 +8724,41 @@ sub db_object
 sub db_process_line
 {
    my ($state,$line,$obj) = @_;
+   my $archive;
 
    $line =~ s/\r|\n//g;
    $$state{chars} += length($_);
+
+   if($line =~ /^(\d+),([^,]+),{0,1}/) { # handle archive log type entries
+      $$state{obj} = $1;
+      my $type = $2;
+      my $rest = $';
+      $archive = 1;
+
+      if($type eq "delatr") {
+         my $obj = @db[$$state{obj}];
+         delete @$obj{$rest};
+         return;
+      } elsif($type eq "delobj") {
+         delete @db[$$state{obj}];
+         return;
+      } else {
+         $line = $rest;
+      }
+   }
+
    if($$state{obj} eq undef &&  $line =~                            # header
       /^server: ([^,]+), dbversion=([^,]+), exported=([^,]+), type=/) {
       $$state{ver} = $2;
+      delete @$state{complete};                               # dump complete
    } elsif($$state{obj} eq undef && $line =~                        # header
       /^server: ([^,]+), version=([^,]+), change#=([^,]+), exported=([^,]+), type=/) {
+      delete @$state{complete};                               # dump complete
       $$state{ver} = $2;
       @info{change} = $3;
    } elsif($line =~ /^\*\* Dump Completed (.*) \*\*$/) {
       $$state{complete} = 1;                                  # dump complete
+      delete $$state{obj};
    } elsif($$state{obj} eq undef && $line =~ /^obj\[(\d+)]\s*{\s*$/) {
       $$state{obj} = $1;                                    # start of object
    } elsif($$state{obj} ne undef &&
@@ -8669,6 +8777,13 @@ sub db_process_line
    } elsif($$state{obj} ne undef &&
       $line =~ /^\s*([^ :]+):(\d+):(\d+):([^:]*):L:/) {
       my ($attr,$list,$created,$modified) = ($1,$',$2,$3);   # list attribute
+
+      # delete attribute if already exists, this should only happen
+      # when a entry is being replaced via an incremental backup.
+      if(defined @db[$$state{obj}] && defined @{@db[$$state{obj}]}{$attr}) {
+         delete @{@db[@$state{obj}]}{$attr};
+      }
+
       if($obj eq undef || $$state{obj} eq $obj) {
          for my $item (split(/,/,$list)) {
             db_set_list($$state{obj},$attr,$item,$created,$modified);
@@ -8680,6 +8795,13 @@ sub db_process_line
    } elsif($$state{obj} ne undef &&
       $line =~ /^\s*([^ :]+):(\d+):(\d+):([^:]*):H:/) {
       my ($attr,$list,$created,$mod) = ($1,$');         # hash attribute
+
+      # delete attribute if already exists, this should only happen
+      # when a entry is being replaced via an incremental backup.
+      if(defined @db[$$state{obj}] && defined @{@db[$$state{obj}]}{$attr}) {
+         delete @{@db[@$state{obj}]}{$attr};
+      }
+
       if($obj eq undef || $$state{obj} eq $obj) {
          for my $item (split(/;/,$list)) {
             if($item =~ /^([^:]+):A:([^;]+)/) {
@@ -8706,7 +8828,7 @@ sub db_process_line
 
 $SIG{'INT'} = sub {  if(defined @info{controlc} &&
 		        time() - @info{controlc} < 30) {
-   		        cmd_dirty_dump(obj(0),{},"CRASH");
+                        do_full_dirty_dump();
                         @info{crash_dump_complete} = 1;
                         exit(1);
 	             } else {
@@ -8723,10 +8845,10 @@ $SIG{'USR1'} = sub { @info{sigusr1} = time(); };
 END {
    if(@info{run} == 0) {
       con("%s shutdown by %s.\n",conf("mudname"),@info{shutdown_by});
-      cmd_dirty_dump(obj(0),{});
+      do_full_dirty_dump();
       @info{crash_dump_complete} = 1;
    } elsif(!defined @info{crash_dump_complete} && $#db > -1) {
-      cmd_dirty_dump(obj(0),{},"CRASH");
+      do_full_dirty_dump();
    }
 }
 
@@ -9084,6 +9206,9 @@ sub mushrun
    } elsif(multiline(\%arg,$multi)) {          # multiline handled in function
       return;
    } elsif(@arg{source} == 1 || @arg{nosplit} == 1) {# from user input, no split
+      if(!defined $$prog{invoking_command}) {
+         $$prog{invoking_command} = @arg{cmd};
+      }
       mushrun_add_cmd(\%arg,@arg{cmd});
    } else {                                   # non-user input, slice and dice
       mushrun_add_cmd(\%arg,balanced_split(@arg{cmd},";",3,1));
@@ -9246,7 +9371,7 @@ sub spin
 
    $SIG{ALRM} = \&spin_done;
 
-   eval {
+#   eval {
        ualarm(15_000_000);                              # err out at 8 seconds
        local $SIG{__DIE__} = sub {
           delete @engine{@info{current_pid}};
@@ -9350,7 +9475,7 @@ sub spin
          delete @info{prog};
       }
       ualarm(0);
-   };
+#   };
 
    if($@ =~ /alarm/i) {
       con("Time slice timed out (%2f w/%s cmd) $@\n",
@@ -9707,7 +9832,7 @@ sub find_exit
    my ($partial,$dup);
 
    if($thing =~ /^\s*#(\d+)\s*$/) {
-      return hasflag($1,"EXIT") ? obj($1) : "#foo";
+      return hasflag($1,"EXIT") ? obj($1) : undef;
    }
 
    for my $obj (lexits($loc)) {
@@ -10544,58 +10669,6 @@ sub mushify
       $start = $loc + 1 if($done);              # set next starting point
    }
    return $out . tomush(substr($txt,$start,length($txt)),0,$start,length($txt));
-}
-
-#
-# ansi_compress_segment
-#    Given a color code, strip out any sequental calls to ansi() that
-#    are at the begining of the string.
-#
-sub ansi_compress_segment
-{
-   my ($data,$code) = @_;
-   my $out;
-
-   while($data =~ /^\[ansi\(\<#([a-f0-9]+)\>,(.+?)\)\]/) {
-      my ($pre,$color,$txt,$post)= ($',$1,$2,$');
-
-      if($color eq $code) {
-         $data = $post;
-         $out .= $txt;
-      } else {
-         return $out, $post;
-      }
-   }
-   return $out, $data;
-}
-
-#
-# ansi_compress
-#    Take a string from ansi2mush and remove any extra ansi() calls that
-#    are not needed to produce a smaller string.
-#
-sub ansi_compress
-{
-   my $data = shift;
-   my ($chunk,$pending,$result);
-
-   while($data =~ /\[ansi\(/) {
-       my ($pre,$post) = ($`,$');
-       $result .= $`;
-
-       if($post =~ /\<#([a-f0-9]+)\>,(.+?)\)\]/ ||
-          $post =~ /([a-z]+),(.+?)\)\]/) {
-#       printf("FUNCTION: '%s' -> '%s'\n",$1,$2);
-          $result .= "[ansi(<#$1>,";
-          ($chunk,$data) = ansi_compress_segment($',$1);
-          $result .= $2 . $chunk . ")]";
-#          printf("COMPRESS: '%s%s' -> '%s'\n",$2,$chunk,mushify($2 . $chunk));
-       } else {
-          $result .= "[ansi(";
-          $data = $post;
-       }
-   }
-   return $result . $data;
 }
 
 #
@@ -12076,12 +12149,11 @@ sub fun_url
 
       eval {                        # protect against uncontrollable problems
          if($#_ == 1) {
-            printf("ARGS: 1\n");
             my ($type,$value) = (shift,shift);
             $sock->write_request(GET => "/$path",
                'User-Agent' => 'curl/7.52.1',
                $type => $value,
-                Accept => $accept
+               Accept => $accept
             );
          } else {
 #            printf("ARGS: $#_\n");
@@ -12609,6 +12681,11 @@ sub fun_revwords
    return join(' ',reverse split(/\s+/,evaluate($self,$prog,shift)));
 }
 
+#
+# fun_telnet
+#    This function just makes it easier for mushcode to exit when
+#    the connection ends/fails. This function can be updated without
+#    requiring a change if the implimentation of @telnet changes.
 sub fun_telnet
 {
    my ($self,$prog) = (obj(shift),shift);
@@ -12616,10 +12693,10 @@ sub fun_telnet
    good_args($#_,1) ||
      return "#-1 FUNCTION (TELNET_OPEN) EXPECTS 1 ARGUMENT";
 
-   my $txt = evaluate($self,$prog,shift);
+   my $txt = lc(evaluate($self,$prog,shift));
 
-   if($txt eq "#-1 Connection closed" ||
-      $txt eq "#-1 Unknown Socket") {
+   if($txt eq "#-1 connection closed" ||
+      $txt eq "#-1 unknown socket") {
       return 0;
    } else {
       return 1;
@@ -12729,31 +12806,6 @@ sub fun_lcon
       push(@result,"#" . $$obj{obj_id}) if($perm || !hasflag($obj,"DARK"));
    }
    return join(' ',@result);
-}
-
-sub range
-{
-   my ($begin,$end) = @_;
-   my ($start,$stop,@result);
-
-   $start = fuzzy($begin);
-   $stop = ($end eq undef) ? time() : fuzzy($end);
-   return undef if($start > $stop);
-
-   while($start < $stop) {
-      push(@result,$start);
-      $start += 86400;
-      return $start = $stop if($#result > 50);
-   }
-
-   my ($emday,$emon,$eyear) = (localtime($end))[3,4,5];
-   my ($cmday,$cmon,$cyear) = (localtime($start))[3,4,5];
-
-   if($emday == $cmday && $emon == $cmon && $eyear == $cyear) {
-      push(@result,$start);
-   }
-
-   return @result;
 }
 
 sub age
@@ -15948,15 +16000,14 @@ sub http_accept
    my $addr = server_hostname($new);
 
    if(defined @info{httpd_ban} && defined @{@info{httpd_ban}}{$addr}) {
-      $new->close();
       web("   %s %s\@web [BANNED-CLOSE]\n",ts(),$addr);
       $new->close();
    } else {
       $readable->add($new);
 
-      @http{$new} = { sock => $new,
-                      data => {},
-                      ip   => $addr,
+      @http{$new} = { sock     => $new,
+                      data     => {},
+                      ip       => $addr,
                     };
    }
 }
@@ -15970,57 +16021,40 @@ sub http_disconnect
    $s->close;
 }
 
-#
-# manage_httpd_bans
-#    If a client requests an invalid page, assume its not a typo and instead
-#    assume they are hack attempts. I.E. Ban all hosts after X invalid
-#    attempts for an hour.
-#
 sub manage_httpd_bans
 {
-   my $sock = shift;
-   my $count;
+   my $s = shift;
+   my ($ip,@list, $max);
 
-   # setup structures
-   @info{httpd_ban} = {} if(!defined @info{httpd_ban});
-   @info{httpd_invalid_data} = {} if(!defined @info{httpd_invalid_data});
-
-   # new invalid request has happened, log it.
-   if($sock ne undef) {
-      my $ip = @http{$sock}->{ip};
-      if(!defined @{@http{$sock}}{$ip}) {
-         @{@http{$sock}}{$ip} = {};
+   if($s ne undef) {
+      $ip = (defined @http{$s}->{$ip}) ? @http{$s}->{$ip} : $s->peerhost;
+      @info{httpd_invalid_data} = {} if !defined @info{httpd_invalid_data};
+      if(!defined @info{httpd_invalid_data}->{$ip}) {
+         @info{httpd_invalid_data}->{$ip} = {};
       }
-      @info{httpd_invalid_data}->{$ip}->{time()}++;
+      @info{httpd_invalid_data}->{$ip}->{time()} = 1;
+      push(@list,$ip);
+   } elsif(!defined @info{httpd_invalid_data}) {
+      return;
+   } else {
+      @info{httpd_ban} = {};                                 # reinitialize
+      @list = (keys %{@info{httpd_invalid_data}});
    }
 
-   #
-   # clean up / manage existing ban data
-   #
-   if(!defined @info{httpd_invalid_data}) {          # no invalid hits at all
-      @info{httpd_invalid_data} = {} if(!defined @info{httpd_invalid_data});
-   } else {                                          # clean up old requests
-      for my $key (keys %{@info{httpd_invalid_data}}) {     # cycle each host
-         my $count = 0;
-         for my $ts (keys %{@info{httpd_invalid_data}->{$key}}) {
-            if(time() - 3600 > $ts) {                           # rm, too old
-               delete @info{httpd_invalid_data}->{$key}->{$ts};
-            } else {                                     # count current hits
-               $count += @info{httpd_invalid_data}->{$key}->{$ts};
-            }
-         }
+   my $hash = @info{httpd_invalid_data};
 
-         if(scalar keys %{@info{httpd_invalid_data}->{$key}} == 0) {
-            delete @info{httpd_invalid_data}->{$key};        # no current hits
-         } elsif($count >= nvl(conf("httpd_invalid"),3)) {
-            if(!defined @{@info{httpd_ban}}{$key}) {
-               @{@info{httpd_ban}}{$key} = scalar localtime();     # too many
-               web("   %s %s\@web *** BANNED **\n",ts(),$key);       # add ban
-            }
-         } elsif(defined @{@info{httpd_ban}}{$key} ) {  # too little,remove ban
-            web("   %s %s\@web Un-BANNNED\n",ts(),$key);
-            delete @{@info{httpd_ban}}{$key};
-         }
+   for my $host (@list) {
+      $max = undef;
+      for my $hit (keys %{$$hash{$host}}) {
+         $max = $hit if($hit > $max);                    # find newest offense
+         delete $$hash{$hit} if(time() - $hit > 3600); # delete older offenses
+      }
+
+      if(scalar keys %{$$hash{$host}} == 0) {        # nothing current, delete
+         delete @$hash{$host};
+      } elsif(scalar keys %{$$hash{$host}} > 4) {     # recently bad, keep ban
+         @info{http_ban} = {} if(!defined @info{http_ban});
+         @info{http_ban}->{$host} = scalar localtime($max);
       }
    }
 }
@@ -16154,7 +16188,7 @@ sub http_reply_simple
       http_out($s,"Content-Type: text/$type; charset=ISO-8859-1");
    }
    http_out($s,"");
-   http_out($s,$fmt,@args);
+   printf({@{@http{$s}}{sock}} "%s",$msg);
    http_disconnect($s);
 }
 
@@ -16183,6 +16217,8 @@ sub banable_urls
 
    if($$data{get} =~ /wget http/i) {        # poor wget is abused by hackers
       return 1;
+   } elsif($$data{get} =~ /;wget/i) {                            # more wget
+      return 1;
    } elsif($$data{get} =~ /phpMyAdmin/i) {             # really, no php here
       return 1;
    } elsif($$data{get} =~ /trinity/i) {                    # matrix trinity?
@@ -16192,7 +16228,7 @@ sub banable_urls
    } elsif($$data{get} =~ /testget/i) {                        # woot woot!
       # example: http://110.249.212.46/testget?q=23333&port=80
       return 1;
-   } elsif($$data{get} =~ /\.(php|cgi|asp)$/i) {      # no php/cgi/asp here
+   } elsif($$data{get} =~ /\.(php|cgi|asp)/i) {       # no php/cgi/asp here
       return 1;
    } else {
       return 0;
@@ -16212,7 +16248,11 @@ sub ban_add
       if(!defined @{@http{$sock}}{$ip}) {
          @{@http{$sock}}{$ip} = {};
       }
-      @info{httpd_invalid_data}->{$ip}->{time()} = 999999;
+
+      for my $i (0 .. 10) {
+         @info{httpd_invalid_data}->{$ip}->{time()-$i} = 1;
+      }
+      manage_httpd_bans($sock);
    }
 }
 
@@ -16263,7 +16303,6 @@ sub http_process_line
                 $var =~ s/ //g;                          # removes spaces
                 $dat =~ s/\+/ /g;
                 if(module_enabled("uri_escape")) {
-                   printf("DATA: '%s'\n",$dat);
                    @{$$prog{var}}{$var}=uri_unescape($dat);
                 } else {
                    @{$$prog{var}}{$var}=$dat;
@@ -16408,7 +16447,6 @@ sub dump_complete
    seek($fh,$eof - 46,SEEK_SET);                        # backup 46 characters
    sysread($fh,$buf,45);                                  # read 45 characters
    close($fh);
-
    if($buf =~ /^\*\* Dump Completed (.*) \*\*$/) {        # verify if complete
       return 1;
    } else {
@@ -16423,27 +16461,61 @@ sub dump_complete
 sub load_db
 {
    my ($dir, $file, %state);
+   
 
-   if(!-d "dumps") {
-     mkdir("dumps") || die("Unable to create directory 'dumps'.");
+   # look for db stored inside script. if there is one, invoke tmshell
+   # mode.
+   for my $line (<DATA>) {
+      db_process_line(\%state,$line);
+      @info{shell} = 1;
    }
 
-   opendir($dir,"dumps") || die("Unable to find dumps directory");
+   if(@info{shell}) {
+      @info{dumps} = ".";
+   } else {
+      @info{shell} = 0;
+      @info{dumps} = "data";
+   
+      if(!-d "@info{dumps}") {
+        mkdir(@info{dumps}) || 
+           die("Unable to create directory '@info{dumps}'.");
+      }
+   
+      opendir($dir,"@info{dumps}") || 
+         die("Unable to find @info{dumps} directory");
 
-   my $fn =(sort {(stat("dumps/$a"))[9] <=> (stat("dumps/$b"))[9]}
-             grep {/\.tdb$/}                         # find most current db
-             readdir($dir))[-1];
+      my $fn=(sort {(stat("@info{dumps}/$a"))[9] <=> 
+                    (stat("@info{dumps}/$b"))[9]}
+              grep {/\.tdb$/}                           # find most current db
+              readdir($dir))[-1];
+      closedir($dir);
+   
+      if(!dump_complete("@info{dumps}/$fn")) {
+         die("$fn is incomplete, remove or use --forceload to override");
+      }
+   
+      open($file,"< @info{dumps}/$fn") ||
+         die("Unable to open database '@info{dumps}/$fn'\n");
+   
+      @info{dump_name} = $` if($fn =~ /\.tdb$/);
+   
+      while(<$file>) {
+         db_process_line(\%state,$_);
+      }
+      close($file);
+   
+      printf(" + Database: %s [%s Version, %s bytes]\n",
+         $fn,@state{ver},@state{chars});
+   }
 
-   closedir($dir);
-
-   if($fn eq undef) {
+   if($#db == -1) {
       printf("\nNo database found, loading starter database.\n\n");
       printf("Connect as: god potrzebie\n\n") if !@info{shell};
       my $obj = {obj_id => 0};
       my $prog = prog($obj,$obj,$obj);
       cmd_pcreate($obj,$prog,"god potrzebie",{},1);             # create god
       set_flag($obj,$prog,$obj,"GOD",,1);                  # set god wizard
-
+ 
       create_object($obj,$prog,"The Void",undef,"ROOM",1);
       set($obj,$prog,$obj,"CONF.STARTING_ROOM","#1",1);   # set starting room
       teleport($obj,$prog,$obj,1);             # teleport god into the void
@@ -16459,93 +16531,11 @@ sub load_db
          "\$default:\@pemit %#=This is the minimal default web page for " .
          "[version()]. Please update this with: &default #3=Your web page",1);
       set($obj,$prog,$obj,"CONF.MUDNAME","TeenyMUSH",1);   # set mudname
-
-      mushrun(self   => obj(0),
-              runas  => obj(0),
-              invoker=> obj(0),
-              source => 1,
-              cmd    => "\@dump",
-             );
-      while(scalar keys %engine) {      # command will remove itself when done
-         spin();
-      }
-
-      return;
+   
+      do_full_dump();
    }
-
-   if(!dump_complete("dumps/$fn")) {
-      die("$fn is incomplete, remove or use --forceload to override");
-   }
-
-   open($file,"< dumps/$fn") ||
-      die("Unable to open database 'dumps/$fn'\n");
-
-   @info{dump_name} = $` if($fn =~ /\.tdb$/);
-
-   while(<$file>) {
-      db_process_line(\%state,$_);
-   }
-   close($file);
-
-   printf(" + Database: %s [%s Version, %s bytes]\n",
-      $fn,@state{ver},@state{chars}) if !@info{shell};
-
-   recover_db();
 
    delete @info{dirty};     # delete, this will get populated by the db load
-}
-
-sub recover_db
-{
-   while(-e sprintf("dumps/@info{dump_name}.%06d",@info{change}+1)) {
-      @info{change}++;
-      load_archive_log(sprintf("@info{dump_name}.%06d",@info{change}));
-   }
-
-   return if @info{shell};                  # tmshell should  less verbose
-   if(@info{change} == 1) {
-      printf(" +           DB Sequence 1 loaded.\n");
-   } elsif(@info{change} > 1) {
-      printf(" +           DB Sequences 1 .. @info{change} loaded.\n");
-   }
-}
-
-#
-# load_archive_log
-#    Load the archive log files which contain just the changes since
-#    the last full dump.
-#
-sub load_archive_log
-{
-   my $fn = shift;
-   my %state;
-   my $file;
-
-   if(!dump_complete("dumps/$fn")) {
-      die("$fn is incomplete, remove or use --forceload to override");
-   }
-
-   open($file,"< dumps/$fn") ||
-      die("Unable to open database 'dumps/$fn'\n");
-
-   while(<$file>) {
-      s/\r|\n//g;
-      if($_ =~ /^(\d+),([^,]+),{0,1}/) {
-         @state{obj} = $1;
-         my $type = $2;
-         my $rest = $';
-
-         if($type eq "delatr") {
-            my $obj = @db[@state{obj}];
-            delete @$obj{$rest};
-         } elsif($type eq "delobj") {
-            delete @db[@state{obj}];
-         } else {
-            db_process_line(\%state,$rest);
-         }
-      }
-   }
-   close($file);
 }
 
 sub generic_action
@@ -18731,7 +18721,7 @@ sub server_process_line
       $input =~ s/\r//mg;
      add_telnet_data($data,$input);
    } else {
-#      eval {                                                  # catch errors
+      eval {                                                  # catch errors
          local $SIG{__DIE__} = sub {
             con("----- [ Crash Report@ %s ]-----\n",scalar localtime());
             con("User:     %s\nCmd:      %s\n",name($user),$_[0]);
@@ -18740,6 +18730,7 @@ sub server_process_line
 
          if($input =~ /^\s*([^ ]+)/ || $input =~ /^\s*$/) {
             $user = $hash;
+            my ($in,$rest) = ($1,$');
             if(loggedin($hash) ||
                     (defined $$hash{obj_id} && hasflag($hash,"OBJECT"))) {
                add_last_info($input);                                   #logit
@@ -18750,14 +18741,18 @@ sub server_process_line
                               cmd    => $input,
                              );
             } else {
-               if(conf("show_offline_cmd")) {
-                  con("[%s:%s] %s <Offline>\n",ts(),$$hash{hostname},$input);
+               if(conf("show_offline_cmd") && $input !~ /^\s*connect/i) {
+                  my $ignore = conf("host_filter");
+                  if($ignore eq undef ||
+                     !inlist($$hash{hostname},split(/,/,$ignore))) {
+                     con("[%s:%s] %s <Offline>\n",ts(),$$hash{hostname},$input);
+                  }
                }
-               my ($cmd,$arg) = lookup_command($data,\%offline,$1,$',0);
+               my ($cmd,$arg) = lookup_command($data,\%offline,$in,$rest,0);
                &{@offline{$cmd}}($hash,prog($user,$user),$arg);  # invoke cmd
             }
          }
-#      };
+      };
 
       if($@) {                                # oops., you sunk my battle ship
 
@@ -18796,7 +18791,7 @@ sub server_hostname
 
    my $name = gethostbyaddr(inet_aton($ip),AF_INET);
 
-   if($name eq undef || $name =~ /in-addr\.arpa$/) {
+   if($name =~ /^\s*$/ || $name =~ /in-addr\.arpa$/) {
       return $ip;                            # last resort, return ip address
    } else {
       return $name;                                         # return hostname
@@ -19639,3 +19634,4 @@ sub db_read_import
 }
 
 main();                                                  #!# run only once
+

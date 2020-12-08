@@ -9,15 +9,22 @@
 #                                 8
 #                            'oooP'
 #
-#                A TinyMUSH like server written in perl?*^
+#                A TinyMUSH like server written in perl?
 #                       [ impossible but true ]
 #
+# General Notes:
 #
-# * = No Frogs were harmed in the creation of this project.
-# ^ = Do not attempt to compile with gcc or any other C compiler.
+#    Reloading Code:
+#       The code supports re-loading the perl code while the MUSH is running
+#       for the purposes of debuging or general ease of use. One hurdle is
+#       certain lines of code should not be re-run or bad things will happen.
+#       If line is determined that it should not be re-loaded, a "#!#" will
+#       need to be added to the line to signify to not re-load that line.
+#
+#       See renumber_code() for additional trickery that is required to
+#       preserve line numbers.
 #
 use strict;
-Use Carp;
 use IO::Select;
 use IO::Socket;
 use File::Basename;
@@ -32,13 +39,10 @@ use POSIX;
 use Fcntl qw( SEEK_END SEEK_SET);
 
 #
-#    Certain variables can not be re-loaded or the MUSH will forget about
-# connected users, httpd, or websocket connections. To combat this,
-# the code assumed that it would never reload the tm script, which
-# contained the required variables. Starting with the single file
-# version of TeenyMUSH, only those lines that don't contain a '#!#' will
-# be reloaded. If a line does contain a '#!#', it will be replaced with
-# an empty line during eval()ating as to preserve line number ordering.
+#    Certain lines of the code should not be re-loaded or the MUSH or bad
+# things will happen. To combat this, the code will assume it should never
+# reload any line that contains "#!#". Blank lines will be loaded instead
+# to preserve line numbers.
 #
 my (%command,                  #!# commands for after player has connected
     %fun,                      #!# functions for players to use
@@ -101,7 +105,8 @@ sub load_modules
       'MIME::Base64'           => 'mime',
       'Compress::Zlib'         => 'compress',
       'Net::DNS'               => 'dns',
-      'Cwd'                    => 'cwd'
+      'Cwd'                    => 'cwd',
+      'Carp'                   => 'carp'
    );
 
    for my $key (keys %mod) {
@@ -268,6 +273,25 @@ sub process_commandline
 }
 
 #
+# run_command
+#    Run one command and then wait for the queue to empty before
+#    continueing on. This should only be used when its okay to lag
+#    the mush.
+#
+sub run_command
+{
+   mushrun(self   => obj(0),
+           runas  => obj(0),
+           invoker=> obj(0),
+           source => 1,
+           cmd    => shift
+          );
+   while(scalar keys %engine) {      # command will remove itself when done
+      spin();
+   }
+}
+
+#
 # main
 #   The one that rules them all
 #
@@ -303,22 +327,31 @@ sub main
    }
 
    load_defaults();
-   find_free_dbrefs();
+
+   # create txt directory and silently move help.txt into the right
+   # location so the user doesn't have to.. and better yet, I don't have
+   # to document it.
+   if(!@info{shell}) {
+      if(!-e "txt") {
+         mkdir("txt") || die("Unable to create txt directory");
+      }
+      if(module_enabled("copy")) {
+         if(!-e "txt\help.txt" && -e "help.txt") {
+            move("help.txt","txt/help.txt") ||
+               die("Unable to move help.txt to txt folder");
+         }
+      }
+   }
+
+
+   run_command("@free");
 
    process_commandline();
 
    fun_mush_address(obj(0),{}) if !@info{shell};       # cache public address
 
    if(@info{shell}) {
-      mushrun(self   => obj(0),
-              runas  => obj(0),
-              invoker=> obj(0),
-              source => 1,
-              cmd    => join(" ",@ARGV[0 .. $#ARGV])
-             );
-      while(scalar keys %engine) {      # command will remove itself when done
-         spin();
-      }
+      run_command(join(" ",@ARGV[0 .. $#ARGV]));
    } else {
       server_start();                                     #!# start only once
    }
@@ -2550,7 +2583,7 @@ sub cmd_trigger
 #      }
 #   }
 #   push(@wild,$last) if($last ne undef);
-    for my $i (balanced_split($params,',',2)) {
+    for my $i (balanced_split($params,',')) {
        if($$switch{noeval}) {
          push(@wild,$i);
        } else {
@@ -4345,7 +4378,13 @@ sub cmd_list
          my $out;
          for my $key (keys %connected) {
             my $hash = @connected{$key};
-            $out .= "\n$$hash{hostname}:$$hash{port} -> '$$hash{start}' -> '$$hash{pending}'";
+            $out .= sprintf("%s:%s [%s]\n   Opened: %s, Object: %s\n",
+                $$hash{hostname},
+                $$hash{port},
+                (($$hash{raw} == 0) ? "PLAYER" : "SOCKET"),
+                ts($$hash{start}),
+                (defined $$hash{obj_id}) ? obj_name($$hash{obj_id}) : "N/A",
+                obj_name($$hash{obj_id}));
          }
          necho(self   => $self,
                prog   => $prog,
@@ -6553,6 +6592,7 @@ sub cmd_set
 
    # find attr name if provided
    my ($name,$attr) = balanced_split($obj,"\/",4);
+   $attr = ansi_remove($attr);
 
    my $switch = shift;
 
@@ -6618,6 +6658,7 @@ sub cmd_set2
 
    my ($attr,$obj) = bsplit($txt," ");
    my ($attr,$sub) = besplit($self,$prog,$attr,":");
+   $attr = ansi_remove($attr);
 
    if($sub ne undef) {
       # hash set
@@ -7632,8 +7673,8 @@ sub ansi_string
 sub ansi_substr
 {
    my ($txt,$start,$count,$noansi) = @_;
-   my ($result,$data,$last);
-   # foo
+   my ($result,$data);
+   my $last = -1;
 
    if(ref($txt) eq "HASH") {
       $data = $txt;
@@ -8196,6 +8237,7 @@ sub get_next_dbref
       return $dbref if(!valid_dbref($dbref));
 
       # invalid free list, repopulate in the background.
+      my $self = obj(0);
       mushrun(self   => $self,
               runas  => $self,
               invoker=> $self,
@@ -8244,6 +8286,8 @@ sub can_set_flag
       return 0;
    } elsif($$hash{perm} =~ /^!/) {     # can't have this perm flag and set flag
       return (!hasflag($self,$')) ? 1 : 0;
+   } elsif(!defined $$hash{perm} || $$hash{perm} eq undef) {
+      return 1;
    } else {                              # has to have this flag to set flag
       return (hasflag($self,$$hash{perm})) ? 1 : 0;
    }
@@ -9462,8 +9506,8 @@ sub spin
             delete @$prog{mutated} if defined @$prog{mutated};
 
             if(Time::HiRes::gettimeofday() - $start >= 1) { # stop
-               con("   Time slice ran long, exiting correctly [%d cmds]\n",
-                      $count);
+#               con("   Time slice ran long, exiting correctly [%d cmds]\n",
+#                      $count);
                mushrun_done($prog) if($#$stack == -1);     # program is done
                ualarm(0);
                @info{timeout_pid} = $pid;
@@ -9658,6 +9702,7 @@ sub spin_run
    $$cmd{cmd} =~ s/^\s+//g;                            # strip leading spaces
    $$cmd{cmd} =~ s/^\\//g if($$cmd{source} == 0);          # fix for escape()
    $$cmd{cmd} = parse_switch($cmd,$$cmd{cmd});
+   $$cmd{cmd} =~ s/^\s+//g;                            # strip leading spaces
    my ($first,$arg) = bsplit($$cmd{cmd}," ");
    $$cmd{mushcmd} = $first;
 
@@ -15686,7 +15731,7 @@ sub parse_function
 #    3 : split at delim
 #    4 : split until delim, delim not included in result
 #
-sub balanced_split
+sub old_balanced_split
 {
    my ($txt,$delim,$type,$debug) = @_;
    my ($last,$i,@stack,@depth,$ch,$buf,$found,$escape) = (0,-1);
@@ -15761,80 +15806,108 @@ sub balanced_split
       #      push(@stack,$buf) if($found || $last != $size);
       return @stack;
    } else {
+#      printf("RETURN: 2\n");
 	   unshift(@stack,substr($txt,$last));
 	   # unshift(@stack,$buf);
       return ($#depth != -1) ? undef : @stack;
    }
 }
 
-sub balanced_add
-{
-   my ($depth,$stack,$ch,$new) = @_;
 
-   push(@$stack,{depth => 0, data => undef}) if $#$stack < 0;
-   if($$stack[-1]->{done} && ($depth == 1 || $depth == 0 && $new)) {
-      push(@$stack,{ depth => $depth, data => $ch });
+# balanced_split
+#    Split apart a string but allow the string to have "",{},()s
+#    that keep segments together... but only if they have a matching
+#    pair. This version should be escape sequence friendly.
+#
+# types:
+#    1 : function split?
+#    2 : split until end of function?
+#    3 : split at delim
+#    4 : split until delim, delim not included in result
+#
+#    FYI: Strings are split using ansi_substr() in as big of segments as
+#         possible to avoid having extra escape sequences.
+sub balanced_split
+{
+   my ($str,$delim,$type,$debug) = (ansi_init(shift),shift,shift,shift);
+   my $end = ansi_length($str);
+   my $stack = [];
+   my $seg = [];
+   my ($i,$start) = (0,0);
+  
+   for($i=0;$i < $end;$i++) {
+      my $ch = @{$$str{ch}}[$i];                            # get current ch
+
+      if($ch eq "\\") {                      # escaped char
+         $i++;
+      } elsif($ch eq "(" || $ch eq "{") {                # go down one level
+         push(@$stack,$ch);
+      } elsif($ch eq ")") {                               # go up one level?
+         if($#$stack == -1) {               # end of function at right depth
+            if($type <= 2) {
+               push(@$seg,ansi_substr($str,$start,$i-$start));
+               $start = $i + 1;
+               last;
+            }
+         } elsif($#$stack >= 0 && @$stack[-1] eq "(") {
+            pop(@$stack);                  # pair matched, move up one level
+         }
+      } elsif($ch eq "}" && $#$stack >= 0 && @$stack[-1] eq "{") {
+         pop(@$stack);                      # pair matched, move up one level
+      } elsif($ch eq $delim && $#$stack == -1) {      # delim at right level
+         push(@$seg,ansi_substr($str,$start,$i-$start));
+         return $$seg[0], ansi_substr($str,$i+1), 1 if($type == 4);
+         $start = $i+1;
+      }
+   }            
+
+   if($type == 4) {
+      return ansi_string($str), undef, 0;
+   } elsif($type == 3) {
+      push(@$seg,ansi_substr($str,$start,$end-$start));
+      return @$seg;
    } else {
-      $$stack[-1]->{data} .= $ch;
-   }
-   $$stack[-1]->{done} = $new;
-}
-
-sub new_balanced_split
-{
-   my ($txt,$delim) = @_;
-   my ($depth,$look,$stack) = (0, undef,[]);
-
-#   printf("NEW: '%s'\n",$txt);
-
-   for(my ($size,$i)=(length($txt),0);$i < $size;$i++) {
-      my $ch = substr($txt,$i,1);
-
-      if($ch eq "\\") {                                   # character escaped
-         balanced_add($depth,$stack,substr($txt,$i++,2));
-      } elsif($ch eq "\e" && substr($txt,$i,20) =~ /^\e\[([\d;]*)([a-zA-Z])/) {
-         $i += length("x$1$2");                       # found escape sequence
-         balanced_add($depth,$stack,"\e\[$1$2");
-      } elsif($look ne undef) {                          # slurp up charaters
-         balanced_add($depth,$stack,$ch);
-         $look = undef if $look eq $ch;                        # end look for
-      } elsif($ch eq '{') {                              # start look for '}'
-         balanced_add($depth,$stack,$ch);
-         $look = '}';
-      } elsif($ch eq "(") {
-         if($delim ne undef || $depth >= 1) {
-            balanced_add(++$depth,$stack,$ch,0);
-         } else {
-            balanced_add(++$depth,$stack,$ch,1);
-         }
-      } elsif($depth == 0 && $delim ne undef && $ch eq $delim) {
-         $$stack[-1]->{done} = 1;                        # delim end of split
-         balanced_add($depth,$stack,"<".substr($txt,$i+1).">",1);
-         return $stack;
-      } elsif($depth == 1 && $delim eq undef && $ch eq ')') {
-         $$stack[-1]->{done} = 1;                     # function end of split
-         balanced_add(--$depth,$stack,substr($txt,$i),1);
-         return $stack;
-      } elsif($ch eq ")") {                                        # go down
-         balanced_add(--$depth,$stack,$ch);
-      } elsif($delim eq undef && $ch eq ",") {                  # delimiter
-         if($depth == 1) {
-            balanced_add($depth,$stack,undef,1);
-         } else {
-            balanced_add($depth,$stack,$ch);
-         }
-      } elsif($delim ne undef && $ch eq $delim && $depth == 0) { # comma end
-         $$stack[-1]->{done} = 1;
-         balanced_add(--$depth,$stack,substr($txt,$i),1);
-         return $stack;
-      } else {                                           # non-important char
-         balanced_add($depth,$stack,$ch);
+      if($#$stack != -1) {
+         return undef;
+      } else {
+         unshift(@$seg,ansi_substr($str,$start,$end-$start));
+         return @$seg;
       }
    }
-
-   return ($delim ne undef) ? $stack : undef;
 }
 
+#
+# used to debug balanced_split, remove after the new version of
+# balanced split is veted properly.
+#
+sub stack_compare
+{
+   my ($txt,$delim,$type,$flag) = @_;
+   my ($i,$old,$new,$out1, $out2);
+   my $orig = $txt;
+
+   my $i;
+   for my $seg (old_balanced_split($txt,$delim,$flag)) {
+      ++$old;
+      $out1 .= sprintf("%s : '%s'\n",++$i,$seg);
+   }
+
+   my $i;
+   for my $seg (sbalanced($txt,$delim,$flag)) {
+      ++$new;
+      $out2 .= sprintf("%s : '%s'\n",++$i,ansi_debug($seg));
+   }
+
+
+   if(1 || ansi_remove($out1) ne ansi_remove($out2) || $new ne $old || $txt ne $orig) {
+      printf("TEXT:  '%s'\n",$txt);
+      printf("delim: '%s'\n",$delim);
+      printf("type:  '%s'\n",$type);
+      printf("code:  '%s'\n",code());
+      printf("---[ OLD Start <$old>]----\n%s--[ OLD  End  ]----\n",$out1);
+      printf("---[ NEW Start <$new>]----\n%s--[ NEW  End  ]----\n\n",$out2);
+   }
+}
 
 
 #
@@ -16425,7 +16498,7 @@ sub http_process_line
          }
       }
    } else {
-      printf("---BAD REQUEST--- '$txt'\n");
+      web("---BAD REQUEST--- '$txt'\n");
       http_error($s,"Malformed Request");
    }
 }
@@ -16474,7 +16547,7 @@ sub load_db
       @info{dumps} = ".";
    } else {
       @info{shell} = 0;
-      @info{dumps} = "data";
+      @info{dumps} = "dumps";
    
       if(!-d "@info{dumps}") {
         mkdir(@info{dumps}) || 
@@ -16724,6 +16797,8 @@ sub code
    my $type = shift;
    my @stack;
 
+   return "N/A" if(!module_enabled("carp"));
+
    my $prev = @info{source_prev};
 
    if(!$type || $type eq "short") {
@@ -16746,8 +16821,15 @@ sub code
 
 #
 # renumber_code
-#    Look for line number references in the provided text and massage
-#    them into the correct line number.
+#    When code is reloaded, only the changed subroutines are reloaded
+#    and one by one. This cuts down the re-load time significantly.
+#    The downfall of this is that line numbers returned by shortmess()
+#    will be reset to 1 at the start of every subroutine. Line numbers
+#    directly from shortmess() are now worthless. To get around this
+#    problem, the starting line number of each subroutinue is recorded
+#    and added to the line number of the subroutine returned by shortmess().
+#    This will usually cause the line numbers to be correct as long as
+#    shortmess() is properly parsed.
 #
 sub renumber_code
 {
@@ -16901,7 +16983,6 @@ sub evaluate_substitutions
          $out .= get($user,$1);
       }
    }
-
    return $out . $t;
 }
 
@@ -17586,7 +17667,7 @@ sub set_flag
    }
 
    if(!is_flag($flag)) {
-      return "I don't understand that flag. " . code();
+      return "I don't understand that flag. '$flag'" . code();
    }
 
    if($flag =~ /^\s*!\s*/) {
@@ -17884,7 +17965,7 @@ sub good_atr_name
 
    if(reserved($attr) && !$flag) {                     # don't set that!
       return 0;
-   } elsif($attr =~ /^\s*([#a-z0-9\_\-\.\/\\++]+)\s*$/i) {
+   } elsif($attr =~ /^\s*([#a-zA-Z0-9\_\-\.\/\\\+]+)\s*$/i) {
       return 1;
    } else {
       return 0;
@@ -19072,7 +19153,7 @@ sub server_start
       }
    }
 
-   if(module_enabled("websocket") ne undef && conf("websocket") > 0) {
+   if(module_enabled("websocket") && conf("websocket") > 0) {
       if(conf("websocket") =~ /^\s*(\d+)\s*$/) {
          push(@port,conf("websocket") . "{websocket}");
          websock_init();

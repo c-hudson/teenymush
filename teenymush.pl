@@ -90,13 +90,13 @@ sub version
 #    Some modules are "optional". Load these optional modules or disable
 #    their use by setting the coresponding @info variable to -1.
 #
-# perl -MCPAN -e "install Net::WebSocket::Server"
 sub load_modules
 {
    my %mod = (
-      'URI::Escape'            => 'uri_escape',       # liburi-encode-perl
-      'Net::WebSocket::Server' => 'websocket',
-      'Net::HTTPS::NB'         => 'url_https', # libnet-https-nb-perl
+      'URI::Escape'            => 'uri_escape',         # liburi-encode-perl
+      'Net::WebSocket::Server' => 'websocket',    # perl -MCPAN -e "install 
+                                                  #   Net::WebSocket::Server"
+      'Net::HTTPS::NB'         => 'url_https',        # libnet-https-nb-perl
       'Net::HTTP::NB'          => 'url_http',
       'HTML::Entities'         => 'entities',
       'Digest::MD5'            => 'md5',
@@ -104,7 +104,7 @@ sub load_modules
       'HTML::Restrict'         => 'html_restrict',   # libhtml-restrict-perl
       'MIME::Base64'           => 'mime',
       'Compress::Zlib'         => 'compress',
-      'Net::DNS'               => 'dns',
+      'Net::DNS'               => 'dns',                   # libnet-dns-perl
       'Cwd'                    => 'cwd',
       'Carp'                   => 'carp'
    );
@@ -4869,6 +4869,10 @@ sub cmd_enter
    my $target = find($self,$prog,$txt) ||
       return err($self,$prog,"I don't see that here.");
 
+   if($$target{obj_id} == $$self{obj_id}) {
+      return err($self,$prog,"You can't enter yourself!");
+   }
+
    # enter your own objects or things set ENTER_OK. This should be a
    # controls() for TinyMUSH compat but i'm against wizards entering that
    # aren't specifically set enter_ok. They can @teleport if they really
@@ -7484,6 +7488,23 @@ sub ansi_debug
     $txt =~ s/\e/<ESC>/g;
     return $txt;
 }
+
+
+#
+# ansi_char
+#    Returns one character of the current string. Due to the nature of the
+#    ansi functions, this will only return characters not in ansi character
+#    strings. While this is silly to use a function to do this, this helps
+#    abstract the data set for situations in which the ansi functions are
+#    replaced by standard string functions.
+#
+sub ansi_char
+{
+   my ($data,$pos) = @_;
+
+   return @{$$data{ch}}[$pos];
+}
+
 
 sub is_ansi_string
 {
@@ -10260,6 +10281,7 @@ sub function_print
 {
    my ($depth,$txt) = @_;
    my $out;
+   printf("INPUT: '%s'\n",$txt);
 
    if($depth + length($txt) < conf("max")) {                      # too small
       return dprint($depth,"%s",$txt);
@@ -10310,8 +10332,10 @@ sub function_print
 
    if($txt ne undef) {
       $out =~  s/\n$//;
+       printf("OUT1: '%s'\n","$out$txt");
       return $out . "$txt\n";
    } else {
+       printf("OUT2: '%s'\n","$out$txt");
       return $out . "$txt";
    }
 
@@ -15827,7 +15851,7 @@ sub old_balanced_split
 #
 #    FYI: Strings are split using ansi_substr() in as big of segments as
 #         possible to avoid having extra escape sequences.
-sub balanced_split
+sub balanced_split_old
 {
    my ($str,$delim,$type,$debug) = (ansi_init(shift),shift,shift,shift);
    my $end = ansi_length($str);
@@ -15836,9 +15860,9 @@ sub balanced_split
    my ($i,$start) = (0,0);
   
    for($i=0;$i < $end;$i++) {
-      my $ch = @{$$str{ch}}[$i];                            # get current ch
+      my $ch = ansi_char($str,$i);                         # get current ch
 
-      if($ch eq "\\") {                      # escaped char
+      if($ch eq "\\")    {                      # escaped char
          $i++;
       } elsif($ch eq "(" || $ch eq "{") {                # go down one level
          push(@$stack,$ch);
@@ -15875,6 +15899,69 @@ sub balanced_split
       }
    }
 }
+
+sub balanced_split
+{
+   my ($str,$delim,$type,$debug) = (ansi_init(shift),shift,shift,shift);
+   my $end = ansi_length($str);
+   my $stack = [];
+   my $seg = [];
+   my ($i,$start) = (0,0);
+   my ($br,$bl,$pr,$pl) = ("{","}","(",")");                # make vi happy
+
+   for($i=0;$i < $end;$i++) {
+      my $ch = ansi_char($str,$i);                        # get current ch
+
+      # escaped character or escaped delim via % char
+      if($ch eq "\\") { # || $ch eq "%") {
+         $i++;
+      } elsif($ch eq $pr) {                              # go down one level
+         push(@$stack,{ ch => $pl, i => $i, start => $start, seg => $#$seg});
+      } elsif($ch eq $br) {                              # go down one level
+         push(@$stack,{ ch => $bl, i => $i, start => $start, seg => $#$seg});
+      } elsif($ch eq $pl) {                              # go up one level?
+         if($#$stack == -1) {                # end of function at right depth
+            if($type <= 2) {
+               push(@$seg,ansi_substr($str,$start,$i-$start));
+               $start = $i + 1;
+               last;
+            }
+         } elsif($ch eq @{@$stack[-1]}{ch}) {
+            pop(@$stack);                  # pair matched, move up one level
+         }
+      } elsif($#$stack >= 0 && $ch eq @{@$stack[-1]}{ch}) {
+         pop(@$stack);                      # pair matched, move up one level
+      } elsif($ch eq $delim && $#$stack == -1) {      # delim at right level
+         push(@$seg,ansi_substr($str,$start,$i-$start));
+         return $$seg[0], ansi_substr($str,$i+1), 1 if($type == 4);
+         $start = $i+1;
+      }
+
+      # processed to end of string but there are still unmatched {}() pairs.
+      # Back out one at a time and see if it eventually parses.
+      if($i + 1 == $end && $#$stack >= 0) {
+         my $rp = pop(@$stack);              # go back one "restore point"
+         $i = $$rp{i};
+         $start = $$rp{start};                # @seg end is invalid, delete
+         delete @$seg[($$rp{seg}+1) .. $#$seg] if($#$seg > $$rp{seg});
+      }
+   }
+
+   if($type == 4) {                         # handle the various return types
+      return ansi_string($str), undef, 0;
+   } elsif($type == 3) {
+      push(@$seg,ansi_substr($str,$start,$end-$start));
+      return @$seg;
+   } else {
+      if($#$stack != -1) {
+         return undef;
+      } else {
+         unshift(@$seg,ansi_substr($str,$start,$end-$start));
+         return @$seg;
+      }
+   }
+}
+
 
 #
 # used to debug balanced_split, remove after the new version of
@@ -17840,6 +17927,7 @@ sub create_object
 
    if($type eq "PLAYER") {
       db_set($id,"obj_lock_default","#" . $id);
+      db_set($id,"obj_lock_enter","#" . $id);
       db_set($id,"obj_home",$where);
       db_set($id,"obj_money",conf("starting_money"));
       db_set($id,"obj_firstsite",$where);
@@ -17847,6 +17935,8 @@ sub create_object
       @player{trim(ansi_remove(lc($name)))} = $id;
    } else {
       db_set($id,"obj_home",$$self{obj_id});
+      db_set($id,"obj_lock_default","#" . $id);
+      db_set($id,"obj_lock_enter","#" . $id);
    }
 
    db_set($id,"obj_owner",$owner);

@@ -7585,6 +7585,27 @@ sub ansi_add
 }
 
 #
+# ansi_init_noescapes
+#   If a string doesn't contain an escape character, it can't have escape
+#   sequences in them. Initialize the string so its has the correct format
+#   but without the messy processing time to look for what can't be there.
+#
+sub ansi_init_noescapes
+{
+   my ($data,$str) = @_;
+
+   $$data{ch} = [ split(//,$str) ];
+   my $hash = $$data{ch};
+
+   for my $i (0 .. $#{$$data{ch}}) {
+      @{$$data{code}}[$i] = [];
+      @{$$data{snap}}[$i] = [];
+   }
+   return $data;
+}
+
+
+#
 # ansi_init
 #    Read in a string and convert it into a data structure that can be
 #    easily parsed / modified, i hope.
@@ -7606,6 +7627,9 @@ sub ansi_init
       state  => [],
       snap   => []
    };
+
+   # optimization for strings with no escapes
+   return ansi_init_noescapes($data,$str) if($str !~ /\e/);
 
    for(my ($len,$i)=(length($str),0);$i < $len;) {
        if(ord(substr($str,$i,1)) eq 27) {                      # found escape

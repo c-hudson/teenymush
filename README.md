@@ -1,6 +1,6 @@
-# TeenyMUSH
+﻿# TeenyMUSH
 This is a full implementation of a TinyMUSH like server in Perl. The server
-can be used to create an ASCII based virtual world of your own.  Cusomization
+can be used to create an ASCII based virtual world of your own.  Customization
 of the world does not require modification of the server but instead uses
 internal commands documented in the help command. People can interact with
 other users via telnet, web, or websockets.

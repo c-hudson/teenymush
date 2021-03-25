@@ -28,5 +28,5 @@ other users via telnet, web, or websockets.
 
 # Setup
 
-See: http://ascii.dynu.net/FAQ or 
-     http://ascii.dynu.net/ for more details.
+See: http://teenymush.dynu.net/FAQ or 
+     http://teenymush.dynu.net/ for more details.

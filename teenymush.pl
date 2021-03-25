@@ -106,7 +106,8 @@ sub load_modules
       'Compress::Zlib'         => 'compress',
       'Net::DNS'               => 'dns',                   # libnet-dns-perl
       'Cwd'                    => 'cwd',
-      'Carp'                   => 'carp'
+      'Carp'                   => 'carp',
+      'Text::Wrapper'          => 'wrap',
    );
 
    for my $key (keys %mod) {
@@ -1060,7 +1061,6 @@ sub cmd_ban
 
    !or_flag($self,"WIZARD","GOD") &&
       return err($self,$prog,"Permission denied.");
-   manage_httpd_bans();
 
    my $hash = @info{httpd_ban};
    my $pat = glob2re(evaluate($self,$prog,$txt)) if($txt ne undef);
@@ -5937,10 +5937,12 @@ sub cmd_connect
       }
       $$prog{cmd}->{source} = 1;
 
-      echo_flag($user,
-                $prog,
-                "CONNECTED,PLAYER,MONITOR",
-                "[Monitor] %s has connected.",name($user));
+      if(!hasflag($user,"NOMONITOR")) {
+         echo_flag($user,
+                   $prog,
+                   "CONNECTED,PLAYER,MONITOR",
+                   "[Monitor] %s has connected.",name($user));
+      }
 
       # --- Handle @ACONNECTs on masteroom and players-----------------------#
 
@@ -6071,9 +6073,9 @@ sub reconstitute
       $value !~ /\n/ &&
       ($pattern ne undef || $value  =~ /^\s*([\$|\[|^|!|@])/)) {
       if($1 eq "[") {
-         $value = "\n" . function_print(3,single_line($value));
+         $value = "\n" . expand_function(3,single_line($value));
       } else {
-         $value = "\n" . pretty(3,single_line($value));
+         $value = "\n" . expand_code(3,single_line($value));
       }
       $value =~ s/\n+$//;
    }
@@ -8030,6 +8032,7 @@ sub initialize_flags
    @flag{NOSPOOF}      ={ letter => "N", perm => "!GUEST", type => 1, ord=>14 };
    @flag{VERBOSE}      ={ letter => "v", perm => "!GUEST", type => 1, ord=>15 };
    @flag{MONITOR}      ={ letter => "M", perm => "WIZARD", type => 1, ord=>16 };
+   @flag{NOMONITOR}    ={ letter => "!", perm => "GOD",    type => 1, ord=>16 };
    @flag{SQL}          ={ letter => "Q", perm => "WIZARD", type => 1, ord=>17 };
    @flag{ABODE}        ={ letter => "A", perm => "!GUEST", type => 1, ord=>18 };
    @flag{LINK_OK}      ={ letter => "L", perm => "!GUEST", type => 1, ord=>19 };
@@ -9994,232 +9997,6 @@ sub find_player
    return obj($partial);
 }
 
-#
-# balanced_split
-#    Split apart a string but allow the string to have "",{},()s
-#    that keep segments together... but only if they have a matching
-#    pair.
-#
-sub fmt_balanced_split
-{
-   my ($txt,$delim,$type,$debug) = @_;
-   my ($last,$i,@stack,@depth,$ch,$buf) = (0,-1);
-
-   my $size = length($txt);
-   while(++$i < $size) {
-      $ch = substr($txt,$i,1);
-
-      if($ch eq "\\") {
-         $buf .= substr($txt,$i++,2);
-         next;
-      } else {
-         if($ch eq "(" || $ch eq "{") {                  # start of segment
-            $buf .= $ch;
-            push(@depth,{ ch    => $ch,
-                          last  => $last,
-                          i     => $i,
-                          stack => $#stack+1,
-                          buf   => $buf
-                        });
-         } elsif($#depth >= 0) {
-            $buf .= $ch;
-            if($ch eq ")" && @{@depth[$#depth]}{ch} eq "(") {
-               pop(@depth);
-            } elsif($ch eq "}" && @{@depth[$#depth]}{ch} eq "{") {
-               pop(@depth);
-            }
-         } elsif($#depth == -1) {
-            if($ch eq $delim) {    # delim at right depth
-               push(@stack,$buf . $delim);
-               $last = $i+1;
-               $buf = undef;
-            } elsif($type <= 2 && $ch eq ")") {                   # func end
-               push(@stack,$buf);
-               $last = $i;
-               $i = $size;
-               $buf = undef;
-               last;                                      # jump out of loop
-            } else {
-               $buf .= $ch;
-            }
-         } else {
-            $buf .= $ch;
-         }
-      }
-      if($i +1 >= $size && $#depth != -1) {   # parse error, start unrolling
-         my $hash = pop(@depth);
-         $i = $$hash{i};
-         delete @stack[$$hash{stack} .. $#stack];
-         $last = $$hash{last};
-         $buf = $$hash{buf};
-      }
-   }
-
-   if($type == 3) {
-      push(@stack,substr($txt,$last));
-      return @stack;
-   } else {
-      unshift(@stack,substr($txt,$last));
-      return ($#depth != -1) ? undef : @stack;
-   }
-}
-
-#
-# dprint
-#    Return a string that is at the proper "depth". Some generic mush
-#    formating is also done here.
-#
-sub dprint
-{
-    my ($depth,$fmt,@args) = @_;
-    my $out;
-
-    my $txt = sprintf($fmt,@args);
-
-    if($depth + length($txt) < conf("max")) {           # short, copy it as is.
-#        $out .= sprintf("%s%s [%s]\n"," " x $depth,$txt,code());
-        $out .= sprintf("%s%s\n"," " x $depth,$txt);
-                                         # Text enclosed in {}, split apart?
-    } elsif($txt =~ /^\s*{\s*(.+?)}\s*([;,]{0,1})\s*$/s) {
-        my ($grouped,$ending) = ($1,$2);
-        $txt = pretty($depth+3,$grouped);
-        $txt =~ s/^\s+//;
-        $out .= sprintf("%s{  %s"," " x $depth,$txt);
-        $out .= sprintf("%s}%s\n"," " x $depth,$ending);
-    } else {                                    # generic text, wrapping it
-       # $out .= sprintf("%s%s\n"," " x $depth,$txt);
-       $out .= wrap(" " x $depth," " x ($depth+3),$txt) . "\n";
-    }
-    return $out;
-}
-
-#
-# fmt_dolist
-#    Handle formating for @dolist like
-#
-#    @dolist list =
-#        @commands
-#
-sub fmt_dolist
-{
-    my ($depth,$cmd,$txt) = @_;
-    my $out;
-
-    # to short, don't seperate
-    if($depth + length($cmd . " " . $txt) < conf("max")) {
-       return dprint($depth,$cmd . " " . $txt);
-    }
-
-                                               # find '=' at the right depth
-    my @array = fmt_balanced_split($txt,"=",3);
-
-    $out .= dprint($depth,"%s %s",$cmd,trim(@array[0]));    # show cmd + list
-
-    if($#array >= 0) {                                 # show commands to run
-       $out .= pretty($depth+3,join('',@array[1 .. $#array]));
-    }
-    return $out;
-}
-
-sub fmt_while
-{
-   my ($depth,$cmd,$txt) = @_;
-   my $out;
-
-   if($txt =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*(;{0,1})\s*$/s) {
-      $out .= dprint($depth,"%s ( %s ) {",$cmd,$1);
-      $out .= pretty($depth+3,$2);
-      $out .= dprint($depth,"}%s",$3);
-      return $out;
-   } else {
-      return dprint($depth,"%s",$cmd . " " . $txt);
-   }
-}
-
-#
-# fmt_switch
-#   Handle formating for @switch/select
-#
-#   @select value =
-#       text,
-#          commands,
-#       text,
-#          commands
-#
-sub fmt_switch
-{
-    my ($depth,$cmd,$txt) = @_;
-    my $out;
-
-    # to small, do nothing
-    if(length($txt)+$depth + 3 < conf("max")) {
-       return dprint($depth,"%s %s",$cmd,$txt);
-    }
-
-    # split up command by ','
-    my @list = fmt_balanced_split($txt,',',3);
-
-    # split up first segment again by "="
-    my ($first,$second) = fmt_balanced_split(shift(@list),'=',3);
-
-
-    my $len = $depth + length($cmd) + 1;                  # first subsegment
-    if($len + length($first)  > conf("max")) {                 # multilined
-        $first =~ s/=\s*$//g;
-       $out .= dprint($depth,
-                      "%s %s=",
-                      $cmd,
-                      substr(noret(function_print($len-3,trim($first))),$len)
-                     );
-    } else {                                                  # single lined
-       $out .= dprint($depth,"%s %s",$cmd,trim($first),code());
-    }
-
-
-    $out .= dprint($depth+3,"%s",$second);               # second subsegment
-
-    # show the rest of the segments at alternating depths
-    for my $i (0 .. $#list) {
-       my $indent = ($i % 2 == 0) ? 6 : 3;
-
-       if($i % 2 == 1) {
-          if($i == $#list) {                        # default test condition
-             $out .= dprint($depth+3,"DEFAULT" . ",");
-             $out .= dprint($depth+6,"%s",@list[$i]);
-          } else {                                          # test condition
-             $out .= dprint($depth+3,"%s",@list[$i]);
-          }
-       } elsif($depth + $indent + length(@list[$i]) > conf("max") || # long cmd
-               @list[$i] =~ /^\s*{.*}\s*;{0,1}\s*$/) {
-          $out .= pretty($depth+6,@list[$i]);
-       } else {                                                  # short cmd
-          $out .= dprint($depth + 6,"%s",@list[$i]);
-       }
-    }
-
-    return $out;
-}
-
-sub fmt_amper
-{
-   my ($depth,$cmd,$txt) = @_;
-   my $out;
-
-   if($txt =~ /^([^ ]+)\s+([^=]+)\s*=/) {
-      my ($atr,$obj,$val) = ($1,$2,$');
-
-      if(length($val) + $depth < conf("max")) {
-         $out .= dprint($depth,"%s","$cmd$txt");
-      } elsif($val =~ /^\s*\[.*\]\s*(;{0,1})\s*$/) {
-         $out .= dprint($depth,"%s","&$atr $obj=");
-         $out .= function_print($depth+3,$val);
-      } else {
-         $out .= dprint($depth,"%s",$cmd . $txt);
-      }
-   }
-
-   return $out;
-}
 
 #
 # noret
@@ -10231,238 +10008,560 @@ sub noret
    return $txt;
 }
 
+# -----[mec start]-------------------------------------------------------- #
+
 #
-# function_print_segment
-#    Maybe this function should be called function_print as this
-#    function is really just printing out the function.
+# d
+#   Quick function to take a depth value and print out a coresponding
+#   number of spaces. Optionally, print out some text afterwards.
 #
-sub function_print_segment
+sub d
 {
-   my ($depth,$left,$function,$arguments,$right,$type) = @_;
-   my ($mleft,$mright) = (quotemeta($left),quotemeta($right));
-   my $len = length("$function.$left( ");
-   my $out;
+   my ($depth,$fmt,@args) = @_;
 
-   my @array = fmt_balanced_split($arguments,",",2);
-   $function =~ s/^\s+//;                             # strip leading spaces
+   return sprintf("%*s%s",$depth,"",$fmt) if($#args == -1 && $fmt =~ /%/);
+   return sprintf("%*s$fmt",$depth,"",@args);
+}
 
-   #
-   # if function is short enough, so leave it alone. However, but it unkown
-   # how much of the text to leave alone since there could be more then one
-   # function in $arguments. @array has the left over bits and what should
-   # be skipped over... the only downfall is we have to reconstruct the
-   # skipped over parts.
-   #
-   # FYI This comparison is slighytly wrong, but close
-   if($depth + length("$left$function($arguments)$right") - length(@array[0])
-      < conf("max")) {
-      if($mright ne undef) {                 # does the function end right?
-         if(@array[0] =~ /^\s*\)$mright/) {
-            @array[0] = $';                                          # yes
-         } else {
-            return (undef, undef, 1);                   # no, umatched "]"
-         }
-      }
+#
+# ltrim
+#    Remove any leading spaces from the specified string.
+#
+sub ltrim
+{
+   my $txt = shift;
+   $txt =~ s/^ +//;
+   return $txt;
+}
 
-      return (dprint($depth,                    # put together and return it
-                     "%s",
-                     "$left$function(" .
-                        join('',@array[1 .. $#array])
-                        . ")$right"
-                    ),
-              "@array[0]",
-              0
-             );
+#
+# fmt_equal
+#
+sub fmt_equal
+{
+   my ($depth,$cmd,$rest) = @_;
+   my ($out,$fmt,$space);
+
+   my ($first,$second) = balanced_split($rest,"=",4);
+
+   if($first =~ /^(\s+)/) {                             # preserve spaces?
+      $space = $1;
+      $first = $';
    }
 
-   $out .= dprint($depth,"%s","$left$function( " . @array[1]);
+   if($second ne undef) {                            # split at equal sign
+     my $fun = expand_function($depth+3,$first);
 
-   my $ident = length("$left$function( ") + $depth;
-   for my $i (2 .. $#array) {                      # show function arguments
-      $out .= noret(function_print($ident,"@array[$i]")) . "\n";
+     if($fun =~ /\n/) {
+        $fmt = "%s%s\n%s=\n";
+     } else {
+        $fmt = "%s%s%s=\n";
+        $fun = $first;
+     }
+     $out .= d($depth,
+               $fmt,
+               $cmd,
+               $space,
+               $fun
+              );
+     $out .= d($depth+3,"%s",ltrim(expand_function($depth+3,$second)));
+   } else {                                                # no equal sign
+     $out .= d($depth,
+               "%s%s%s",
+               $cmd,
+               $space,
+               ltrim(expand_function($depth,$first))
+              );
    }
+   return $out;
+}
 
-   $out .= dprint($depth,"%s",")$right");                    # show ending )
+#
+# fmt_default
+#   If there isn't a specalized rule to print out a segement of code,
+#   default to using this way. The general idea will probably be to just
+#   wrap() the text.
+#
+sub fmt_default
+{
+   my ($depth,$cmd,$rest) = @_;
+   my $txt = $cmd .  $rest;
 
-   if($mright ne undef) {
-      if(@array[0] =~ /^\s*\)$mright/) {
-          return ($out,$',0);
-      } else {
-          return (undef,undef,2);
+   if(length($txt) + $depth < 78) {          # small, don't need to touch
+      return d($depth,"%s",$txt);
+   } elsif($txt =~ /^\s*{(.*)}\s*$/) {        # handle text inside brackets
+      my $out .= d($depth) . "{" .  ltrim(expand_code($depth+1,$1)) . "\n";
+      $out .= d($depth) . "}";
+      return $out;
+   } else {                                  # free form text, just wrap it
+      my $out;
+      for my $line ( balanced_split($txt,";",3) ) { # split data at semi-colon
+         $out .= expand_function($depth+3,$line) ;
       }
-   } elsif(@array[0] =~ /\s*\)\s*(,)/) {
-      return ($out,"$1$'",0);
-   } else {
-      return (undef,undef,3);
+      return d($depth,ltrim($out));
    }
 }
 
-# function_print
-#    Print out a function as is if short enough, or split it apart
-#    into multiple lines.
 #
-sub function_print
+# fmt_while
+#    Teenymush supports a @while command, format it accordingly.
+#
+#    Output Format:
+#
+#       @while ( <test condition> ) {
+#          < code >
+#       }
+#
+sub fmt_while
+{
+   my ($depth,$cmd,$rest) = @_;
+   my $out;
+
+   # look for while (<test condition>) { <code> };
+   if($rest =~ /^\s*\(\s*(.*?)\s*\)\s*{\s*(.*?)\s*}\s*(;{0,1})\s*$/s) {
+      $out .= d($depth,"%s","$cmd ( $1 ) {\n");
+      $out .= expand_code($depth+3,$2) . "\n";
+      $out .= d($depth,"%s","}");
+      return $out;
+   } else {                         # couldn't parse, fall back to default
+      return fmt_default(@_);
+   }
+}
+
+#
+# fmt_switch
+#   Handle formating of @switch/@select.
+#
+# Output Format
+#    @select <text> =
+#       <condition1>,
+#          { <code>
+#          }
+#       <condition2>,
+#          { <code>
+#          }
+#       DEFAULT,
+#          { <code>
+#          }
+sub fmt_switch
+{
+   my ($depth,$cmd,$rest) = @_;
+   my ($out,$space);
+
+   my @list = balanced_split($rest,",",3);
+
+   my ($first,$second) = balanced_split(shift(@list),"=",4);
+   unshift(@list,$second);
+
+   $out = d($depth,"%s",$cmd);
+
+   if($first =~ /^(\s+)/) {
+      $space = $1;
+      $first = $';
+   }
+
+   my $fun = expand_function($depth + length($cmd) + length($space),$first);
+   if($fun =~ /\n/) {
+      $out .= $space . ltrim($fun) . "=\n";
+   } else {
+      $out .= $space . $first . "=\n";
+   }
+
+   for my $i (0 .. $#list) {
+      if($i == $#list) {
+         add_spaces(\$out,\@list[$i]);
+         $out .= expand_code($depth+3,@list[$i]);
+      } elsif($i % 2 == 0) {
+         add_spaces(\$out,\@list[$i]);
+         $out .= d($depth+3) . @list[$i];
+      } else {
+         add_spaces(\$out,\@list[$i]);
+         $out .= expand_code($depth+6,@list[$i]);
+      }
+      $out .= ",\n" if($i != $#list);
+   }
+   return $out;
+}
+
+
+
+#
+# fmt_amper
+#   The ampersand is used to set variables. Expand out the value
+#   of the attribute and optionally put it on a new line.
+#
+sub fmt_amper
+{
+   my ($depth,$cmd,$rest) = @_;
+
+   my ($first,$second) = balanced_split($rest,"=",4);
+
+   if($second eq undef) {
+      return d($depth,
+               "%s%s",
+               $cmd,
+               $first
+              );
+   } elsif(length($second) > 40) {
+      return d($depth,
+               "%s%s=\n%s",
+               $cmd,
+               $first,
+               expand_function($depth+3,$second)
+              );
+   } else {
+      return d($depth,
+               "%s",
+               $cmd . $first . "=" . ltrim(expand_function($depth+3,$second))
+              );
+   }
+}
+
+
+#
+# fmt_dolist
+#   @dolist is used to process fixed lists of data.
+#
+# Output Example:
+#
+#    @dolist <list>=
+#    {
+#       <code>
+#    }
+sub fmt_dolist
+{
+   my ($depth,$cmd,$rest) = @_;
+   my ($ret1, $code, $ret2, $s1,$s2);
+
+   # split into list and commands
+   my ($first,$second) = balanced_split($rest,"=",4);
+
+   if($first =~ /^( +)/) {                # save leading spaces after @dolist
+      $s1 = $1;
+      $first = $';
+   }
+   if($second =~ /^( +)/) {               # save leading spaces after @dolist
+      $s2 = $1;
+      $second = $';
+   }
+   my $list = expand_function($depth+3,$first);
+
+   if($second =~ /^\s*{/) {
+      $code = expand_code($depth,$second);
+   } else {
+      $code = expand_code($depth+3,$second);
+   }
+
+   if($list =~ /\n/) {               # if list has returns, give it a new line
+      $ret1 = "\n";
+   } else {
+      $list = $first;                          # fall back to original version
+   }
+   if($code =~ /\n/) {               # if code has returns, give it a new line
+      $ret2 = "\n";
+   } else {
+      $code = $second;                         # fall back to original version
+   }
+   return d($depth,
+            "%s%s%s%s=%s%s%s",
+            $cmd,
+            $s1,
+            $ret1,
+            $list,
+            $s2,
+            $ret2,
+            $code
+           );
+}
+
+
+#
+# mywrap
+#   Text::Wrapper gets close to what we want but needs a few tweaks
+#   to get it all the way.
+#
+sub mywrap
 {
    my ($depth,$txt) = @_;
-   my $out;
 
-   if($depth + length($txt) < conf("max")) {                      # too small
-      return dprint($depth,"%s",$txt);
-   }
-
-   while($txt =~ /^(\s*)([a-zA-Z_]+)\(/s) {
-      my ($fmt,$left,$err) = function_print_segment($depth,
-                                                 '',
-                                                 $2,
-                                                 $',
-                                                 '',
-                                                 2
-                                                );
-      if($err) {
-         return $txt;
-      } else {
-         $out .= $1 . $fmt;
-         $txt = $left;
-      }
-   }
-   return $out if($out ne undef and $txt =~ /^\s*$/);
-
-   @info{debug_count} = 0;
-
-   while($txt =~ /([\\]*)\[([a-zA-Z_]+)\(/s) {
-      my ($esc,$before,$after,$unmod) = ($1,$`,$',$2);
-
-      if(length($esc) % 2 == 0) {
-          my ($fmt,$left,$err) = function_print_segment($depth,
-                                                     '[',
-                                                     $unmod,
-                                                     $after,
-                                                     ']',
-                                                     1
-                                                    );
-          if($err) {
-             $out .= $before ."[$unmod(";
-             $txt = $after;
-          } else {
-             $out .= $fmt;
-             $txt = $left;
-          }
-      } else {
-          $out .= "[$unmod(";
-          $txt = $after;
-      }
-   }
-
-   if($txt ne undef) {
-      $out =~  s/\n$//;
-      return $out . "$txt\n";
+   if(module_enabled("uri_escape")) {
+      my $wrapper = Text::Wrapper->new(columns => 78 - $depth,
+                                       body_start => d($depth+3),
+                                       wrap_after => ", ");
+      my $result = $wrapper->wrap($txt);
+      $result =~ s/\n$//;                               # remove ending return
+      return d($depth,"%s",$result);                  # indent + return results
    } else {
-      return $out . "$txt";
+      return (" " x $depth) . $txt;
+   }
+}
+
+#
+# noswitch
+#    Remove any switches at the end of a command and return the actual
+#    command.
+#
+sub noswitch
+{
+   my $txt = shift;
+
+   if($txt =~ /^([^\/]+)/) {
+      return $1;
+   } else {
+      return $txt;
+   }
+}
+
+
+#
+# expand_args
+#    Expand the arguements of a function. This is a helper function to
+#    expand_function.
+#
+sub expand_args
+{
+   my ($level,$depth,$fun,$stack) = @_;
+   my ($type,$alternate,$d,@new,$spaces);
+
+   # add function name + ( and optional additional spacing
+   $fun .= "(";
+   my $offset = $depth + length($fun);
+
+   $type = "]" if($fun =~ /^\s*\[/);                  # add closing bracket?
+
+   $alternate = 1 if($fun =~ /switch/i);
+
+   for my $i ( 0 .. $#$stack ) {                 # expand function arguements
+      if($i == 0 || $i % 2 == 1) {
+         $d = $offset;
+      } elsif($alternate) {
+         $d = $offset + 3;
+      } else {
+         $d = $offset;
+      }
+
+      # hackery to save spaces at the begining of function arguments.
+      # and move them to the end of the previous line
+      if(@$stack[$i] =~ /^(\s+)/) {
+         (@new[$i],$spaces) = ($',$1);
+         if($i != 0) {                  # can't add spaces yet in first pos
+            @new[($i == 0) ? 0 : ($i - 1)] .= $spaces;
+            $spaces = undef;
+         }
+      } else {
+         @new[$i] = @$stack[$i];
+      }
+      my $fun = $spaces . ltrim(expand_function($d,@new[$i],$level+1));
+      @new[$i] = d($d,"%s",$fun);
+
+      @new[$i] .= "," if($i != $#$stack);
    }
 
-#   } elsif($txt =~ /^\s*\[([a-zA-Z0-9_]+)\((.*)\)(\s*)\]\s*(;{0,1})\s*$/) {
-#      $out .= function_print_segment($depth+3,'[',$1,"$2)$3$4",']',1);
-#                                                                  # function()
-#   } elsif($txt =~  /^\s*([a-zA-Z0-9_]+)\((.*)\)(\s*)(,{0,1})(\s*)$/) {
-#      $out .= function_print_segment($depth+3,'',$1,"$2)$3$4$5",'',2);
-#   } else {                                                         # no idea?
-#      $out .= dprint($depth,"%s",$txt);
-#   }
-#   return $out;
+   # don't show last function arguement if empty
+   if($#new > 0 && ansi_remove(@new[$#new]) eq undef) {
+      delete @new[$#new];
+      @new[$#new] .= ",";
+   }
+
+   # put everything together and return
+   return d($depth,"%s",$fun) .
+          ltrim(join("\n",@new)) . "\n" . d($depth,")$type");
 }
 
 #
-# split_commmand
-#    Determine what the possible cmd and arguements are.
+# pending
+#    Text that look like function calls or bad function calls will break
+#    up text segments into multiple peices if sent out the door right away.
+#    Allow for joining these segments together and outputing in one segment
+#    instead of multiple.
 #
-sub split_command
+sub pending
 {
-    my $txt = shift;
+   my $type = shift;
 
-    if($txt =~ /^\s*&/) {
-       return ('&',$');
-    } elsif($txt =~ /^\s*([^ \/=]+)/) {
-       return ($1,$');
-    } else {
-       return $txt;
-    }
+   if($type eq "add") {
+      my ($data,$txt) = @_;
+      $$data{txt} .= $txt;
+   } elsif($type eq "out") {
+      my ($data,$depth,$out,$txt) = @_;
+
+      if($$data{txt} ne undef) {
+         my $result = ret($out) . mywrap($depth,$$data{txt} . $txt);
+         delete $$data{txt};
+         return $result;
+      }
+   } else {
+      die("pending: internal error, unknown '$type' type specified");
+   }
 }
 
-sub pretty
+sub ret
 {
-    my ($depth,$txt) = @_;
-    my $out;
-
-    #
-    # these commands are handled differently then other commands.
-    #
-    my %fmt_cmd = (
-        '@switch' => sub { fmt_switch(@_); },
-        '@select' => sub { fmt_switch(@_); },
-        '@dolist' => sub { fmt_dolist(@_); },
-        '&'       => sub { fmt_amper(@_);  },
-        '@while'  => sub { fmt_while(@_);  },
-    );
-
-    if($depth + length($txt) < conf("max")) {
-        return (" " x $depth) . $txt;
-    }
-
-    for my $txt ( fmt_balanced_split($txt,';',3,1) ) {
-       my ($cmd,$arg) = split_command($txt);
-       if(defined @fmt_cmd{$cmd}) {
-          $out =~ s/\s+$//g;
-          $out .= "\n" if $out ne undef;
-          $out .= &{@fmt_cmd{$cmd}}($depth,$cmd,$arg);
-          $out =~ s/\n+$//g if($depth==3);
-       } elsif(defined @fmt_cmd{lc($cmd)}) {
-          $out .= &{@fmt_cmd{lc($cmd)}}($depth,$cmd,$arg);
-          $out =~ s/\n+$//g if($depth==3);
-       } else {
-          $out .= dprint($depth,"%s",$txt);
-       }
-    }
+   return "\n" if(@_[0] ne undef && @_[0] !~ /\n\s*$/);
+}
 
 
-    if($depth == 0) {
-       return noret($out);
-    } else {
-       return $out;
-    }
+#
+# expand function
+#    Take a function or set of functions and make them more readable by
+#    indenting and spreading across multiple lines.
+#
+# Prefered Format:
+#
+#    [function( arg1,
+#               arg2,
+#               arg3
+#    )]
+#
+sub expand_function
+{
+   my ($depth,$txt,$level) = @_;
+   my ($out, $space);
+   my $pend = {};
+
+   # expand most functions at least once, also but don't expand the small stuff
+   if($depth + length($txt) < 75) { # && $level > 1) {
+      return d($depth,"%s",$txt);
+   }
+
+   # unbracketed single function
+   if($txt =~ /^\s*([a-zA-Z\_\!]+)\((.*)\)\s*$/) {
+      my ($fun,$rest) = ($1,"$2)");
+      my ($remainder,@stack) = balanced_split($rest,",",2);
+
+      if(ansi_remove($remainder) =~ /^\s*$/) {
+         return expand_args($level,$depth,$fun,\@stack);
+      }
+      return d($depth,"%s",$txt);                               # parse error
+   }
+
+   # process function by function
+   while($txt =~ /\[([a-zA-Z\_\!]+)\(/) {               # possible function
+      my ($fun,$before,$rest) = ($1,$`,$');
+
+      # balance_split will split up args & find end of function
+      my ($remainder,@stack) = balanced_split($rest,",",2);
+
+      # throw any text found before the function into pending
+      pending("add",$pend,$before,$out) if($before !~ /^\s*$/);
+
+      # determine success by checking remainder
+      if($remainder =~ /](\s*)/) {
+         ($txt,$space) = ($',$1);
+
+         if(ansi_remove($`) !~ /^\s*$/) {      # parse error / treat like text
+            pending("add",$pend,"[$fun(");
+            $txt = $rest;
+         } else {                                           # valid function?
+            my $res = expand_args($level,$depth,"[$fun",\@stack) .
+                      $space;
+
+            # don't expand single line and/or shorter functions
+            $out .= ret($out);
+            $out .= pending("out",$pend,$depth,$out);
+
+            if($res !~ /\n/ || length($res) < 70) {    # funct small no expand
+               $out .= ret($out) .
+                       d($depth,"[$fun(" . join(",",@stack) . ")]$space");
+            } else {                                     # add expanded output
+               $out .= ret($out) . $res;
+            }
+         }
+      } else {                                # parse error / treat like text
+         pending("add",$pend,"[$fun(",$out);
+         $txt = $rest;
+      }
+   }
+
+   if($txt ne undef || defined $$pend{txt}) {
+      $out .= ret($out,$pend,$txt);
+   }
+   pending("add",$pend,$txt);
+   $out .= pending("out",$pend,$depth);
+
+   return $out;
+#   return "<1>" . ret($out) . "<2>" . $out;
+}
+
+
+#
+# add_spaces
+#   Spaces are never significant at the begining of a line. This function
+#   will slurp up spaces from the begining of a line and move them to the
+#   end of the previous line. More then likely these spaces could be
+#   dropped but it makes diffing the output easier and helps prove that
+#   the code is not deleting things it shouldn't.
+sub add_spaces
+{
+   my ($out,$str) = @_;
+
+   if(ref($str) eq "SCALAR") {          # reference to input string passed in
+      if($$str =~ /^(\s+)/) {
+         $$str = $';                                  # fix up current string
+         $$out = noret($$out) . $1 . "\n";                    # fix up output
+      }
+   } elsif($str =~ /^(\s+)/) {
+      # actual string passed in, any changes would be lost and probably can't
+      # be done anyways... so just modify the output which needs to always
+      # be a reference to the string.
+      $$out = noret($$out) . $1 . "\n";
+   }
 }
 
 #
-# test code for use outside the mush
+# expand_code
+#   Take the contents of an attribute and add spaces, returns, etc so
+#   the code within is more readable.
 #
-# my $code = '@select 0=[not(eq(words(first(v(won))),1))],{@pemit %#=Connect 4: Game over, [name(first(v(won)))] has won.},[match(v(who),%#|*)],{@pemit %#=Connect 4: Sorry, Your not playing right now.},[match(first(v(who)),%#|*)],{@pemit %#=Connect 4: Sorry, its [name(before(first(v(who)),|))] turn right now.},[and(isnum(%0),gt(%0,0),lt(%0,9))],{@pemit %#=Connect 4: That is not a valid move, try again.},[not(gte(strlen(v(c[first(%0)])),8))],{@pemit %#=Connect 4: Sorry, that column is filled to the max.},{&who me=[rest(v(who))] [first(v(who))];&won me=[switch(1,u(fnd,%0,add(1,strlen(v(c[first(%0)]))),after(rest(v(who)),|)),%#)];&c[first(%0)] me=[v(c[first(%0)])][after(rest(v(who)),|)];@pemit %#=[u(board,{%n played in column [first(%0)]})];@pemit [before(first(v(who)),|)]=[u(board,{%n played in column [first(%0)]})];@switch [web()]=0,@websocket connect}';
-# my $code = '@select 0=[member(type(num(%1)),PLAYER)],@pemit %#=Connect 4: Sorry I dont see that person here.,{&won me=;&who me=%#|# [num(%1)]|O;"%N has challenged [name(num(%1))].;&c1 me=;&c2 me=;&c3 me=;&c4 me=;&c5 me=;&c6 me=;&c7 me=;&c8 me=;@pemit %#=[u(board)];@pemit [num(%1)]=[u(board)]}';
-#
-# my $code='&list me=[u(fnd,%0,%1,after(first(v(who)),|))];@select 0=[match(v(who),%#|*)],{@pemit %#=Tao: Sorry, Your not playing right now.},[match(first(v(who)),%#|*)],{@pemit %#=Tao: Sorry, its [name(before(first(v(who)),|))] turn right now.},[u(isval,%0,%1,.)],{@pemit %#=Tao: That is not a valid move, try again.},[words(v(list))],{@pemit %#=Tao: Sorry, that move does not result in a capture.},{&who me=[rest(v(who))] [first(v(who))];@dolist [first(%0)]|[first(%1)] [v(list)] END=@select ##=END,{@pemit %#=[u(board,{%n played [first(%0)],[first(%1)]})];@pemit [before(first(v(who)),|)]=[u(board,{%n played [first(%0)],[first(%1)]})]},{&c[before(##,|)] me=[replace(v(c[before(##,|)]),after(##,|),after(rest(v(who)),|),|)]}}';
-# my $code='[setq(0,iter(u(num,3),[u(ck,2,%2,add(%0,##),add(%1,##))][u(ck,3,%2,add(%0,##),%1)][u(ck,4,%2,add(%0,##),add(%1,-##))][u(ck,5,%2,%0,add(%1,-##))][u(ck,6,%2,add(%0,-##),add(%1,-##))][u(ck,7,%2,add(%0,-##),%1)][u(ck,8,%2,add(%0,-##),add(%1,##))]))]';
-# my $code='@switch [t(match(get(#5/hangout_list),%1))][match(bus cab bike motorcycle car walk boomtube,%0)]=0*,@pemit %#=Double-check the DB Number. That does not seem to be a viable option.,11,{@tel %#=%1;@wait 1=@remit [loc(%#)]=A bus pulls up to the local stop. %N steps out.},12,{@tel %#=%1;@wait 1=@remit [loc(%#)]=A big yellow taxi arrives. A figure inside pays the tab%, then steps out and is revealed to be %N.},13,{@tel %#=%1;@wait 1=@remit [loc(%#)]=%N arrives in the area%, pedaling %p bicycle.},14,{@tel %#=%1;@wait 1=@remit [loc(%#)]=%N pulls up on %p motorcycle%, kicking the stand and stepping off.},15,{@tel %#=%1;@wait 1=@remit [loc(%#)]=%N pulls up in %p car%, parking and then getting out.},16,{@tel %#=%1;@wait 1=@remit %N walks down the street in this direction.=<an emit>},17,{@tel %#=%1;@wait 1=@remit [loc(%#)]=A boomtube opens%, creating a spiraling rift in the air. After a moment%, %N steps out.},@pemit %#=That method of travel does not seem to exist.';
-#my $code ='&won me=[switch(1,u(fnd,%0,add(1,strlen(v(c[first(%0)]))),after(rest(v(who)),|)),%#)]';
-#my $code = '[setq(1,)][setq(2,)][setq(3,)][setq(4,)][setq(5,)][setq(6,)][setq(7,)][setq(8,)][setq(9,)][setq(0,)]';
-# my $code = '@switch 0=run(@telnet wttr.in 80),say Weather is temporarly unavailible.,{  @var listen=off;@send GET /@%1?0?T HTTP/1.1;@send Host: wttr.in;@send Connection: close;@send User-Agent: curl/7.52.1;@send Accept: */*;@send ;@while ( telnet_open(%{input}) eq 1 ) {@var input = [input()];@switch on-done-%{input}=on-%{listen}-*,@@ ignore,on-done-*out of queries*,{say Weather Website is down [out of queries];@var listen=done},on-done-ERROR*,{say Unknown Location: %1;@var listen=done},on-done-#-1 *,@@ ignore,on-done-Weather report:*,{@var listen=on;@emit %{input}},%{listen}-done-,@@ ignore,%{listen}-done-*,@emit > [decode_entities(%{input})]}';
+sub expand_code
+{
+   my ($depth,$input,$indent) = @_;
+   my ($out, $count);
 
-#
-#
-# printf("%s\n",pretty(3,$code));
-# printf("%s\n",function_print(3,$code));
+   my %fmt_cmd = (
+      '@switch'  => sub { fmt_switch(@_);   },
+      '@select'  => sub { fmt_switch(@_);   },
+      '@dolist'  => sub { fmt_dolist(@_);   },
+      '&'        => sub { fmt_amper(@_);    },
+      '@while'   => sub { fmt_while(@_);    },
+      'think'    => sub { fmt_default(@_);  },
+      '@pemit'   => sub { fmt_equal(@_);    },
+      '@wait'    => sub { fmt_equal(@_);    },
+      '@edit'    => sub { fmt_equal(@_);    },
+   );
 
-#
-# define which function's arguements should not be evaluated before
-# executing the function. The sub-hash defines exactly which argument
-# should be not evaluated ( starts at 1 not 0 )
-#
-#my %exclude =
-#(
-#   iter      => { 2 => 1 },
-#   parse     => { 2 => 1 },
-#   setq      => { 2 => 1 },
-#   switch    => { all => 1 },
-##   u         => { 2 => 1, 3 => 1, 4 => 1, 5 => 1, 6 => 1, 7 => 1, 8 => 1,
-##                  9 => 1, 10 => 1 },
-#);
+   if($input =~ /^(\s*){(\s*)(.*?)}(\s*)$/) {              # handle code in {}s
+      $out .= d($depth,"{$2") . "\n";
+      $out .= expand_code($depth+3,$3,$indent);
+      $out .= ret($out) . d($depth,"}");
+      return $out;
+   }
+#   printf("\n\n");
+   for my $txt ( balanced_split($input,";",3) ) {  # split data at semi-colon
+#      printf("# '%s'\n",$txt);
+#      next;
+      ++$count;
+      $depth = 3 if($indent && $count == 2 && $depth == 0);
+      if($out ne undef) {                     # delims are eaten, add it back
+         $out .= ";" if $out ne undef;
+         $out .= "\n" if $txt !~ /^\s*$/;
+      }
+      if($txt =~ /^(\s*)([&"`:;\\])/ ||            # match single char cmd
+         $txt =~ /^(\s*)([^ \\]+)/) {                 # match word command
+
+         add_spaces(\$out,$1);
+         if(defined @fmt_cmd{lc(noswitch($2))}) {    # specially formated cmd?
+            $out .= &{@fmt_cmd{lc(noswitch($2))}}($depth,$2,$');
+         } else {                                  # use default formating
+            $out .= fmt_default($depth,$2,$');
+         }
+      }
+   }
+   return $out;
+}
+
+# ----[ mec end ]--------------------------------------------------------- #
+
 
 sub initialize_functions
 {
@@ -11228,7 +11327,6 @@ sub fun_ansi2mush
    );
 
    my $txt = evaluate($self,$prog,shift);
-#   printf("TXT: '%s'\n",ansi_remove($txt));
    $txt =~ s/\r//g;
 #   $txt =~ s/ /%b/g;
    my $str = ansi_init($txt);
@@ -12100,6 +12198,24 @@ sub webobject
       return 0;
    }
 }
+
+#
+# good_filename
+#   Determine which files may be opened in the files directory and
+#   which ones shouldn't.
+#
+sub good_filename
+{
+   my $fn = shift;
+
+   # Any file starting with a period or having a \/ will be denied.
+   # this *should* prevent escaping out of the files folder.
+   if($fn =~ /^\.|\/|\\/ || !-e "files/$fn") {
+      return 0;
+   } else {
+      return 1;
+   }
+}
 #
 # fun_file
 #     Return the contents of a file
@@ -12115,6 +12231,7 @@ sub fun_file
    hasflag($self,"WIZARD") || webobject($self) ||
       return set_var($prog,"data","#-1 PERMISSION DENIED");
 
+   @info{cache} = {} if(!defined @info{cache});
    for my $key (keys %{@info{cache}}) {             # cache data for 3 days
       if(time() - @info{cache}->{$key}->{last} > 259200) {
          delete @info{cache}->{$key};
@@ -12123,9 +12240,7 @@ sub fun_file
 
    my $fn = evaluate($self,$prog,shift);
 
-   if($fn =~ /^\.|\/|\\/) {
-      return "#-1 PERMISSION DENIED - RELATIVE FILENAMES ONLY";
-   }
+   good_filename($fn) || return "#-1 PERMISSION DENIED";
 
    @info{cache} = {} if !defined @info{cache};
    @info{cache}->{$fn} = {} if !defined @info{cache}->{$fn};
@@ -12284,6 +12399,7 @@ sub fun_url
       if($#$buff >= 0) {
          my $data = shift(@$buff);
 
+#         printf("# %s\n",$data);
 # wttr.in debug
 #         if($data =~ /\d mi/)  {
 #            printf("%s -> %s\n",lord($`));
@@ -12329,6 +12445,7 @@ sub fun_url
       # make request as curl (helps with wttr.in)
       $path =~ s/ /%20/g;
       set_var($prog,"url",$path);
+#      printf("PATH: '%s'\n",$path);
 
       eval {                        # protect against uncontrollable problems
          if($#_ == 1) {
@@ -13727,9 +13844,8 @@ sub fun_words
    good_args(\@_,1,2) ||
       return "#-1 FUNCTION (WORDS) EXPECTS 1 OR 2 ARGUMENTS";
 
-   my $txt = trim(evaluate($self,$prog,shift));
+   my $txt = trim(ansi_remove(evaluate($self,$prog,shift)));
    my $delim = evaluate($self,$prog,shift);
-
    return scalar(safe_split(ansi_remove($txt),
                             ($delim eq undef) ? " " : $delim
                            )
@@ -14652,14 +14768,13 @@ sub fun_u
       $txt = evaluate($self,$prog,shift);
    }
 
-   for my $i (0 .. $#_) {
-      @arg[$i] = evaluate($self,$prog,$_[$i]);
-   }
-
    if($txt =~ /\//) {                    # input in object/attribute format?
       ($obj,$attr) = (find($self,$prog,$`,"LOCAL"),$');
    } else {                                  # nope, just contains attribute
       ($obj,$attr) = ($self,$txt);
+   }
+   for my $i (0 .. $#_) {
+      @arg[$i] = evaluate($self,$prog,$_[$i]);
    }
 
    if($obj eq undef) {
@@ -16176,45 +16291,6 @@ sub http_disconnect
    $s->close;
 }
 
-sub manage_httpd_bans
-{
-   my $s = shift;
-   my ($ip,@list, $max);
-
-   if($s ne undef) {
-      $ip = (defined @http{$s}->{$ip}) ? @http{$s}->{$ip} : $s->peerhost;
-      @info{httpd_invalid_data} = {} if !defined @info{httpd_invalid_data};
-      if(!defined @info{httpd_invalid_data}->{$ip}) {
-         @info{httpd_invalid_data}->{$ip} = {};
-      }
-      @info{httpd_invalid_data}->{$ip}->{time()} = 1;
-      push(@list,$ip);
-   } elsif(!defined @info{httpd_invalid_data}) {
-      return;
-   } else {
-      @info{httpd_ban} = {};                                 # reinitialize
-      @list = (keys %{@info{httpd_invalid_data}});
-   }
-
-   my $hash = @info{httpd_invalid_data};
-
-   for my $host (@list) {
-      $max = undef;
-      for my $hit (keys %{$$hash{$host}}) {
-         $max = $hit if($hit > $max);                    # find newest offense
-         delete $$hash{$hit} if(time() - $hit > 3600); # delete older offenses
-      }
-
-      if(scalar keys %{$$hash{$host}} == 0) {        # nothing current, delete
-         delete @$hash{$host};
-      } elsif(scalar keys %{$$hash{$host}} > 4) {     # recently bad, keep ban
-         @info{http_ban} = {} if(!defined @info{http_ban});
-         @info{http_ban}->{$host} = scalar localtime($max);
-      }
-   }
-}
-
-
 #
 # http_error
 #    Something has gone wrong, inform the broswer.
@@ -16223,18 +16299,12 @@ sub http_error
 {
    my ($s,$fmt,@args) = @_;
 
-   if(defined @http{$s} && defined @http{$s}->{data}) {
-      if(@http{$s}->{data}->{get}  !~ /^\s*(favicon\.ico|robots.txt)\s*$/i) {
-         manage_httpd_bans($s);
-      }
-   }
-
    #
    # show the invalid page responce
    #
    http_out($s,"HTTP/1.1 404 Not Found");
    http_out($s,"Date: %s",scalar localtime());
-   http_out($s,"Last-Modified: %s",scalar localtime());
+   http_out($s,"Last-Modified: %s",http_timestamp());
    http_out($s,"Connection: close");
    http_out($s,"Content-Type: text/html; charset=ISO-8859-1");
    http_out($s,"");
@@ -16296,7 +16366,7 @@ sub http_reply
 
    http_out($s,"HTTP/1.1 200 Default Request");
    http_out($s,"Date: %s",scalar localtime());
-   http_out($s,"Last-Modified: %s",scalar localtime());
+   http_out($s,"Last-Modified: %s",http_timestamp());
    http_out($s,"Connection: close");
    http_out($s,"Content-Type: text/html; charset=ISO-8859-1");
 
@@ -16322,6 +16392,23 @@ sub http_reply
    http_disconnect($s);
 }
 
+sub http_timestamp
+{
+   my $seconds = shift;
+
+   my @day = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat");
+   my @month = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec");
+   my @list = gmtime($seconds);
+
+   return sprintf("%s, %02d %s %04d %02d:%02d:%02d GMT",
+                  @day[@list[6]],
+                  @list[3],
+                  @month[@list[4]], @list[5] + 1900,
+                  @list[2],
+                  @list[1],
+                  @list[0]);
+}
 
 #
 # http_reply_simple
@@ -16330,12 +16417,22 @@ sub http_reply
 sub http_reply_simple
 {
    my ($s,$type,$fmt,@args) = @_;
+   my ($msg, $mod);
 
-   my $msg = sprintf($fmt,@args);
+   if($fmt eq "FILE") {
+      if(!good_filename(@args[0])) {
+         return http_error($s,"%s","Permission Denied");
+      } else {
+         $mod = (stat("files/@args[0]"))[9];
+         $msg = getbinfile(@args[0]);
+      }
+   } else {
+      $msg = sprintf($fmt,@args);
+   }
 
    http_out($s,"HTTP/1.1 200 Default Request");
    http_out($s,"Date: %s",scalar localtime());
-   http_out($s,"Last-Modified: %s",scalar localtime());
+   http_out($s,"Last-Modified: %s",http_timestamp($mod));
    http_out($s,"Connection: close");
    if(lc($type) eq "pdf") {
       http_out($s,"Content-Type: application/pdf; charset=ISO-8859-1");
@@ -16372,11 +16469,13 @@ sub banable_urls
 {
    my $data = shift;
 
-   if($$data{get} =~ /wget http/i) {        # poor wget is abused by hackers
+   if(length($data) > 300) {
+      return 1;
+   } elsif($$data{get} =~ /wget http/i) {   # poor wget is abused by hackers
       return 1;
    } elsif($$data{get} =~ /;wget/i) {                            # more wget
       return 1;
-   } elsif($$data{get} =~ /phpMyAdmin/i) {             # really, no php here
+   } elsif($$data{get} =~ /(phpMyAdmin|phpinfo)/i) {   # really, no php here
       return 1;
    } elsif($$data{get} =~ /trinity/i) {                    # matrix trinity?
       return 1;
@@ -16387,6 +16486,12 @@ sub banable_urls
       return 1;
    } elsif($$data{get} =~ /\.(php|cgi|asp)/i) {       # no php/cgi/asp here
       return 1;
+   } elsif($$data{get} =~ /etc.*passwd/i) {       # no password files
+      return 1;
+   } elsif($$data{get} =~ /(pmadmin|svg onload)/i) {
+      return 1;
+   } elsif($$data{get} =~ /(brightmail|cgi-bin)/i) {
+      return 1;
    } else {
       return 0;
    }
@@ -16396,21 +16501,8 @@ sub ban_add
 {
    my $sock = shift;
 
-   # setup structures
-   @info{httpd_ban} = {} if(!defined @info{httpd_ban});
-   @info{httpd_invalid_data} = {} if(!defined @info{httpd_invalid_data});
-
-   if($sock ne undef) {
-      my $ip = @http{$sock}->{ip};
-      if(!defined @{@http{$sock}}{$ip}) {
-         @{@http{$sock}}{$ip} = {};
-      }
-
-      for my $i (0 .. 10) {
-         @info{httpd_invalid_data}->{$ip}->{time()-$i} = 1;
-      }
-      manage_httpd_bans($sock);
-   }
+   @info{httd_ban} = {} if(!defined @info{httpd_ban});
+   @info{httpd_ban}->{@http{$sock}->{ip}} = 1;
 }
 
 #
@@ -16505,9 +16597,6 @@ sub http_process_line
             ban_add($s);
             web("   %s %s\@web [BANNED-%s]\n",ts(),$addr,$$data{get});
             http_error($s,"%s","BANNED for HACKING");
-         } elsif(defined @{@info{httpd_ban}}{$addr}) {
-            web("   %s %s\@web [BANNED-%s]\n",ts(),$addr,$$data{get});
-            http_error($s,"%s","BANNED for invalid requests");
          } elsif(($$data{get} =~ /_notemplate\.(html)$/i ||  # no template used
             $$data{get} =~ /\.(ico)$/i) &&
             -e "files/" . trim($$data{get})) {
@@ -16518,7 +16607,7 @@ sub http_process_line
                  $$data{get} =~ /\.([^.]+)$/ &&
                  -e "files/" . trim($$data{get})) {
             web("   %s %s\@web [%s]\n",ts(),$addr,$$data{get});
-            http_reply_simple($s,$1,"%s",getbinfile(trim($$data{get})));
+            http_reply_simple($s,$1,"FILE",trim($$data{get}));
          } elsif($$data{get} =~ /\.html$/i && -e "files/".trim($$data{get})) {
             my $prog = prog($self,$self);                    # uses template
             $$prog{sock} = $s;
@@ -16581,7 +16670,7 @@ sub http_process_line
              }
          }
       }
-   } elsif($txt =~ /(Cookie: mstshash=Administr)/i) {
+   } elsif($txt =~ /Cookie: mstshash=/i) {
       my $addr = @{@http{$s}}{hostname};
       $addr = @{@http{$s}}{ip} if($addr =~ /^\s*$/);
       $addr = $s->peerhost if($addr =~ /^\s*$/);
@@ -16727,6 +16816,7 @@ sub generic_action
    my $msg = sprintf($sfmt,@sargs);               # handle msg to enactor
 
    if($msg !~ /^\s*$/) {
+      printf("GA: here 1\n");
       echo(self =>   $self,
            prog =>   $prog,
            source => [ "%s", evaluate($self,$prog,$msg) ],
@@ -16737,6 +16827,7 @@ sub generic_action
    my $atr = get($target,"o$action");
 
    if($atr ne undef) {                                # standard message
+      printf("GA: here 2\n");
       echo(self =>   $self,
            prog =>   $prog,
            room =>   [ $self,
@@ -16747,6 +16838,7 @@ sub generic_action
            always => 1,
       );
    } else {                                            # oACTION message
+      printf("GA: here 3\n");
       my ($tfmt,@targs) = @$target_msg;
       my $msg = sprintf($tfmt,@targs);
       if($msg !~ /^\s*$/) {
@@ -17509,6 +17601,10 @@ sub echo_room
    my $room = loc($target) || return;
    my $self = $$arg{self};
 
+   my $array = $$arg{$type};
+   my $fmt = @$array[1];
+   my $msg = sprintf("$fmt",@$array[2 .. $#$array]);
+
    for my $obj (lcon($room)) {
       if($$self{obj_id} != $$obj{obj_id} || $type =~ /^all_/) {
         echo_thing($arg,$type,$obj);
@@ -17540,8 +17636,9 @@ sub socket_list
    my @list;
 
    # output directed at target of the program.
-   if(defined $$prog{sock} && $$target{obj_id} eq invoker($prog,$self,1)) {
-      return $$prog{sock};
+   if(defined $$prog{created_by} && defined $$prog{created_by}->{sock} && 
+      $$target{obj_id} eq invoker($prog,$self,1)) {
+      return $$prog{created_by}->{sock};
    } elsif(!defined @connected_user{$$target{obj_id}}) {
       return undef;
    } else {
@@ -17563,7 +17660,6 @@ sub echo_thing
 {
    my ($arg,$type,$target,$prefix) = @_;
 
-#   printf("ECHO THING[%s]: called\n",$$target{obj_id});
    my $prog = $$arg{prog};
    my $self = $$arg{self};
 
@@ -17571,7 +17667,11 @@ sub echo_thing
 
    my $fmt = @$array[1];
    my $msg = sprintf("$fmt",@$array[2 .. $#$array]);
-   $msg = ansi_remove($msg) if !hasflag($target,"ANSI");
+   if(socket_type($prog,$$prog{sock}) eq "HTTP" || 
+      (hasflag($target,"PLAYER") && !hasflag($target,"ANSI"))) {
+      $msg = ansi_remove($msg) if !hasflag($target,"ANSI");
+   }
+#   printf("ECHO THING[%s]: %s\n",$$target{obj_id},$msg);
 
    if($prefix eq undef) {
       handle_directed_listen($self,$prog,$target,$msg);
@@ -17589,7 +17689,19 @@ sub echo_thing
       printf("IGnored[%s:%s] %s\n",$type,$$target{obj_id},$msg);
    }
 
-   if(hasflag($target,"PLAYER")) {
+   
+   if(!loggedin($target)) {
+      # !logged in targets do not get any output ... unless
+      # they just haven't issued a connect command.
+      if($$target{obj_id} == $$self{obj_id} && defined $$self{sock}) {
+         if(socket_type($prog,$$self{sock}) eq "WEBSOCKET") {
+            ws_echo($$self{sock},$prefix.filter_chars($msg));
+         } else {
+            my $sock = $$self{sock};
+            printf($sock "%s",$msg);
+         }
+      }
+   } elsif(hasflag($target,"PLAYER")) {
       for my $s (socket_list($self,$prog,$target)) {
          my $type = socket_type($prog,$s);
 
@@ -19451,8 +19563,10 @@ sub server_disconnect
                         [ "has disconnected." ],
                         [ "" ]);
 
-         echo_flag($hash,$prog,"CONNECTED,PLAYER,MONITOR",
-                   "[Monitor] %s has disconnected.",name($hash));
+         if(!hasflag($hash,"NOMONITOR")) {
+            echo_flag($hash,$prog,"CONNECTED,PLAYER,MONITOR",
+                      "[Monitor] %s has disconnected.",name($hash));
+         }
       }
    }
 

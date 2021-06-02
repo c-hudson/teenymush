@@ -51,7 +51,7 @@ my (%command,                  #!# commands for after player has connected
     %connected_user,           #!# users connected
     $readable,                 #!# sockets to wait for input on
     $listener,                 #!# port details
-    $web,                      #!# web port details
+    $web,                      #!# http listen
     $ws,                       #!# websocket server object
     $websock,                  #!# websocket listener
     %http,                     #!# http socket list
@@ -947,10 +947,12 @@ sub cmd_debug
              );
    } elsif(defined $$prog{var} && 
            defined $$prog{var}->{debug} && $$prog{var}->{debug} == 1) {
+      printf("DEBUG: '%s'\n",$txt);
+#      mush_command($self,$prog,$self,$txt,1);
       mushrun(self   => $self,                # run only if debug is enabled
               prog   => $prog,
               runas  => $self,
-              source => 0,
+              source => 1,
               child  => 2,
               cmd    => $txt
              );
@@ -1646,7 +1648,7 @@ sub cmd_function
       return;
    }
 
-   my ($name,$atr) = besplit($self,$prog,shift,"=");
+   my ($name,$atr) = besplit($self,$prog,$txt,"=");
 
    if($name =~ /^\s*([a-z])([a-z0-9_]*)\s*$/) {
       $name = "$1$2";
@@ -2583,7 +2585,6 @@ sub cmd_trigger
        if($$switch{noeval}) {
          push(@wild,$i);
        } else {
-	       #         printf("trig_Add: '%s' -> '%s'\n",$i,evaluate($self,$prog,$i));
          push(@wild,evaluate($self,$prog,$i));
        }
     }
@@ -2592,12 +2593,12 @@ sub cmd_trigger
        push(@wild,shift(@wild));
     }
 
-   # printf("SELF:  '$$self{obj_id}'\n");
-   # printf("CMD:   '%s'\n",$$attr{value});
-   # printf("RUNAS: '%s'\n",$$target{obj_id});
-   # printf("WILD:  '%s'\n",join(',',@wild));
-   # printf("PROG:  '%s'\n",$$prog{pid});
-   # printf("%s\n",print_var($prog));
+#   printf("SELF:  '$$self{obj_id}'\n");
+#   printf("CMD:   '%s'\n",$$attr{value});
+#   printf("RUNAS: '%s'\n",$$target{obj_id});
+#   printf("WILD:  '%s'\n",join(',',@wild));
+#   printf("PROG:  '%s'\n",$$prog{pid});
+#   printf("%s\n",print_var($prog));
 
    mushrun(self   => $self,
            prog   => $prog,
@@ -2644,7 +2645,7 @@ sub cmd_huh
    }
 
    if(lord(@{$$prog{cmd}}{cmd}) ne 0) {
-      # printf("HuH: '%s' -> '%s'\n",$$self{obj_id},@{$$prog{cmd}}{cmd});
+#      printf("HuH: '%s' -> '%s'\n",$$self{obj_id},@{$$prog{cmd}}{cmd});
       echo(self   => $self,
            prog   => $prog,
            source => [ "Huh? (Type \"HELP\" for help.)" ]
@@ -4096,7 +4097,7 @@ sub cmd_telnet
 
    if(!$input && !$puppet) {
       return err($self,$prog,"Permission DENIED.");
-   } elsif($txt =~ /^\s*([^:]+)\s*[:| ]\s*(\d+)\s*$/) {
+   } elsif($txt =~ /^\s*([^:]+?)\s*[:| ]\s*(\d+)\s*$/) {
 
       # only allow one connection but optionally close the socket if it
       # has been open to long and its not a SOCKET_PUPPET connection.
@@ -5009,7 +5010,6 @@ sub cmd_whisper
 {
    my ($self,$prog,$txt) = (obj(shift),shift,shift);
  
-   printf("atr: '%s'\n",good_atr_name("MuRhostDev_Seawolf_1611841392"));
    if($txt =~ /^\s*([^ ]+)\s*=/) {                           # standard whisper
       whisper($self,$prog,$1,$');
    } else {
@@ -5843,7 +5843,7 @@ sub cmd_connect
 {
    my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
    my $sock = @$user{sock};
-   my ($atr,$player,$count);
+   my ($atr,$player,$count,$connected);
 
    if($txt =~ /^\s*"\s*([^"]+)\s*"\s+([^ ]+)\s*$/ ||    #parse player password
       $txt =~ /^\s*([^ ]+)\s+([^ ]+)\s*$/ ||            #parse player password
@@ -5917,31 +5917,25 @@ sub cmd_connect
 
       # notify users local and users with monitor flag
       $$prog{cmd}->{source} = 0;
-      for my $key (keys %connected) {
-         if(defined @connected{$key} &&
-            $$user{obj_id} == @connected{$key}->{obj_id}) {
-            $count++;
-         }
-      }
-      if($count > 1) {
-         echo(self   => $user,
-              prog   => prog($user,$user),
-              room   => [ $user , "%s has re-connected.",name($user) ],
-              source => [ "%s has re-connected.", name($user) ],
-             );
+
+      if(scalar keys %{@connected_user{$$self{obj_id}}} > 1) {
+         $connected = "re-connected"
       } else {
-         echo(self   => $user,
-              prog   => prog($user,$user),
-              room   => [ $user , "%s has connected.",name($user) ],
-             );
+         $connected = "connected"
       }
+
+      echo(self   => $user,
+           prog   => prog($user,$user),
+           room   => [ $user , "%s has $connected.",name($user) ],
+           source => [ "%s has re-connected.", name($user) ],
+          );
       $$prog{cmd}->{source} = 1;
 
       if(!hasflag($user,"NOMONITOR")) {
          echo_flag($user,
                    $prog,
                    "CONNECTED,PLAYER,MONITOR",
-                   "[Monitor] %s has connected.",name($user));
+                   "[Monitor] %s has $connected.",name($user));
       }
 
       # --- Handle @ACONNECTs on masteroom and players-----------------------#
@@ -7760,14 +7754,20 @@ sub ansi_length
 sub ansi_post_match
 {
    my ($data,$pat,@arg) = @_;
-   my ($pos,$wild,@wildcard) = (0,0);
+   my ($pos,$wild,@wildcard);
 
-   while($pat =~ /(\*|\?)/ && $wild < 10) {
-      $pat = $';
-      $pos += length($`) if($` ne undef);
-      push(@wildcard,ansi_substr($data,$pos,length(@arg[$wild])));
-      $pos += length(@arg[$wild]);
-      $wild++;
+   while($pat =~ /(\\*)(\*|\?)/ && $wild < 10) {
+      if(length($1) % 2 == 0) {
+         $pat = $';
+         $pos .= $`;
+         @info{debug} = 0;
+         push(@wildcard,ansi_substr($data,length($pos),length(@arg[$wild])));
+         $pos .= @arg[$wild];
+         $wild++;
+      } else {
+         $pat = $';
+         $pos .= $` . ("\\" x (length($1) / 2)) .  $2;
+      }
    }
 
    if($#wildcard > 8) {
@@ -16265,7 +16265,17 @@ sub http_accept
 {
    my $s = shift;
 
-   my $new = $web->accept();
+   my $new = $s->accept();
+   return unless $new;
+
+   if(conf_true("http_secure")) {
+      IO::Socket::SSL->start_SSL(
+          $new,
+          SSL_server    => 1,
+          SSL_cert_file => "cert.pem",
+          SSL_key_file  => "key.pem",
+      );
+   }
 
    my $addr = server_hostname($new);
 
@@ -16795,6 +16805,7 @@ sub generic_action
 {
    my ($self,$prog,$target,$action,$target_msg,$src_msg) = @_;
 
+#   printf("%s\n",code("long"));
 #   if((my $atr = get($target,$action)) ne undef) {
 #         echo(self => $self,
 #              prog => $prog,
@@ -16816,7 +16827,6 @@ sub generic_action
    my $msg = sprintf($sfmt,@sargs);               # handle msg to enactor
 
    if($msg !~ /^\s*$/) {
-      printf("GA: here 1\n");
       echo(self =>   $self,
            prog =>   $prog,
            source => [ "%s", evaluate($self,$prog,$msg) ],
@@ -16827,7 +16837,6 @@ sub generic_action
    my $atr = get($target,"o$action");
 
    if($atr ne undef) {                                # standard message
-      printf("GA: here 2\n");
       echo(self =>   $self,
            prog =>   $prog,
            room =>   [ $self,
@@ -16838,7 +16847,6 @@ sub generic_action
            always => 1,
       );
    } else {                                            # oACTION message
-      printf("GA: here 3\n");
       my ($tfmt,@targs) = @$target_msg;
       my $msg = sprintf($tfmt,@targs);
       if($msg !~ /^\s*$/) {
@@ -18505,6 +18513,13 @@ sub module_enabled
     }
 }
 
+sub has_conf
+{
+   my $conf = shift;
+
+   return hasattr(0,"CONF.$conf") ? 1 : 0;
+}
+
 #
 # conf
 #    Grab a configuration option from off of "#0/conf.name" or the @default
@@ -19374,7 +19389,6 @@ sub get_free_port
    return $i;                                        # should never happen
 }
 
-
 #
 # server_handle_sockets
 #    Open Handle all incoming I/O and try to sleep frequently enough
@@ -19467,15 +19481,6 @@ sub server_handle_sockets
 #                     @info{connected_raw_socket} = $s;
 #                  }
 #                  @info{connected_raw} .= $` . "\n";
-#               }
-
-#               if(!defined @connected{$s}) {
-#                  printf("## no socket??? '$s'\n");
-#               } elsif(@{@connected{$s}}{raw} > 0) {
-#                  my $tmp = $`;
-#                  $tmp =~ s/\e\[[\d;]*[a-zA-Z]//g;
-#                  printf("#%s# %s\n",@{@connected{$s}}{raw},$tmp);
-#               }
             }
          }
       }
@@ -19490,6 +19495,7 @@ sub server_handle_sockets
    }
 }
 
+
 #
 # server_disconnect
 #    Either the user has QUIT or disconnected, so handle the disconnect
@@ -19498,7 +19504,7 @@ sub server_handle_sockets
 sub server_disconnect
 {
    my $id = shift;
-   my ($prog, $type);
+   my ($prog, $type, $disconnected);
 
    calculate_login_stats();
 
@@ -19549,6 +19555,14 @@ sub server_disconnect
 
          my $key = connected_user($hash);
 
+         if(!defined $$hash{obj_id} || 
+            !defined @connected_user{$$hash{obj_id}} ||
+            scalar keys %{@connected_user{$$hash{obj_id}}} <= 1) {
+            $disconnected = "disconnected";
+         } else {
+            $disconnected = "partially disconnected";
+         }
+
          if(defined @connected_user{$$hash{obj_id}}) {
             delete @{@connected_user{$$hash{obj_id}}}{$key};
             if(scalar keys %{@connected_user{$$hash{obj_id}}} == 0) {
@@ -19560,12 +19574,12 @@ sub server_disconnect
                         $prog,
                         $hash,
                         "disconnect",
-                        [ "has disconnected." ],
+                        [ "has $disconnected." ],
                         [ "" ]);
 
          if(!hasflag($hash,"NOMONITOR")) {
             echo_flag($hash,$prog,"CONNECTED,PLAYER,MONITOR",
-                      "[Monitor] %s has disconnected.",name($hash));
+                      "[Monitor] %s has $disconnected.",name($hash));
          }
       }
    }
@@ -19597,12 +19611,38 @@ sub server_start
    my @port;
    my @tried;
 
-   # my dev instant just needs a free port, so choose from a list
+   @info{initial_load_done} = 1;
+
+
+   #
+   # init websocket connection first as this is the most important
+   # connection as it will handle the listeners for all sockets if
+   # enabled.
+   # 
+   if(module_enabled("websocket") && conf("websocket") > 0) {
+      if(conf("websocket") =~ /^\s*(\d+)\s*$/) {
+         push(@port,conf("websocket") . "{websocket}");
+         websock_init();
+      } else {
+         con("Invalid websocket port number specified in #0/conf.websocket");
+      }
+   } else {                                       # emulate websocket listener
+      $ws = {};                                              # when not in use
+      $ws->{select_readable} = IO::Select->new();
+   }
+
+
+   #
+   # Now the listener for the mush itself, A list is supported to allow a
+   # second instance to fire up an alternate port. Most people won't want
+   # this.
+   #
    for my $p (split(/,/,conf("port"))) {
       $listener = IO::Socket::INET->new(LocalPort => $p,
                                         Listen    => 1,
                                         Reuse     => 1
-                                       );
+         ) or die "failed to listen: $!";
+      $ws->{select_readable}->add($listener);
       if($listener ne undef) {
          push(@port,"$p\{Mush\}");
          last;
@@ -19612,42 +19652,37 @@ sub server_start
    }
    die("Ports " . join(',',@tried) . " already in use.") if $listener eq undef;
 
+   # 
+   # now http/https listener
    # uri_escape is required for httpd
-   if(!module_enabled("uri_escape") && conf("httpd") > 0) {
-      con("httpd disabled because of missing URI::Escape module");
-   } elsif(module_enabled("uri_escape") && conf("httpd") > 0) {
-      if(conf("httpd") =~ /^\s*(\d+)\s*$/) {
-         push(@port,conf("httpd") . "{httpd}");
+   #
+   if(has_conf("http") && module_enabled("uri_escape")) {
+      if(conf("http") !~ /^\s*(\d+)\s*$/) {
+         con("Invalid http port specified in #0/conf.http");
+      } elsif(conf_true("http_secure")) {
+         push(@port,conf("http") . "{https}");
+         $web = IO::Socket::SSL->new(Listen             => 5,
+                                      LocalPort          => conf("http"),
+                                      Proto              => 'tcp',
+                                      SSL_startHandshake => 0,
+                                      SSL_cert_file      => "cert.pem",
+                                      SSL_key_file       => "key.pem",
+         ) or die "failed to https_listen: $!";
+         $ws->{select_readable}->add($web);
+      } else {
+         push(@port,conf("http") . "{http}");
 
-         $web = IO::Socket::INET->new(LocalPort => conf("httpd"),
+         $web = IO::Socket::INET->new(LocalPort => conf("http"),
                                       Listen    =>1,
                                       Reuse     =>1
-                                     );
-      } else {
-         con("Invalid httpd port number specified in #0/conf.httpd");
+         ) or die "failed to http_listen: $!";
+         $ws->{select_readable}->add($web);
       }
    }
 
-   if(module_enabled("websocket") && conf("websocket") > 0) {
-      if(conf("websocket") =~ /^\s*(\d+)\s*$/) {
-         push(@port,conf("websocket") . "{websocket}");
-         websock_init();
-      } else {
-         con("Invalid websocket port number specified in #0/conf.websocket");
-      }
-   }
    @info{initial_load_done} = 1;
-
-   if($ws eq undef) {                             # emulate websocket listener
-      $ws = {};                                              # when not in use
-      $ws->{select_readable} = IO::Select->new();
-   }
-
    $ws->{select_readable}->add($listener);
 
-   if(conf("httpd") ne undef) {
-      $ws->{select_readable}->add($web);
-   }
    $readable = $ws->{select_readable};
    printf(" + Listening on ports: %s\n",join(',',@port));
 
@@ -19686,13 +19721,23 @@ sub server_start
 
 sub websock_init
 {
-   $websock = IO::Socket::INET->new( Listen    => 5,
-                                     LocalPort => conf("websocket"),
-                                     Proto     => 'tcp',
-                                     Domain    => AF_INET,
-                                     ReuseAddr => 1,
-                                   )
-   or die "failed to set up TCP listener: $!";
+   if(conf_true("http_secure")) {
+      $websock = IO::Socket::SSL->new(Listen             => 5,
+                                      LocalPort          => conf("websocket"),
+                                      Proto              => 'tcp',
+                                      SSL_startHandshake => 0,
+                                      SSL_cert_file      => "cert.pem",
+                                      SSL_key_file       => "key.pem",
+      ) or die "failed to ws_listen: $!";
+   } else {
+      $websock = IO::Socket::INET->new( Listen    => 5,
+                                        LocalPort => conf("websocket"),
+                                        Proto     => 'tcp',
+                                        Domain    => AF_INET,
+                                        ReuseAddr => 1,
+                                      )
+      or die "failed to set up TCP listener: $!";
+   }
 
    $ws = Net::WebSocket::Server->new(
       listen => $websock,

@@ -108,6 +108,7 @@ sub load_modules
       'Cwd'                    => 'cwd',
       'Carp'                   => 'carp',
       'Text::Wrapper'          => 'wrap',
+      'IO::Socket::Timeout'    => 'timeout',
    );
 
    for my $key (keys %mod) {
@@ -15209,8 +15210,8 @@ sub fun_r
       } else {
          return undef;
        }
-   } elsif(defined $$prog{var}->{$register}) {
-      return $$prog{var}->{$register};
+   } elsif(defined $$prog{var}->{lc($register)}) {
+      return $$prog{var}->{lc($register)};
    } else {
       return undef;
    }
@@ -16268,16 +16269,20 @@ sub http_accept
    my $new = $s->accept();
    return unless $new;
 
+   my $addr = server_hostname($new);
+
    if(conf_true("http_secure")) {
       IO::Socket::SSL->start_SSL(
           $new,
           SSL_server    => 1,
           SSL_cert_file => "cert.pem",
           SSL_key_file  => "key.pem",
-      );
+      ) or do {
+         web("   %s %s\@web [timeout]\n",ts(),$addr);
+         $new->close;
+         return;
+      }
    }
-
-   my $addr = server_hostname($new);
 
    if(defined @info{httpd_ban} && defined @{@info{httpd_ban}}{$addr}) {
       web("   %s %s\@web [BANNED-CLOSE]\n",ts(),$addr);
@@ -19619,7 +19624,8 @@ sub server_start
    # connection as it will handle the listeners for all sockets if
    # enabled.
    # 
-   if(module_enabled("websocket") && conf("websocket") > 0) {
+   if(module_enabled("websocket") && conf("websocket") > 0 &&
+      module_enabled("timeout")) {
       if(conf("websocket") =~ /^\s*(\d+)\s*$/) {
          push(@port,conf("websocket") . "{websocket}");
          websock_init();
@@ -19661,13 +19667,15 @@ sub server_start
          con("Invalid http port specified in #0/conf.http");
       } elsif(conf_true("http_secure")) {
          push(@port,conf("http") . "{https}");
-         $web = IO::Socket::SSL->new(Listen             => 5,
+         $web = IO::Socket::SSL->can_ipv6->new(Listen             => 5,
                                       LocalPort          => conf("http"),
                                       Proto              => 'tcp',
-                                      SSL_startHandshake => 0,
                                       SSL_cert_file      => "cert.pem",
                                       SSL_key_file       => "key.pem",
-         ) or die "failed to https_listen: $!";
+         ) or die "failed to https_listen on " . conf("http") . " : $!";
+         IO::Socket::Timeout->enable_timeouts_on($web);
+         $web->read_timeout(.7);
+         $web->write_timeout(.7);
          $ws->{select_readable}->add($web);
       } else {
          push(@port,conf("http") . "{http}");
@@ -19722,13 +19730,19 @@ sub server_start
 sub websock_init
 {
    if(conf_true("http_secure")) {
-      $websock = IO::Socket::SSL->new(Listen             => 5,
+      $websock = IO::Socket::SSL->can_ipv6->new(Listen             => 5,
                                       LocalPort          => conf("websocket"),
                                       Proto              => 'tcp',
                                       SSL_startHandshake => 0,
                                       SSL_cert_file      => "cert.pem",
                                       SSL_key_file       => "key.pem",
+                                      timeout            => .1,
       ) or die "failed to ws_listen: $!";
+      IO::Socket::Timeout->enable_timeouts_on($websock);
+      $websock->read_timeout(.7);
+      $websock->write_timeout(.7);
+
+
    } else {
       $websock = IO::Socket::INET->new( Listen    => 5,
                                         LocalPort => conf("websocket"),
@@ -19815,6 +19829,22 @@ sub websock_io
 
    if( $sock == $ws->{listen} ) {
       my $sock = $ws->{listen}->accept;
+      next unless $sock;
+
+      if(conf_true("http_secure")) {
+         IO::Socket::SSL->start_SSL(
+             $sock,
+             SSL_server    => 1,
+             SSL_cert_file => "cert.pem",
+             SSL_key_file  => "key.pem",
+         ) or do {
+            my $addr = server_hostname($sock);
+            web("   %s %s\@web [timeout]\n",ts(),$addr);
+            $sock->close;
+            return;
+         }
+      }
+
       my $conn = new Net::WebSocket::Server::Connection(
                  socket => $sock, server => $ws );
 

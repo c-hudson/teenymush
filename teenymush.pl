@@ -679,6 +679,7 @@ sub initialize_commands
    @offline{huh}            = sub { return cmd_offline_huh(@_);             };
    @offline{screenwidth}    = sub { return;                                 };
    @offline{screenheight}   = sub { return;                                 };
+   @offline{"\@remotehostname"}  = sub { return cmd_remotehost(@_);             };
    # ------------------------------------------------------------------------#
    @command{"\@search"}     ={ fun => sub { return &cmd_search(@_);}        };
    @command{screenwidth}    ={ fun => sub { return 1;}                      };
@@ -920,6 +921,27 @@ sub restore_process_line
 #      con("Unable to parse[$$state{obj}]: '%s'\n",$line);
 #      printf("Unable to parse[$$state{obj}]: '%s'\n",$line);
 #      printf("%s\n",code("long"));
+   }
+}
+
+sub cmd_remotehost
+{
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
+
+   if($$prog{user}->{ip} eq "192.168.1.8") {
+      $$self{ip} = $txt;
+      $$self{hostname} = server_hostname($$self{sock});
+      @connected{$$self{sock}}->{ip} = $txt;
+      @connected{$$self{sock}}->{hostname} = server_hostname($$self{sock});
+      @{@connected{$$self{sock}}}{ip} = $txt;
+
+      my $name = gethostbyaddr(inet_aton($txt),AF_INET);
+   
+      if($name =~ /^\s*$/ || $name =~ /in-addr\.arpa$/) {
+         @{@connected{$$self{sock}}}{hostname} = $txt;
+      } else {
+         @{@connected{$$self{sock}}}{hostname} = $name;
+      }
    }
 }
 
@@ -1370,12 +1392,21 @@ sub cmd_shutdown
    
       for my $key (keys %connected) {
          my $hash = @connected{$key};
-         echo(self   => $self,
-              prog   => $prog,
-              target => [ $hash, "%s has been shutdown by %s.",
-                          conf("mudname"),obj_name($self,$self,1) ]
-         );
-         cmd_boot($self,$prog,"#" . $$hash{obj_id});
+         if(defined $$hash{obj_id} && name($$hash{obj_id}) eq "HeartBeat") {
+            cmd_boot($self,$prog,"#" . $$hash{obj_id});
+         }
+      }
+      sleep(2);
+      for my $key (keys %connected) {
+         my $hash = @connected{$key};
+         if(defined $$hash{obj_id} && name($$hash{obj_id}) ne "HeartBeat") {
+            echo(self   => $self,
+                 prog   => $prog,
+                 target => [ $hash, "%s has been shutdown by %s.",
+                             conf("mudname"),obj_name($self,$self,1) ]
+            );
+            cmd_boot($self,$prog,"#" . $$hash{obj_id});
+         }
       }
       @info{run} = 0;                           # signal shutdown
       @info{shutdown_by} = obj_name($self,$self,1);
@@ -2907,7 +2938,7 @@ sub cmd_boot
 
          if(defined $$switch{port}) {
             echo(self   => $self,
-                 target => $hash,
+                 target => [ $hash, "%s has \@booted you.", name($self)],
                  prog   => $prog,
                  source => [ "You \@booted port %s off!", $$hash{port} ],
                 );
@@ -3399,12 +3430,26 @@ sub do_full_dirty_dump
    }
 }
 
+sub dbwrite
+{
+   my ($file,$fmt,@args) = @_;
+   my $archive;
+
+   if(conf_true("archive_logging")) {
+      $archive = @info{afd};
+      printf($archive $fmt,@args);
+   }
+   printf($file $fmt,@args);
+}
+
 sub cmd_dirty_dump
 {
    my ($self,$prog,$txt,$switch) = @_;
+
    $self = $$self{obj_id} if ref($self) eq "HASH";
    my ($file,$out);
    my $count = 0;
+   my $archive;
 
    my $dirty = @info{dirty};
    if(ref($dirty) ne "HASH" || 
@@ -3430,10 +3475,20 @@ sub cmd_dirty_dump
             return err($self,$prog,"Unable to open @info{dumps}/" .
                "@info{dump_name}.tdb for writing");
       }
+      if(conf_true("archive_logging")) {
+         open($archive,sprintf(">> %s/archive_log/%s.%06d",@info{dumps},
+              @info{dump_name},@info{change})) ||
+            con("Unable to open @info{dumps}/archive_log/%s.%06d for " .
+                "archive_logging",
+                @info{dumps},@info{dump_name},@info{change});
+         @info{afd} = $archive;
+      }
       $$cmd{dirty_file} = $file;
-      printf($file "server: %s, version=%s, change#=%s, exported=%s, " .
-          "type=archive_log\n",conf("version"),db_version(),@info{change}++,
+
+      dbwrite($file,"server: %s, version=%s, change#=%s, exported=%s, " .
+          "type=archive_log\n",conf("version"),db_version(),@info{change},
           scalar localtime());
+      @info{change}++;
    }
    my $dirty = @info{dirty};
    my $list = $$cmd{dirty_list};
@@ -3447,12 +3502,12 @@ sub cmd_dirty_dump
          $out .= "$dbref,delobj";
       } else {
          # mark as previously deleted.
-         printf($file "%s,delobj\n",$dbref) if(defined $$dobj{destroyed});
+         dbwrite($file,"%s,delobj\n",$dbref) if(defined $$dobj{destroyed});
 
          # cycle all attributes that are dirty
          for my $key (sort keys %$dobj) {
             if($key =~ /^A_/ && !defined $$obj{$'}) {
-               printf($file "%s,delatr,%s\n",$dbref,$');
+               dbwrite($file,"%s,delatr,%s\n",$dbref,$');
             } elsif($key =~ /^A_/) {
                my $attr = $$obj{$'};
                my $name = $';
@@ -3461,15 +3516,15 @@ sub cmd_dirty_dump
 
                if(reserved($name) && defined $$attr{value} &&
                   $$attr{type} eq "list") {
-                  printf($file "%s,setatr,%s:%s:%s::L:%s\n",
+                  dbwrite($file,"%s,setatr,%s:%s:%s::L:%s\n",
                          $dbref,$name,$$attr{created},$$attr{modified},
                          join(',',keys %{$$attr{value}}));
                } elsif(defined $$attr{value} && $$attr{type} eq "hash") {
-                  printf($file "%s,setatr,%s:%s:%s::H:%s\n",
+                  dbwrite($file,"%s,setatr,%s:%s:%s::H:%s\n",
                          $dbref,$name,$$attr{created},$$attr{modified},
                          hash_serialize($$attr{value},$name,$dbref));
                } else {
-                  printf($file "%s,setatr,%s\n",$dbref,
+                  dbwrite($file,"%s,setatr,%s\n",$dbref,
                      serialize($name,$attr));
                }
             }
@@ -3479,10 +3534,12 @@ sub cmd_dirty_dump
    }
 
    if($#$list== -1) {
-      printf($file "** Dump Completed %s **\n", scalar localtime());
+      dbwrite($file,"** Dump Completed %s **\n", scalar localtime());
       close($file);
+      close($archive) if $archive ne undef;
       delete $$cmd{dirty_list};
       delete $$cmd{dirty_file};
+      delete @info{afd};
    } else {
       return "RUNNING";
    }
@@ -5443,19 +5500,24 @@ sub cmd_pcreate
    my ($self,$prog,$txt,$switch,$flag) = (obj(shift),shift,shift,shift,shift);
 
    if($$user{site_restriction} == 3) {
+      printf("Got here: 1\n");
       echo(self   => $self,
            prog   => $prog,
            source => [ "%s", conf("registration") ],
           );
    } elsif($txt =~ /^\s*([^ ]+) ([^ ]+)\s*$/) {
+      printf("Got here: 2\n");
       if(inuse_player_name($1)) {
+         printf("Got here: 3\n");
          err($user,$prog,"That name is already in use.");
       } else {
+         printf("Got here: 4\n");
          $$user{obj_id} = create_object($self,$prog,$1,$2,"PLAYER");
          $$user{obj_name} = $1;
          cmd_connect($self,$prog,$txt) if !$flag;
       }
    } else {
+         printf("Got here: 5\n");
       err($user,$prog,"Invalid create command, try: create <user> <password> [$txt]");
    }
 }
@@ -7122,10 +7184,10 @@ sub who
 
    # show headers for normal / wiz who
    if($hasperm) {
-      $out .= sprintf("%-15s%10s%5s %-*s %-4s %s\r\n","Player Name","On For",
+      $out .= sprintf("%-15s%10s%5s  %-*s %-4s %s\r\n","Player Name","On For",
                       "Idle",$max,"Loc","Port","Hostname");
    } else {
-      $out .= sprintf("%-15s%10s%5s  %s\r\n","Player Name","On For","Idle",
+      $out .= sprintf("%-15s%10s%5s   %s\r\n","Player Name","On For","Idle",
                       defined @info{"doing_header"} ?
                       @info{"doing_header"} : "\@doing"
                      );
@@ -7163,12 +7225,14 @@ sub who
 
       # show connected user details
       if($hasperm) {
-         $out .= sprintf("%s%4s %02d:%02d %4s %-*s %-4s %s%s\r\n",
+         $out .= sprintf("%s%4s %02d:%02d %4s%s %-*s %-4s %s%s\r\n",
              $name,$extra,$$online{h},$$online{m},$$idle{max_val} .
-             $$idle{max_abr},$max,"#" . loc($hash),$$hash{port},
-             short_hn($$hash{hostname}),
+             $$idle{max_abr},hasflag($hash,"DARK") ? "D" : " ",$max,
+             "#" . loc($hash),$$hash{port},short_hn($$hash{hostname}),
              ($$hash{site_restriction} == 69) ? " [HoneyPoted]" : ""
             );
+      } elsif(hasflag($hash,"DARK")) {
+         # ignore
       } elsif($$hash{site_restriction} != 69) {
          my $doing = evaluate($self,$prog,$$hash{obj_doing});
          $doing =~ s/\r|\n//g;
@@ -14522,12 +14586,13 @@ sub fun_num
    good_args(\@_,1) ||
       return "#-1 FUNCTION (NUM) EXPECTS 1 ARGUMENT";
 
+   my $num = evaluate($self,$prog,$_[0]);
    my $result = find($self,$prog,evaluate($self,$prog,$_[0]));
 
    if($result eq undef) {
       return "#-1";
    } else {
-      return "#$$result{obj_id}";
+      return "#$result";
    }
 }
 
@@ -16949,6 +17014,7 @@ sub err
    my ($self,$prog,$fmt) = (obj(shift),obj(shift),shift);
    my (@args) = @_;
 
+   printf("%s\n",print_var($self));
    echo(self => $self,
         prog => $prog,
         source => [ $fmt,@args ],
@@ -17645,11 +17711,13 @@ sub socket_type
 
 sub socket_list
 {
-   my ($self,$prog,$target) = (shift,shift,obj(shift));
+   my ($arg,$self,$prog,$target) = (shift,shift,shift,obj(shift));
    my @list;
 
    # output directed at target of the program.
-   if(defined $$prog{created_by} && defined $$prog{created_by}->{sock} && 
+   if(!defined $$arg{always} &&               # hint to go to all sockets?
+      defined $$prog{created_by} && 
+      defined $$prog{created_by}->{sock} && 
       $$target{obj_id} eq invoker($prog,$self,1)) {
       return $$prog{created_by}->{sock};
    } elsif(!defined @connected_user{$$target{obj_id}}) {
@@ -17664,6 +17732,9 @@ sub socket_list
    }
    return undef;
 }
+
+
+#
 
 #
 # echo_thing
@@ -17711,12 +17782,18 @@ sub echo_thing
             ws_echo($$self{sock},$prefix.filter_chars($msg));
          } else {
             my $sock = $$self{sock};
-            printf($sock "%s",$msg);
+
+            if($msg =~ /\n/) {
+               printf($sock "%s",$msg);
+            } else {
+               printf($sock "%s\r\n",$msg);
+            }
          }
       }
    } elsif(hasflag($target,"PLAYER")) {
-      for my $s (socket_list($self,$prog,$target)) {
+      for my $s (socket_list($arg,$self,$prog,$target)) {
          my $type = socket_type($prog,$s);
+         next if $s eq undef;
 
          if($type eq "HTTP") {              # http may never get this far?
             store_output($self,$prog,$target,$type,$prefix,filter_chars($msg));
@@ -17725,6 +17802,7 @@ sub echo_thing
          } elsif($type eq "WEBSOCKET") {
             ws_echo($s,$prefix . filter_chars($msg));
          } else {
+#             printf("SOCK: '$s'\n");
             printf($s "%s%s",$prefix,filter_chars($msg));
          }
       }
@@ -19318,7 +19396,8 @@ sub server_process_line
                               cmd    => $input,
                              );
             } else {
-               if(conf("show_offline_cmd") && $input !~ /^\s*connect/i) {
+               if(conf("show_offline_cmd") && 
+                  $input !~ /^\s*(\@remotehostname|connect)/i) {
                   my $ignore = conf("host_filter");
                   if($ignore eq undef ||
                      !inlist($$hash{hostname},split(/,/,$ignore))) {

@@ -2682,7 +2682,7 @@ sub cmd_huh
    }
 
    if(lord(@{$$prog{cmd}}{cmd}) ne 0) {
-      printf("HuH: '%s' -> '%s'\n",$$self{obj_id},@{$$prog{cmd}}{cmd});
+#      printf("HuH: '%s' -> '%s'\n",$$self{obj_id},@{$$prog{cmd}}{cmd});
       echo(self   => $self,
            prog   => $prog,
            source => [ "Huh? (Type \"HELP\" for help.)" ]

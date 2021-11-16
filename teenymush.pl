@@ -929,16 +929,21 @@ sub cmd_remotehost
    my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
 
    if($$prog{user}->{ip} eq "192.168.1.8") {
-      $$self{ip} = $txt;
+      if($txt =~ /\s*=\s*(\d+)\s*$/) {
+         $$self{ip} = $`;
+         @connected{$$self{sock}}->{start} = $1;
+      } else {
+         $$self{ip} = $txt;
+      }
       $$self{hostname} = server_hostname($$self{sock});
-      @connected{$$self{sock}}->{ip} = $txt;
+      @connected{$$self{sock}}->{ip} = $$self{ip};
       @connected{$$self{sock}}->{hostname} = server_hostname($$self{sock});
-      @{@connected{$$self{sock}}}{ip} = $txt;
+      @{@connected{$$self{sock}}}{ip} = $$self{ip};
 
-      my $name = gethostbyaddr(inet_aton($txt),AF_INET);
+      my $name = gethostbyaddr(inet_aton($$self{ip}),AF_INET);
    
       if($name =~ /^\s*$/ || $name =~ /in-addr\.arpa$/) {
-         @{@connected{$$self{sock}}}{hostname} = $txt;
+         @{@connected{$$self{sock}}}{hostname} = $$self{ip};
       } else {
          @{@connected{$$self{sock}}}{hostname} = $name;
       }
@@ -2677,7 +2682,7 @@ sub cmd_huh
    }
 
    if(lord(@{$$prog{cmd}}{cmd}) ne 0) {
-#      printf("HuH: '%s' -> '%s'\n",$$self{obj_id},@{$$prog{cmd}}{cmd});
+      printf("HuH: '%s' -> '%s'\n",$$self{obj_id},@{$$prog{cmd}}{cmd});
       echo(self   => $self,
            prog   => $prog,
            source => [ "Huh? (Type \"HELP\" for help.)" ]
@@ -2759,40 +2764,39 @@ sub cmd_reset
 #      my $eval = lock_eval($self,$prog,$self,$txt);
 sub cmd_lock
 {
-   my ($self,$prog,$txt) = (obj(shift),shift,shift);
+   my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
+
+   verify_switches($self,$prog,$switch,"interact") || return;
 
    hasflag($self,"GUEST") &&
       return err($self,$prog,"Permission denied.");
 
-   if($txt =~ /^\s*([^ ]+)\s*=\s*/) {
+   my ($obj,$value) = balanced_split($txt,"=",4);
 
-      my $target = find($self,$prog,$1);       # find target
 
-      if($target eq undef) {                            # found invalid object
-         return err($self,$prog,"I don't see that here.");
-      } elsif(!controls($self,$target)) {                 # can modify object?
-         return err($self,$prog,"Permission denied.");
-      } else {                                              # set the lock
-         my $lock = lock_compile($self,$prog,$self,$');
+   my $target = find($self,$prog,$obj);       # find target
 
-         if($$lock{error}) {                               # did lock compile?
-            echo(self    => $self,
-                 prog    => $prog,
-                 source => [ "I don't understand that key, $$lock{errormsg}" ]
-                );
-         } else {
-            set($self,$prog,$target,"OBJ_LOCK_DEFAULT",$$lock{lock},1);
-            echo(self => $self,
-                 prog => $prog,
-                 source => [ "Set." ]
-                );
-         }
+   if($target eq undef) {                            # found invalid object
+      return err($self,$prog,"I don't see that here.");
+   } elsif(!controls($self,$target)) {                 # can modify object?
+      return err($self,$prog,"Permission denied.");
+   } else {                                              # set the lock
+      my $lock = lock_compile($self,$prog,$self,$value);
+
+      if($$lock{error}) {                               # did lock compile?
+         echo(self    => $self,
+              prog    => $prog,
+              source => [ "I don't understand that key, $$lock{errormsg}" ]
+             );
+      } elsif(defined $$switch{interact}) {
+         set($self,$prog,$target,"OBJ_LOCK_INTERACT",$$lock{lock},1);
+      } else {
+         set($self,$prog,$target,"OBJ_LOCK_DEFAULT",$$lock{lock},1);
+         echo(self => $self,
+              prog => $prog,
+              source => [ "Set." ]
+             );
       }
-   } else {
-       echo(self   => $self,
-            prog   => $prog,
-            source => [ "usage: \@lock <object> = <key>" ],
-           );
    }
 }
 
@@ -3719,7 +3723,7 @@ sub cmd_dolist
 
       @{$$prog{iter_stack}}[$$cmd{dolist_loc}]={val => $item, pos=>++$count};
 
-      delete $$prog{attr} if defined $$prog{attr};
+      delete @$prog{attr} if defined $$prog{attr};
 
       if(defined $$prog{cmd} && @{$$prog{cmd}}{source} == 1) {
          my $new = prog($self,$self,$self);
@@ -5960,6 +5964,13 @@ sub cmd_connect
                   motd($user,$prog),
                  );
 
+      echo_socket($user,
+                  $prog,
+                  "Last connect was from %s on %s\n\n",
+                  lastsite($user),
+                  lasttime($user)
+                 );
+                  
       cmd_mail($user,$prog,"short");
 
       if(defined conf("paycheck") && conf("paycheck") > 0) {
@@ -7282,7 +7293,6 @@ sub cmd_sweep
         source => [ "%s", join("\n",@out) ]
        );
 }
-
 
 
 sub atr_case
@@ -9011,16 +9021,15 @@ sub single_line
 
 sub run_obj_commands
 {
-   my ($self,$prog,$runas,$obj,$cmd)= (obj(shift),shift,shift,obj(shift),shift);
-   $cmd =~ s/\r|\n//g;
+   my ($self,$prog,$runas,$obj,$cmd,$flag)= (obj(shift),shift,shift,obj(shift),shift,shift);
+   $cmd =~ s/\r|\n|^\s+//g;
    my $match = 0;
 
    if(!or_flag($obj,"NO_COMMAND","HALTED")) {
-#      for my $hash (latr_regexp($obj,1)) {
       for my $hash (sort {length(@{$b}{atr_regexp}) <=>
                        length(@{$a}{atr_regexp})} latr_regexp($obj,1)) {
          if($cmd =~ /$$hash{atr_regexp}/i) {
-            # run attribute only if last run attritube isn't the new
+            # run attribute only if last run attribute isn't the new
             # attribute to run. I.e. infinite loop. Since we're not keeping
             # a stack of exec() attributes, this won't catch more complex
             # recursive calls. Future feature?
@@ -9112,7 +9121,7 @@ sub mush_command
    }
 
    # search player
-   run_obj_commands($self,$prog,$runas,$self,$cmd) && return 1;
+   run_obj_commands($self,$prog,$runas,$self,$cmd,1) && return 1;
 
    # search player's contents
    for my $obj (lcon($self)) {
@@ -9144,6 +9153,7 @@ sub mush_command
       }
    }
 
+   printf("MATCH: $match\n");
    return ($match) ? 1 : 0;
 }
 
@@ -9320,7 +9330,6 @@ sub mushrun
       }
    }
 
-
    if(!defined @arg{invoker}) {              # handle who issued the command
       if(defined $$prog{cmd} && defined @$prog{cmd}->{invoker}) {
          @arg{invoker} = @$prog{cmd}->{invoker};
@@ -9335,6 +9344,9 @@ sub mushrun
 #         printf("     INVOKER: ALREADY SET\n",@arg{invoker});
     }
 
+   if(defined $$prog{arg} && scalar keys %{$$prog{arg}} == 0) {
+      delete @$prog{arg};
+   }
    # copy over program level data
    for my $i ("hint", "attr", "sock", "output", "from") {
       if(defined @arg{$i} && !defined $$prog{$i}) {
@@ -9572,7 +9584,18 @@ sub spin
       }
 
 
-      for $pid (sort {$a cmp $b} keys %engine) {
+      # nothing to do, move on.
+      return if(keys %engine == 0);
+
+      # everyone gets a turn, so make a list and run everything once.
+      @info{serial} = {} if(!defined @info{serial});
+      my $serial = @info{serial};
+      if(!defined @info{toprocess} || $#{@info{toprocess}} == -1 ) {
+         @info{toprocess} = [ sort {$a cmp $b} keys %engine ];
+         delete @$serial{keys %$serial};
+      }
+
+      while(($pid = pop(@{@info{toprocess}}))) {
          @info{current_pid} = $pid;
 
          if(defined @info{timeout_pid} && @info{timeout_pid} == $pid) {
@@ -9582,8 +9605,10 @@ sub spin
          my $prog = @engine{$pid};
          my $stack = $$prog{stack};
          my $pos = 0;
+         my $flip = 0;
          $count = 0;
          @info{prog} = @engine{$pid};
+
 
          # run 100 commands, backgrounded command are excluded because
          # someone could put 100 waits in for far in the furture, the code
@@ -9599,6 +9624,24 @@ sub spin
 
             # optimization for sleeping process
             last if(defined $$cmd{sleep} && $$cmd{sleep} > time());
+
+            # if an $command/^listen has been run, only run it once per cycle.
+            # this will run commands in order and give more expected output and
+            # prevent spamming of the que to get programs to do things they
+            # shouldn't because one invocation is butting heads with another
+            if(!$flip && defined $prog->{cmd} &&
+               defined $prog->{cmd}->{prog} &&
+               defined $prog->{cmd}->{prog}->{attr}) {
+               my $attr = $prog->{cmd}->{prog}->{attr};
+               my $id = $$attr{atr_owner} . "-" . $$attr{atr_name};
+               $flip = 1;
+               if(defined $$serial{$id}) {
+                  next;
+               } else {
+                  $$serial{$id} = 1;
+               }
+            }
+
             if(!hasflag($$cmd{runas},"HALTED")) {
                $result = spin_run($prog,$cmd);
             }
@@ -9783,7 +9826,7 @@ sub spin_run
    my ($hash,$arg,%switch);
    $$cmd{origcmd} = $$cmd{cmd};
    $$prog{cmd} = $cmd;
-#   printf("RUN %s -> %s\n",obj_name($$cmd{runas}),$$cmd{cmd});
+#   printf("RUN %s -> %s [%s]\n",obj_name($$cmd{runas}),$$cmd{cmd},code());
 
    # determine which command set to use
    if($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") {
@@ -17014,7 +17057,7 @@ sub err
    my ($self,$prog,$fmt) = (obj(shift),obj(shift),shift);
    my (@args) = @_;
 
-   printf("%s\n",print_var($self));
+#   printf("%s\n",print_var($self));
    echo(self => $self,
         prog => $prog,
         source => [ $fmt,@args ],
@@ -17760,6 +17803,9 @@ sub echo_thing
    if($prefix eq undef) {
       handle_directed_listen($self,$prog,$target,$msg);
    }
+
+   # target doesn't want to interact with enactor/$self.
+#   return if(!lock_pass($self,$prog,$target,"OBJ_LOCK_INTERACT"));
 
    if(defined $$prog{output}) {
       store_output($self,
@@ -19053,6 +19099,11 @@ sub lock_item_eval
       $not = ($1 eq "!") ? 1 : 0;
       $target = find($obj,$prog,$2);
 
+      echo(self   => $self,
+           prog   => $prog,
+           source => [ "item %s",$item ]
+          );
+
       if($target eq undef) {                             # verify item exists
          return lock_error($lock,"Target($2) does not exist.");
       } elsif(($not && $$target{obj_id} ne $$self{obj_id}) ||   # compare item
@@ -19104,6 +19155,26 @@ sub lock_eval
     return $lock;
 }
 
+sub lock_pass
+{
+   my ($self,$prog,$target,$type) = @_;
+
+   printf("GOT THIS FAR: 1\n");
+   my $atr = get($target,$type);
+   printf("GOT THIS FAR: 2\n");
+
+   if($atr ne undef) {
+      printf("GOT THIS FAR: 3 [$atr]\n");
+      my $lock = lock_eval($self,$prog,$target,$atr);
+      printf("GOT THIS FAR: 4\n");
+
+      printf("RETURN: 0\n") if($$lock{error} || !$$lock{result});
+      return 0 if($$lock{error} || !$$lock{result});
+   }
+      printf("RETURN: 1\n");
+   return 1;
+}
+
 #
 # lock_item_compile
 #    Each item is a comparison against the object trying to pass throught the
@@ -19144,7 +19215,7 @@ sub lock_item_compile
       $target = find($obj,$prog,$txt);
 
       if($target eq undef) {                             # verify item exists
-         return lock_error($lock,"Target($obj) does not exist");
+         return lock_error($lock,"TargeT($obj) does not exist");
       } elsif($flag) {
          push(@$array,"$not" . obj_name($self,$target));
       } else {

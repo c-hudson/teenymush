@@ -2595,6 +2595,12 @@ sub cmd_trigger
    my $attr = pget($target,$name,1) ||
       return err($self,$prog,"No such attribute.");
 
+   my $hash = {
+      atr_name => $name,
+      atr_value => $attr,
+      atr_owner => $$target{obj_id},
+      atr_regexp => "(.*)"
+   };
 
 #   printf("ATTR: '%s'\n",$$attr{value});
 
@@ -2644,6 +2650,8 @@ sub cmd_trigger
            cmd    => $$attr{value},
            child  => 2,
            wild   => [ @wild ],
+           from   => "ATTR",
+           attr   => $hash,
            invoker=> (defined $$prog{created_by}) ? $$prog{created_by} : $self,
           );
 }
@@ -3122,6 +3130,74 @@ sub cmd_ps
 }
 
 #
+# serial_delete
+#    Remove the lock on programs running for a particular object/attr combo
+#
+sub serial_delete
+{
+   my $prog = shift;
+
+   if(defined $$prog{attr}) {
+      my $serial = @info{serial};
+      my $id = $$prog{attr}->{atr_owner} ."-". $$prog{attr}->{atr_name};
+
+      if(defined $$serial{$id} && $$serial{$id} == $$prog{$id}) {
+         delete $$serial{$id};
+      }
+   }
+}
+
+#
+# serial_canrun
+#    TeenyMUSH only lets one $command run at a time, it does so by
+#    placing a lock in @info{serial} for a particular object /
+#    attribute pair. If the lock exists, don't run. If the lock doesn't
+#    exist then let it run. The lock will also be set if its okay to run.
+#
+sub serial_canrun
+{
+   my $prog = shift;
+
+   if(defined $$prog{attr}) {
+      @info{serial} = {} if(!defined @info{serial});
+      my $serial = @info{serial};
+      my $id = $$prog{attr}->{atr_owner} ."-". $$prog{attr}->{atr_name};
+
+      if(defined $$serial{$id} && $$serial{$id} == $$prog{pid}) {
+         return 1;                           # our $prog's lock, okay to run
+      } elsif(!defined @engine{$$serial{$id}} ||
+              !defined $$serial{$id}) {
+         delete @$serial{$id};             # no lock or locking $prog !exists
+         $$serial{$id} = $$prog{pid};
+         return 1;
+      } else {
+         return 0;                                # not our lock, do not run
+      }
+   } else {
+      return 1;                  # $$prog{attr} not set yet , can't use locks
+   }
+}
+
+#
+# serial_delete
+#    See serial_canrun. Removes the lock set by this function when the
+#    program finishes.
+#
+sub serial_delete
+{
+   my $prog = shift;
+
+   if(defined $$prog{attr}) {
+      my $serial = @info{serial};
+      my $id = $$prog{attr}->{atr_owner} ."-". $$prog{attr}->{atr_name};
+
+      if(defined $$serial{$id} && $$serial{$id} == $$prog{$id}) {
+         delete $$serial{$id};
+      }
+   }
+}
+
+#
 # cmd_halt
 #    Delete all processes owned by the object running the @halt command.
 #
@@ -3165,6 +3241,7 @@ sub cmd_halt
              );
 
          close_telnet($program);
+         serial_delete(@engine{$pid});
          delete @engine{$pid};
          $count++;
       }
@@ -4072,18 +4149,31 @@ sub cmd_switch
              my $val = evaluate($self,$prog,$');
              if(($1 eq ">" && $first > $') || ($1 eq "<" && $first < $')) {
                 $cmd =~ s/\\,/,/g;
+                if(@info{foobar} == 4) {
+                   @info{foobar} = 3;
+                printf("---switch---\n");
+                printf("%s\n",print_var($prog));
+                printf("ATTR: '%s'\n",(defined $$prog{attr}) ? "yes" : "no");
+                }	
                 return mushrun(self   => $self,
                                prog   => $prog,
                                source => 0,
                                child  => 1,
                                invoker=> invoker($prog,$self),
                                cmd    => $cmd,
+                               debug  => "yes"
                               );
              }
           } else {
              my @wild = ansi_match($first,$txt,$switch);
              if($#wild >=0) {
                 $cmd =~ s/\\,/,/g;
+                if(@info{foobar} == 4) {
+                   @info{foobar} = 3;
+                printf("---switch default---\n");
+                printf("%s\n",print_var($prog));
+                printf("ATTR: '%s'\n",(defined $$prog{attr}) ? "yes" : "no");
+                }
                 mushrun(self   => $self,
                         prog   => $prog,
                         source => 0,
@@ -4093,7 +4183,8 @@ sub cmd_switch
                         match  => { 0 => @wild[0], 1 => @wild[1], 2 => @wild[2],
                                     3 => @wild[3], 4 => @wild[4], 5 => @wild[5],
                                     6 => @wild[6], 7 => @wild[7], 8 => @wild[8]
-                                  }
+                                  },
+                        debug  => 1,
                        );
                 return;
              }
@@ -4108,6 +4199,7 @@ sub cmd_switch
                   child  => 1,
                   invoker=> invoker($prog,$self),
                   cmd    => @list[0],
+                  debug  => 1,
                  );
           return;
        }
@@ -4168,8 +4260,9 @@ sub cmd_telnet
       if($sock ne undef) {
          # sockets should be open only for a short time, unless its a
          # SOCKET_PUPPET connection.
-         if(time() - @{@connected{$sock}}{start} > 60 && 
+         if(time() - @{@connected{$sock}}{opened} > 60 && 
            !hasflag($self,"SOCKET_PUPPET")) {
+           printf("%s\n",print_var(@connected{$sock}));
            server_disconnect($sock);   # socket has been open to long, close
          } else {                                      # already open, abort
             return err($self,
@@ -4279,6 +4372,10 @@ sub cmd_send
        $txt =~ s/\r|\n//g;
        $txt =~ tr/\x80-\xFF//d;
 
+       echo(self   => $self,
+         prog   => $prog,
+         source => [ "Send> %s\n", $txt ],
+        );
        if(defined $$switch{lf}) {
           printf($sock "%s\n",$txt);
        } elsif(defined $$switch{cr}) {
@@ -9153,7 +9250,6 @@ sub mush_command
       }
    }
 
-   printf("MATCH: $match\n");
    return ($match) ? 1 : 0;
 }
 
@@ -9203,7 +9299,6 @@ sub mushrun_add_cmd
                    prog    => $$arg{prog},
                    mdigits => $$arg{match}
                  };
-
       if(conf_true("debug")) {
          #
          # Extra Debuging to trace calls back to the begining, when needed.
@@ -9317,6 +9412,10 @@ sub mushrun
       @arg{cmd} = $1 if(ansi_remove($arg{cmd}) =~ /^\s*{(.*)}\s*$/s);
    }
 
+   my $tmp = @arg{cmd};
+   $tmp =~ s/\s+/ /g;
+   $tmp =~ s/\r|\n//g;
+
    if(@arg{prog} eq undef) {                                       # new prog
       $prog = prog(@arg{self},@arg{runas});
       @arg{prog} = $prog;
@@ -9378,6 +9477,9 @@ sub mushrun
 #   if(defined $arg{wild}) {
 #      set_digit_variables($arg{self},$arg{prog},"",@{$arg{wild}}); # copy %0-%9
 #   }
+
+   serial_canrun(@arg{prog});                            # creates the lock
+
    return @arg{prog};
 }
 
@@ -9448,6 +9550,8 @@ sub mushrun_done
    my $prog = shift;
    my $cost = ($$prog{command} + ($$prog{function} / 10)) / 128;
    my $attr;
+
+   serial_delete($prog);
 
 #   if(defined $$prog{attr}) {
 #      printf("%s\n",print_var($prog));
@@ -9536,11 +9640,11 @@ sub spin_done
 sub spin
 {
    my $start = Time::HiRes::gettimeofday();
-   my ($count,$pid,$result);
+   my ($count,$pid,$result,$id);
 
    $SIG{ALRM} = \&spin_done;
 
-#   eval {
+   eval {
        ualarm(15_000_000);                              # err out at 8 seconds
        local $SIG{__DIE__} = sub {
           delete @engine{@info{current_pid}};
@@ -9588,11 +9692,9 @@ sub spin
       return if(keys %engine == 0);
 
       # everyone gets a turn, so make a list and run everything once.
-      @info{serial} = {} if(!defined @info{serial});
-      my $serial = @info{serial};
+
       if(!defined @info{toprocess} || $#{@info{toprocess}} == -1 ) {
-         @info{toprocess} = [ sort {$a cmp $b} keys %engine ];
-         delete @$serial{keys %$serial};
+         @info{toprocess} = [ sort {$a <=> $b} keys %engine ];
       }
 
       while(($pid = pop(@{@info{toprocess}}))) {
@@ -9610,6 +9712,8 @@ sub spin
          @info{prog} = @engine{$pid};
 
 
+         next if(!serial_canrun($prog));
+         
          # run 100 commands, backgrounded command are excluded because
          # someone could put 100 waits in for far in the furture, the code
          # would never run the next command.
@@ -9629,18 +9733,25 @@ sub spin
             # this will run commands in order and give more expected output and
             # prevent spamming of the que to get programs to do things they
             # shouldn't because one invocation is butting heads with another
-            if(!$flip && defined $prog->{cmd} &&
-               defined $prog->{cmd}->{prog} &&
-               defined $prog->{cmd}->{prog}->{attr}) {
-               my $attr = $prog->{cmd}->{prog}->{attr};
-               my $id = $$attr{atr_owner} . "-" . $$attr{atr_name};
-               $flip = 1;
-               if(defined $$serial{$id}) {
-                  next;
-               } else {
-                  $$serial{$id} = 1;
-               }
-            }
+
+            last if(!serial_canrun($prog));
+
+#            if(!$flip && defined $prog->{cmd} &&
+#               defined $prog->{cmd}->{prog} &&
+#               defined $prog->{cmd}->{prog}->{attr}) {
+#               my $attr = $prog->{cmd}->{prog}->{attr};
+#               my $id = $$attr{atr_owner} . "-" . $$attr{atr_name};
+#               $flip = 1;
+#               if(defined $$serial{$id}) {
+#                  printf("# skip: $pid - $id\n");
+#                  next;
+#               } else {
+#                  printf("# run: $pid - $id\n");
+#                  $$serial{$id} = 1;
+#               }
+#            } elsif(!$flip) {
+#               printf("# no attr: $$cmd{cmd}\n");
+#            }
 
             if(!hasflag($$cmd{runas},"HALTED")) {
                $result = spin_run($prog,$cmd);
@@ -9662,8 +9773,8 @@ sub spin
             delete @$prog{mutated} if defined @$prog{mutated};
 
             if(Time::HiRes::gettimeofday() - $start >= 1) { # stop
-#               con("   Time slice ran long, exiting correctly [%d cmds]\n",
-#                      $count);
+               con("   Time slice ran long, exiting correctly [%d cmds]\n",
+                      $count);
                mushrun_done($prog) if($#$stack == -1);     # program is done
                ualarm(0);
                @info{timeout_pid} = $pid;
@@ -9675,7 +9786,7 @@ sub spin
          delete @info{prog};
       }
       ualarm(0);
-#   };
+   };
 
    if($@ =~ /alarm/i) {
       con("Time slice timed out (%2f w/%s cmd) $@\n",
@@ -9826,7 +9937,7 @@ sub spin_run
    my ($hash,$arg,%switch);
    $$cmd{origcmd} = $$cmd{cmd};
    $$prog{cmd} = $cmd;
-#   printf("RUN %s -> %s [%s]\n",obj_name($$cmd{runas}),$$cmd{cmd},code());
+#   printf("RUN[%s] %s -> %s\n",$$prog{pid},obj_name($$cmd{runas}),substr($$cmd{cmd},1,40));
 
    # determine which command set to use
    if($$prog{hint} eq "WEB" || $$prog{hint} eq "WEBSOCKET") {

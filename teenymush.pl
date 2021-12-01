@@ -246,7 +246,14 @@ sub process_commandline
    }
 
    for my $i (0 .. $#ARGV) {             # set conf attributes from cmdline
-      if(@ARGV[$i] =~ /^-{1,2}D([^=]+)(=)/ ||
+      if(@ARGV[$i] eq "--standby" || 
+              @ARGV[$i] =~ /^--standby=(\d+)$/) {
+         @info{standby} = nvl($1,1);
+      } elsif(@info{standby} && @ARGV[$i] =~ /^-{1,2}D([^=]+)=/) {
+         @info{"conf.$1"} = $';
+      } elsif(@info{standby} && @ARGV[$i] =~ /^-{1,2}D([^=]+)$/) {
+         @info{"conf.$1"} = 1;
+      } elsif(@ARGV[$i] =~ /^-{1,2}D([^=]+)(=)/ ||
          @ARGV[$i] =~ /^-{1,2}D([^=]+)$/) {
          if($2 eq "=" && $' eq undef) {
             con(" - Deleting conf.%s setting\n",$1);
@@ -301,8 +308,13 @@ sub main
 {
    @info{run} = 1;
 
-   load_db();
+   for my $i (0 .. $#ARGV) {             # set conf attributes from cmdline
+      if(@ARGV[$i] eq "--standby" || @ARGV[$i] =~ /^--standby=(\d+)$/) {
+         @info{standby} = nvl($1,1);
+      }
+   }
    printf("%s\n",conf("version")) if !@info{shell};
+   load_db();
 
    # trap signal HUP and try to reload the code
    $SIG{HUP} = sub {
@@ -1407,7 +1419,7 @@ sub cmd_shutdown
          if(defined $$hash{obj_id} && name($$hash{obj_id}) ne "HeartBeat") {
             echo(self   => $self,
                  prog   => $prog,
-                 target => [ $hash, "%s has been shutdown by %s.",
+                 target => [ $hash, "%s has been sHutdown by %s.",
                              conf("mudname"),obj_name($self,$self,1) ]
             );
             cmd_boot($self,$prog,"#" . $$hash{obj_id});
@@ -3366,9 +3378,15 @@ sub cmd_dump
    my ($file,$start);
 
 
+   if($type =~ /^\d+$/) {
+      change($type);
+   }
+
    @info{"conf.mudname"} = "TeenyMUSH" if(conf("mudname") eq undef);
 
-   if(in_run_function($prog)) {
+   if(@info{standby}) {
+      return;                                   # no dumps in standby mode
+   } elsif(in_run_function($prog)) {
       return out($prog,"#-1 \@DUMP can not be called from RUN function");
    } elsif(!hasflag($self,"WIZARD") && !hasflag($self,"GOD")) {
       return err($self,$prog,"Permission denied.");
@@ -3383,6 +3401,17 @@ sub cmd_dump
    #-----------------------------------------------------------------------#
    my $cmd = $$prog{cmd};
    if(!defined $$cmd{dump_pos}) {                      # initialize "loop"
+
+
+      # run a dirty dump before doing a full backup. This will create
+      # the required archive_logs. The change# for both should be the
+      # same so the number needs to be reverted back. An archive_log
+      # should always be created even as a place holder.
+      $$cmd{dump_change} = change() if !defined $$cmd{dump_change};
+      my $result = cmd_dirty_dump($self,$prog,"ALWAYS_DUMP",{});
+      return "RUNNING" if($result eq "RUNNING");
+      change($$cmd{dump_change});
+
       @info{dirty} = {};                               # clear dirty bits
       if(defined @info{backup_mode} && is_running(@info{backup_mode})) {
          return err($self,$prog,"Backup is already running.");
@@ -3411,19 +3440,26 @@ sub cmd_dump
          $mon++;
          $yr -= 100;
 #
-         my $fn = sprintf("@info{dumps}/%s.%02d%02d%02d_%02d%02d%02d",
-                          conf("mudname"),$yr,$mon,$day,$hour,$min,$sec);
+         my $fn = sprintf("%s/%s.%010d.%02d%02d%02d",
+                          @info{dumps},
+                          conf("mudname"),
+                          change(),
+                          $yr,$mon,$day
+                         );
 
          open($file,"> $fn.tdb") ||
            return err($self,$prog,"Unable to open $fn for writing");
          @info{dump_name} = $fn;
 
-         printf($file "server: %s, version=%s, change#=0, exported=%s, " .
-            "type=%s\n", conf("version"),db_version(),scalar localtime(),
-            $type);
+         printf($file "server: %s, version=%s, change#=%s, exported=%s, " .
+                   "type=%s\n", 
+                conf("version"),
+                db_version(),
+                change(),
+                scalar localtime(),
+                $type
+               );
       }
-
-      @info{change} = 0;
 
       $$cmd{dump_file} = $file;
       @info{backup_mode} = $$prog{pid};
@@ -3483,6 +3519,7 @@ sub cmd_dump
              ) if !@info{shell};
       }
       con("**** Dump Complete: Exiting ******\n") if($type eq "CRASH");
+      change("+");
 
       $$prog{command} = 1;                 # delete cost of running command
                                            # so it doesn't show in console
@@ -3511,6 +3548,19 @@ sub do_full_dirty_dump
    }
 }
 
+sub change
+{
+   my $action = shift;
+
+   if($action eq "+") {
+      @info{change}++;
+   } elsif(defined $action) {
+      @info{change} = $action;
+   } else {
+      return @info{change};
+   }
+}
+
 sub dbwrite
 {
    my ($file,$fmt,@args) = @_;
@@ -3532,11 +3582,9 @@ sub cmd_dirty_dump
    my $count = 0;
    my $archive;
 
+   return if @info{standby};
+
    my $dirty = @info{dirty};
-   if(ref($dirty) ne "HASH" || 
-      (ref($dirty) eq "HASH" && scalar keys %$dirty == 0)) {
-      return;                                               # nothing to dump
-   }
 
    if(defined @info{backup_mode} && is_running(@info{backup_mode})) {
       return err($self,$prog,"Backup is already running.");
@@ -3544,9 +3592,14 @@ sub cmd_dirty_dump
 
    my $cmd = $$prog{cmd};
    if(!defined $$cmd{dirty_list}) {                       # initialize "loop"
-      @info{change} = 0 if !defined @info{change};
       $$cmd{dirty_list} = [ %{@info{dirty}} ];
       @info{dump_name} = $' if(@info{dump_name} =~ /^dumps\//i);
+
+      if((ref($dirty) ne "HASH" || 
+         (ref($dirty) eq "HASH" && scalar keys %$dirty == 0)) &&
+         $txt ne "ALWAYS_DUMP") {
+         return;                                               # nothing to dump
+      }
 
       if(@info{shell}) {
          open($file,">> $0") ||
@@ -3557,21 +3610,23 @@ sub cmd_dirty_dump
                "@info{dump_name}.tdb for writing");
       }
       if(conf_true("archive_logging")) {
-         open($archive,sprintf(">> %s/archive_log/%s.%06d",@info{dumps},
-              @info{dump_name},@info{change})) ||
-            con("Unable to open @info{dumps}/archive_log/%s.%06d for " .
-                "archive_logging",
-                @info{dumps},@info{dump_name},@info{change});
+         open($archive,sprintf("> %s/archive_log/%s.%010d.al",
+                               @info{dumps},
+                               conf("mudname"),
+                               change()
+                              )
+             ) ||
+            con("Unable to open @info{dumps}/archive_log/%s.%010d.al for " .
+                "archive_log.\n",conf("mudname"),change());
          @info{afd} = $archive;
       }
       $$cmd{dirty_file} = $file;
 
       dbwrite($file,"server: %s, version=%s, change#=%s, exported=%s, " .
-          "type=archive_log\n",conf("version"),db_version(),@info{change},
+          "type=archive_log\n",conf("version"),db_version(),change(),
           scalar localtime());
-      @info{change}++;
+      change("+");
    }
-   my $dirty = @info{dirty};
    my $list = $$cmd{dirty_list};
 
    while($#$list >= 0 && $count++ < 51) {             # do 50 objects a cycle
@@ -4149,12 +4204,6 @@ sub cmd_switch
              my $val = evaluate($self,$prog,$');
              if(($1 eq ">" && $first > $') || ($1 eq "<" && $first < $')) {
                 $cmd =~ s/\\,/,/g;
-                if(@info{foobar} == 4) {
-                   @info{foobar} = 3;
-                printf("---switch---\n");
-                printf("%s\n",print_var($prog));
-                printf("ATTR: '%s'\n",(defined $$prog{attr}) ? "yes" : "no");
-                }	
                 return mushrun(self   => $self,
                                prog   => $prog,
                                source => 0,
@@ -4168,12 +4217,6 @@ sub cmd_switch
              my @wild = ansi_match($first,$txt,$switch);
              if($#wild >=0) {
                 $cmd =~ s/\\,/,/g;
-                if(@info{foobar} == 4) {
-                   @info{foobar} = 3;
-                printf("---switch default---\n");
-                printf("%s\n",print_var($prog));
-                printf("ATTR: '%s'\n",(defined $$prog{attr}) ? "yes" : "no");
-                }
                 mushrun(self   => $self,
                         prog   => $prog,
                         source => 0,
@@ -8973,7 +9016,6 @@ sub db_object
 # db_process_line
 #   Read one line from the db at a time, storing any vital information
 #   in the state hash table.
-#
 #   When in a restore and an object number is passed in, then only that
 #   object is restored. The process will not die() when restoring.
 #
@@ -9011,7 +9053,7 @@ sub db_process_line
       /^server: ([^,]+), version=([^,]+), change#=([^,]+), exported=([^,]+), type=/) {
       delete @$state{complete};                               # dump complete
       $$state{ver} = $2;
-      @info{change} = $3;
+      change($3) if defined $3 && $3 != 0;
    } elsif($line =~ /^\*\* Dump Completed (.*) \*\*$/) {
       $$state{complete} = 1;                                  # dump complete
       delete $$state{obj};
@@ -9100,7 +9142,7 @@ $SIG{'USR1'} = sub { @info{sigusr1} = time(); };
 
 END {
    if(@info{run} == 0) {
-      con("%s shutdown by %s.\n",conf("mudname"),@info{shutdown_by});
+      con("%s shutDOWN by %s.\n",conf("mudname"),@info{shutdown_by});
       do_full_dirty_dump();
       @info{crash_dump_complete} = 1;
    } elsif(!defined @info{crash_dump_complete} && $#db > -1) {
@@ -9677,21 +9719,31 @@ sub spin
       } elsif(time()-@info{dirty_time} > 300 && defined @info{dump_name}) {
          @info{dirty_time} = time();
          my $self = obj(0);
-         mushrun(self   => $self,
-                 runas  => $self,
-                 invoker=> $self,
-                 source => 0,
-                 cmd    => "\@dirty_dump",
-                 from   => "ATTR",
-                 hint   => "ALWAYS_RUN"
-         );
+         if(conf_true("archive_logging")) {
+            
+            mushrun(self   => $self,
+                    runas  => $self,
+                    invoker=> $self,
+                    source => 0,
+                    cmd    => "\@dirty_dump",
+                    from   => "ATTR",
+                    hint   => "ALWAYS_RUN"
+                   );
+         }
       }
 
+      if(@info{standby} && time() - @info{archive_time} > 300) {
+         @info{archive_time} = time();
+         load_pending_archive_log();
+      }
 
       # nothing to do, move on.
       return if(keys %engine == 0);
 
-      # everyone gets a turn, so make a list and run everything once.
+   
+      # The mush might run out of time before finishing everything and
+      # everyone should get a turn. Make a list and run everything once.
+      # Repeat.
 
       if(!defined @info{toprocess} || $#{@info{toprocess}} == -1 ) {
          @info{toprocess} = [ sort {$a <=> $b} keys %engine ];
@@ -9729,29 +9781,9 @@ sub spin
             # optimization for sleeping process
             last if(defined $$cmd{sleep} && $$cmd{sleep} > time());
 
-            # if an $command/^listen has been run, only run it once per cycle.
-            # this will run commands in order and give more expected output and
-            # prevent spamming of the que to get programs to do things they
-            # shouldn't because one invocation is butting heads with another
-
+            # run object $attribute pairs one at a time till they complete
+            # and then run the next one. Que spam protection.
             last if(!serial_canrun($prog));
-
-#            if(!$flip && defined $prog->{cmd} &&
-#               defined $prog->{cmd}->{prog} &&
-#               defined $prog->{cmd}->{prog}->{attr}) {
-#               my $attr = $prog->{cmd}->{prog}->{attr};
-#               my $id = $$attr{atr_owner} . "-" . $$attr{atr_name};
-#               $flip = 1;
-#               if(defined $$serial{$id}) {
-#                  printf("# skip: $pid - $id\n");
-#                  next;
-#               } else {
-#                  printf("# run: $pid - $id\n");
-#                  $$serial{$id} = 1;
-#               }
-#            } elsif(!$flip) {
-#               printf("# no attr: $$cmd{cmd}\n");
-#            }
 
             if(!hasflag($$cmd{runas},"HALTED")) {
                $result = spin_run($prog,$cmd);
@@ -9773,8 +9805,8 @@ sub spin
             delete @$prog{mutated} if defined @$prog{mutated};
 
             if(Time::HiRes::gettimeofday() - $start >= 1) { # stop
-               con("   Time slice ran long, exiting correctly [%d cmds]\n",
-                      $count);
+#               con("   Time slice ran long, exiting correctly [%d cmds]\n",
+#                      $count);
                mushrun_done($prog) if($#$stack == -1);     # program is done
                ualarm(0);
                @info{timeout_pid} = $pid;
@@ -9794,20 +9826,26 @@ sub spin
    }
 }
 
+#
+# show_verbose
+#   If an object is set verbose, show the commands being run to the owner.
+#
 sub show_verbose
 {
    my ($prog,$command) = @_;
 
    if(hasflag($$command{runas},"VERBOSE")) {
-      my $owner= owner($$command{runas});
-      echo(self   => $owner,
-           prog   => $prog,
-           target => [ $owner,
-                       "%s] %s",
-                       name($$command{runas}),
-                       $$command{cmd}
-                     ]
-          );
+      my $owner = owner($$command{runas});
+      if(hasflag($owner,"CONNECTED")) {
+         echo(self   => $owner,
+              prog   => $prog,
+              target => [ $owner,
+                          "%s] %s",
+                          name($$command{runas}),
+                          $$command{cmd}
+                        ]
+             );
+      }
    }
 }
 
@@ -16971,13 +17009,14 @@ sub load_db
       opendir($dir,"@info{dumps}") || 
          die("Unable to find @info{dumps} directory");
 
-      my $fn=(sort {(stat("@info{dumps}/$a"))[9] <=> 
-                    (stat("@info{dumps}/$b"))[9]}
-              grep {/\.tdb$/}                           # find most current db
+      my $fn =(sort {(split(/\./,$a))[1] <=> (split(".",$b))[1]}
+              grep {/\.tdb$/}                    # find current db by change #
               readdir($dir))[-1];
       closedir($dir);
-   
-      if(!dump_complete("@info{dumps}/$fn")) {
+  
+      # if in standby mode, db may be complete but a subsquient segment
+      # is partial. Reading archive_logs will resolve this problem 
+      if(!dump_complete("@info{dumps}/$fn") && !@info{standby}) {
          die("$fn is incomplete, remove or use --forceload to override");
       }
    
@@ -16988,6 +17027,10 @@ sub load_db
    
       while(<$file>) {
          db_process_line(\%state,$_);
+      
+         # only read the main entry in the db, read archive log for any
+         # other entries.
+         last if(@info{standby} && @state{complete});
       }
       close($file);
    
@@ -17023,6 +17066,80 @@ sub load_db
    }
 
    delete @info{dirty};     # delete, this will get populated by the db load
+}
+
+#
+# load_pending_archive_log
+#    When the TeenyMUSH server is a fall over site, the MUSH will load
+#    archive logs (changes) from its parent server to keep the db in sync
+#    with the parent server's db. The max things should be out of date
+#    is 10 minutes.
+# 
+sub load_pending_archive_log
+{
+   my ($dir, %logs);
+
+   my $name = conf("mudname");
+   # find list of pending archive_logs.
+   opendir($dir,"dumps/archive_log") ||
+      logit("Unable to open archive_log directory.");
+
+   for my $fn (readdir($dir)) {
+      if($fn =~ /^$name\.(\d+).al$/i) {
+         @logs{$1+0}="dumps/archive_log/$fn"; # save change# minus leading 0s
+      }
+   }
+   close($dir);
+  
+   # load archive logs in the correct order, show errors every hour.
+   while(defined @logs{change() + 1}) {
+     if(dump_complete(@logs{change()+1})) {
+        my $fn = @logs{change()+1};
+        delete @logs{change()+1};            # don't go into an infinite loop
+        load_archive_log($fn);
+     }
+   }
+}
+
+#
+# load_archive_log
+#    Load the archive log files which contain just the changes since
+#    the last full dump.
+#
+sub load_archive_log
+{
+   my $fn = shift;
+   my %state;
+   my $file;
+   my $last;
+
+   open($file,"< $fn") ||
+      die("Unable to open database '$fn'\n");
+
+   while(<$file>) {
+      s/\r|\n//g;
+      if($_ =~ /^(\d+),([^,]+),{0,1}/) {
+         @state{obj} = $1;
+         my $type = $2;
+         my $rest = $';
+
+         if($type eq "delatr") {
+            my $obj = @db[@state{obj}];
+            delete @$obj{$rest};
+         } elsif($type eq "delobj") {
+            delete @db[@state{obj}];
+         } else {
+            db_process_line(\%state,$rest);
+         }
+      } else {
+         db_process_line(\%state,$_);
+      }
+   }
+
+   if(@state{complete}) {
+      printf(" + Read:  %s [%s]\n",$fn,ts());
+   }
+   close($file);
 }
 
 sub generic_action
@@ -18760,6 +18877,7 @@ sub has_conf
    return hasattr(0,"CONF.$conf") ? 1 : 0;
 }
 
+
 #
 # conf
 #    Grab a configuration option from off of "#0/conf.name" or the @default
@@ -18774,6 +18892,8 @@ sub conf
 
    if($_[0] eq "version") {
       return version();
+   } elsif(@info{standby} && defined @info{"conf.$_[0]"}) {
+      return @info{"conf.$_[0]"};
    } elsif(hasattr(obj(0),"conf.$_[0]")) {
       $attr = get(obj(0),"conf." . $_[0]);
    } elsif(defined @default{lc($_[0])}) {             # use @defaults?
@@ -19924,7 +20044,9 @@ sub server_start
    # uri_escape is required for httpd
    #
    if(has_conf("http") && module_enabled("uri_escape")) {
-      if(conf("http") !~ /^\s*(\d+)\s*$/) {
+      if(conf("http") eq undef) {
+         # do nothing
+      } elsif(conf("http") !~ /^\s*(\d+)\s*$/) {
          con("Invalid http port specified in #0/conf.http");
       } elsif(conf_true("http_secure")) {
          push(@port,conf("http") . "{https}");

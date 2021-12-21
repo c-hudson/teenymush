@@ -1435,7 +1435,7 @@ sub cmd_shutdown
 sub cmd_slash
 {
    my ($self,$prog) = (obj(shift),shift);
-   my $txt = @{$$prog{cmd}}{cmd};
+   my $txt = $$prog{user}->{last}->{cmd};
 
    if($txt =~ /^\\\\/) {
       cmd_emit($self,$prog,$');
@@ -6677,12 +6677,12 @@ sub cmd_look
 
    if(!hasflag($target,"ROOM") && loc($self) == $$target{obj_id}) {
       if(hasattr($target,"A_IDESC")) {
-         $out .= "\n" . evaluate($self,$prog,get($$target{obj_id},"A_IDESC"));
+         $out .= "\n" . mush_eval($self,$prog,get($$target{obj_id},"A_IDESC"));
       } elsif(hasattr($target,"idesc")) {
-         $out .= "\n" . evaluate($self,$prog,get($$target{obj_id},"idesc"));
+         $out .= "\n" . mush_eval($self,$prog,get($$target{obj_id},"idesc"));
       }
    } elsif(($desc = get($$target{obj_id},"DESCRIPTION")) && $desc ne undef) {
-      $out .= "\n" . evaluate($target,$prog,$desc);
+      $out .= "\n" . mush_eval($target,$prog,$desc);
    } else {
       $out .= "\nYou see nothing special.";
    }
@@ -6716,7 +6716,7 @@ sub cmd_look
       if(!set_digit_variables($self,$prog,"",join(' ',@con))) {# update to new
          $out .= "\n" . managed_var_set_error("#-1");
       } else {
-         $out .= "\n" . evaluate($target,$prog,$attr);
+         $out .= "\n" . mush_eval($target,$prog,$attr);
       }
       if(!set_digit_variables($self,$prog,"",$prev)) {    # restore %0 .. %9
          $out .= "\n" . managed_var_set_error("#-1");
@@ -6865,6 +6865,10 @@ sub cmd_set
    }
 }
 
+#
+# besplit (balanced evaluate split)
+#    Split a string at the $delimiter and then evaluate the results.
+#
 sub besplit
 {
    my ($self,$prog,$txt,$delim) = @_;
@@ -6873,6 +6877,10 @@ sub besplit
    return evaluate($self,$prog,$first), evaluate($self,$prog,$second);
 }
 
+#
+# bsplit
+#    balanced split shortcut
+#
 sub bsplit
 {
    return balanced_split($_[0],$_[1],4);
@@ -8174,7 +8182,7 @@ sub ansi_trim
 # close(FILE);
 
 
-#my $str = "[32;1m|[0m [1m[34;1m<*>[0m [32;1m|[0m [31;1mA[0m[31ms[0m[31mh[0m[31me[0m[31mn[0m[33;1m-[0m[31;1mS[0m[31mh[0m[31mu[0m[31mg[0m[31mar[0m                   [32;1m|[0m Meetme(#260V)                        [32;1m|[0m";
+#my $str = "[32;1m|[0m [1m[34;1m<*>[0m [32;1m|[0m [31;1mA[0m[31ms[0m[31mh[0m[31me[0m[31mn[0m[33;1m-[0m[31;1mS[0m[31mh[0m[31mu[0m[31mg[0m[31mar[0m                   [32;1m|[0m Meetme(#260V)                        [32;1m|[0m";
 
 #for my $i (0 .. 78) {
 #   printf("%0d : '%s'\n",$i,ansi_length(ansi_substr($str,$i,7)));
@@ -9250,7 +9258,7 @@ sub mush_command
    my ($self,$prog,$runas,$cmd,$src) = @_;
    my $match = 0;
 
-   return if(conf_true("safemode"));
+   return if(conf_true("safemode") || conf_true("TALKER"));
    $cmd = evaluate($self,$prog,$cmd) if($src ne undef && $src == 0);
 
    if(conf_true("master_override")) {            # search master room first
@@ -15344,17 +15352,21 @@ sub fun_default
    }
 }
 
+#
+# fun_eval
+#    evaluate an attribute in eval(obj,attr) or eval(obj/attr) format,
+#    or evaluate the string passed in.
+#
 sub fun_eval
 {
    my ($self,$prog,$txt) = (shift,shift,shift);
 
-#   printf("EVAL: '%s' -> '%s'\n",$txt,evaluate($self,$prog,evaluate($self,$prog,evaluate($self,$prog,$txt))));
    if($#_ == 0) {
       return evaluate($self,$prog,fun_get($self,$prog,$txt . "/" . $_));
    } elsif($txt =~ /\//) {
       return evaluate($self,$prog,fun_get($self,$prog,$txt));
    } else {
-      return evaluate($self,$prog,evaluate($self,$prog,evaluate($self,$prog,$txt)));
+      return evaluate($self,$prog,evaluate($self,$prog,$txt));
    }
 }
 
@@ -16405,6 +16417,36 @@ sub meval
    return @result;
 }
 
+sub mush_eval
+{
+   my ($self,$prog,$txt) = @_;
+
+   if(!defined conf_true("TALKER")) {
+      return evaluate($self,$prog,$txt);
+   } else {
+      my $tmp_read  = $$prog{read_only};
+      my $tmp_always = $$prog{eval_always};
+
+      $$prog{eval_always} = 1;
+      @$prog{read_only} = 1;
+      my $result = evaluate($self,$prog,$txt);
+
+      if(defined $tmp_read) {
+         $$prog{read_only} = $tmp_read;
+      } else {
+         delete $$prog{read_only};
+      }
+
+      if(defined $tmp_always) {
+         $$prog{eval_always} = $tmp_always;
+      } else {
+         delete $$prog{eval_always};
+      }
+
+      return $result;
+   }
+}
+
 #
 # evaluate_string
 #    Take a string and parse/run any functions in the string.
@@ -16415,6 +16457,7 @@ sub evaluate
    my $id = (ref($self) eq "HASH") ? $$self{obj_id} : $self;
    my $out;
 
+   return $txt if(conf_true("TALKER") && !defined $$prog{eval_always});
    #
    # handle string containing a single non []'ed function
    #
@@ -17009,9 +17052,7 @@ sub load_db
       opendir($dir,"@info{dumps}") || 
          die("Unable to find @info{dumps} directory");
 
-      my $fn =(sort {(split(/\./,$a))[1] <=> (split(".",$b))[1]}
-              grep {/\.tdb$/}                    # find current db by change #
-              readdir($dir))[-1];
+      my $fn = (sort grep {/\.tdb$/} readdir($dir))[-1];
       closedir($dir);
   
       # if in standby mode, db may be complete but a subsquient segment
@@ -20658,4 +20699,3 @@ sub db_read_import
 }
 
 main();                                                  #!# run only once
-

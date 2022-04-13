@@ -966,7 +966,7 @@ sub cmd_debug
 {
    my ($self,$prog,$txt,$switch) = (obj(shift),shift,shift,shift);
 
-   if(defined $$prog{cmd} && $$prog{cmd}->{source} == 1) {
+   if(hasflag($self,"DEBUG")) {
       if(!managed_var_set($prog,"debug",1)) {
          echo(self   => $self,
               prog   => $prog,
@@ -983,17 +983,6 @@ sub cmd_debug
               prog   => $prog,
               runas  => $self,
               source => 0,
-              cmd    => $txt
-             );
-   } elsif(defined $$prog{var} && 
-           defined $$prog{var}->{debug} && $$prog{var}->{debug} == 1) {
-      printf("DEBUG: '%s'\n",$txt);
-#      mush_command($self,$prog,$self,$txt,1);
-      mushrun(self   => $self,                # run only if debug is enabled
-              prog   => $prog,
-              runas  => $self,
-              source => 1,
-              child  => 2,
               cmd    => $txt
              );
    }
@@ -2718,9 +2707,9 @@ sub cmd_offline_huh
    my $prog = prog($obj,$obj,$obj);
    $$prog{read_only} = 1;
    if(@{@connected{$sock}}{type} eq "WEBSOCKET") {
-      ws_echo($sock,add_return(evaluate($obj,$prog,conf("login"))));
+      ws_echo($sock,add_return(mush_eval($obj,$prog,conf("login"))));
    } else {
-      printf($sock "%s",add_return(evaluate($obj,$prog,conf("login"))));
+      printf($sock "%s",add_return(mush_eval($obj,$prog,conf("login"))));
    }
 }
 
@@ -3846,7 +3835,7 @@ sub cmd_dolist
       return;                                                 # already done
    }
 
-   my $item = trim(shift(@{$$cmd{dolist_list}}));
+   my $item = trim(pop(@{$$cmd{dolist_list}}));
 #   printf("ITEM: '%s'\n",$item);
    if($item !~ /^\s*$/) {
 #      $item = fun_escape($self,$prog,$item);
@@ -4415,10 +4404,13 @@ sub cmd_send
        $txt =~ s/\r|\n//g;
        $txt =~ tr/\x80-\xFF//d;
 
-       echo(self   => $self,
-         prog   => $prog,
-         source => [ "Send> %s\n", $txt ],
-        );
+       if(!defined $$switch{quiet}) {
+           echo(self   => $self,
+                prog   => $prog,
+                source => [ "Send> %s\n", $txt ],
+            );
+       }
+
        if(defined $$switch{lf}) {
           printf($sock "%s\n",$txt);
        } elsif(defined $$switch{cr}) {
@@ -4523,7 +4515,7 @@ sub motd
    } else {                                        # evaluate the motd
       my $tmp = $$prog{read_only};                    # set readonly mode
       $$prog{read_only} = 1;
-      $atr = evaluate($self,$prog,$atr);
+      $atr = mush_eval($self,$prog,$atr);
 
       if($tmp eq undef) {
          delete @$prog{read_only};
@@ -8239,6 +8231,19 @@ sub initialize_flags
                           perm        => "PLAYER",
                           type        => 1,
                           ord         => 30,
+                          target_type => ""
+                        };
+
+   @flag{DEBUG}        ={ letter      => "\@",
+                          perm        => "!GUEST",
+                          type        => 1,
+                          ord         => 31,
+                          target_type => ""
+                        };
+   @flag{DEBUG_FUN}       ={ letter      => "[DF]",
+                          perm        => "GOD",
+                          type        => 1,
+                          ord         => 31,
                           target_type => ""
                         };
    @flag{PLAYER}       ={ letter => "P", perm => "GOD",    type => 1, ord=>1  };
@@ -12685,7 +12690,10 @@ sub fun_url
       delete @info{socket_buffer};                    # last request buffer
 
       if($secure) {                                      # open connection
-         $sock = Net::HTTPS::NB->new(Host => $host);
+         # ssl_verify_mode should probably not be turned off but this is
+         # mushcode and i'd rather have it work then fail because a site
+         # didn't setup their certs.
+         $sock = Net::HTTPS::NB->new(Host => $host, SSL_verify_mode => undef);
       } else {
          $sock = Net::HTTP::NB->new(Host => $host);
       }
@@ -13721,14 +13729,19 @@ sub fun_lwho
       if($$hash{raw} != 0||!defined $$hash{obj_id}||$$hash{obj_id} eq undef) {
          next;
       }
-      if($flag) {
-         push(@who,
-              "#" .
-              @{@connected{$key}}{obj_id} . ":" .
-              @{@connected{$key}}{port}
-             );
+
+      if(hasflag(@connected{$key},"DARK") && !hasflag($self,"WIZARD")) {
+         # do not list dark players
       } else {
-         push(@who,"#" . @{@connected{$key}}{obj_id});
+         if($flag) {
+            push(@who,
+                 "#" .
+                 @{@connected{$key}}{obj_id} . ":" .
+                 @{@connected{$key}}{port}
+                );
+         } else {
+            push(@who,"#" . @{@connected{$key}}{obj_id});
+         }
       }
    }
    return join(' ',@who);
@@ -15226,7 +15239,7 @@ sub fun_edefault
    my $dat = get($target,$atr);
    return evaluate($self,$prog,shift) if($target eq $dat);
 
-   return evalate($self,$prog,$dat);
+   return evaluate($self,$prog,$dat);
 }
 
 sub hash_item
@@ -15698,10 +15711,14 @@ sub fun_substr
    my $start = evaluate($self,$prog,shift);
    my $end = evaluate($self,$prog,shift);
 
-   if($start !~ /^\s*\d+\s*/) {
-      return "#-1 Substr expects a numeric value for second argument";
-   } elsif($end !~ /^\s*\d+\s*/) {
-      return "#-1 Substr expects a numeric value for third argument";
+   if($start !~ /^\s*\-{0,1}\d+\s*/) {
+      return "#-1 ARGUMENTS MUST BE INTEGERS";
+   } elsif($start < 0 || $start > 16383) {
+      return "#-1 OUT OF RANGE";
+   } elsif($end !~ /^\s*\-{0,1}\d+\s*/) {
+      return "#-1 ARGUEMENTS MUST BE INTEGERS";
+   } elsif($end < 0 || $end > 16383) {
+      return "#-1 OUT OF RANGE";
    }
 
    return ansi_substr($txt,$start,$end);
@@ -16447,6 +16464,61 @@ sub mush_eval
    }
 }
 
+sub fun
+{
+   my ($fun,$self,$prog,@args) = @_;
+   
+   if(hasflag(owner($self),"DEBUG_FUN")) {
+      my (%temp,@result,@eval);
+      my $prev = get_digit_variables($prog);                   # save %0 .. %9
+
+      my $prev = get_digit_variables($prog);                   # save %0 .. %9
+      if(!set_digit_variables($self,$prog,"",@args)) {  # update to new values
+         return managed_var_set_error("#-1");
+      }
+
+      if(defined $$prog{var}) {
+         for my $key (grep {/^setq_/} keys %{$$prog{var}}) { # store prev values
+            @temp{$key} = $$prog{var}->{$key};
+            if(!managed_var_set($prog,$key,undef)) {
+               return managed_var_set_error("#-1");
+            }
+         }
+      }
+
+      for my $i (0 .. $#args) {
+         push(@result,evaluate_substitutions($self,$prog,@args[$i]));
+         push(@eval,sprintf("    %s -> %s",@args[$i],evaluate($self,$prog,@args[$i])));
+      }
+      if($#args == -1) {
+         con("    NO ARGS??\n");
+      }
+
+      if(!set_digit_variables($self,$prog,"",$prev)) {        # restore %0 .. %9
+         return managed_var_set_error("#-1");
+      }
+
+      if(defined $$prog{var}) {
+         for my $key (grep {/^setq_/} keys %{$$prog{var}}) { # restore values
+            if(!managed_var_set($prog,$key,undef)) {
+               return managed_var_set_error("#-1");
+            }
+         }
+         for my $key (keys %temp) {
+            if(!managed_var_set($prog,$key,@temp{$key})) {
+               return managed_var_set_error("#-1");
+            }
+         }
+      }
+      my $result = &{@fun{$fun}}($self,$prog,@args);
+      #con("DEBUG: '[%s(%s)]' = '%s'\n%s",$fun,join(',',@result),$result,join("\n",@eval));
+      con("DEBUG: '[%s(%s)]' = '%s'\n%s\n",$fun,join(',',@result),$result,join("\n",@eval));
+      return $result;
+   }
+
+   return &{@fun{$fun}}($self,$prog,@args);
+}
+
 #
 # evaluate_string
 #    Take a string and parse/run any functions in the string.
@@ -16473,7 +16545,7 @@ sub evaluate
 
             my $start = Time::HiRes::gettimeofday();
             $$prog{mush_function_name} = $1 if($fun eq "EVAL");
-            my $r=&{@fun{$fun}}($id,$prog,@$result);
+            my $r=fun($fun,$id,$prog,@$result);
             delete @$prog{mush_function_name};
             $$prog{function_duration} +=Time::HiRes::gettimeofday()-$start;
             $$prog{"fun_$fun"}++;
@@ -16509,7 +16581,7 @@ sub evaluate
 
             my $start = Time::HiRes::gettimeofday();
             $$prog{mush_function_name} = $unmod if($fun eq "EVAL");
-            my $r = &{@fun{$fun}}($id,$prog,@$result);
+            my $r=fun($fun,$id,$prog,@$result);
             delete @$prog{mush_function_name};
             $$prog{function_duration} +=Time::HiRes::gettimeofday()-$start;
 
@@ -17178,6 +17250,7 @@ sub load_archive_log
    }
 
    if(@state{complete}) {
+      set(obj(0),{},0,"conf.last_archive_log",$fn);
       printf(" + Read:  %s [%s]\n",$fn,ts());
    }
    close($file);
@@ -18028,10 +18101,13 @@ sub socket_list
 
    # output directed at target of the program.
    if(!defined $$arg{always} &&               # hint to go to all sockets?
-      defined $$prog{created_by} && 
-      defined $$prog{created_by}->{sock} && 
+#      defined $$prog{created_by} && 
+#      defined $$prog{created_by}->{sock} && 
+#      defined $$prog{created_by}->{sock} && 
+      defined $$prog{sock} &&
       $$target{obj_id} eq invoker($prog,$self,1)) {
-      return $$prog{created_by}->{sock};
+#      return $$prog{created_by}->{sock};
+      return $$prog{sock};
    } elsif(!defined @connected_user{$$target{obj_id}}) {
       return undef;
    } else {
@@ -19883,7 +19959,7 @@ sub server_handle_sockets
                   my $prog = prog($obj,$obj,$obj);
                   $$prog{read_only} = 1;
                   printf($new "%s",
-                     add_return(evaluate($obj,$prog,conf("login"))));
+                     add_return(mush_eval($obj,$prog,conf("login"))));
                }
             }
          } elsif(sysread($s,$buf,1024) <= 0) {          # socket disconnected
@@ -20218,7 +20294,7 @@ sub ws_login_screen
    my $prog = prog(obj(0),obj(0),obj(0));
    $$prog{read_only} = 1;
 
-   ws_echo($conn->{socket},add_return(evaluate(obj(0),$prog,conf("login"))));
+   ws_echo($conn->{socket},add_return(mush_eval(obj(0),$prog,conf("login"))));
 }
 
 #

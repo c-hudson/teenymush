@@ -37,6 +37,7 @@ use Math::BigInt;
 $Text::Wrap::huge = 'overflow';
 use POSIX;
 use Fcntl qw( SEEK_END SEEK_SET);
+use List::Util qw(shuffle);
 
 #
 #    Certain lines of the code should not be re-loaded or the MUSH or bad
@@ -250,6 +251,8 @@ sub process_commandline
               @ARGV[$i] =~ /^--standby=(\d+)$/) {
          @info{standby} = nvl($1,1);
       } elsif(@info{standby} && @ARGV[$i] =~ /^-{1,2}D([^=]+)=/) {
+         @info{"conf.$1"} = $';
+      } elsif(@ARGV[$i] =~ /^-{1,2}d([^=]+)=/) {
          @info{"conf.$1"} = $';
       } elsif(@info{standby} && @ARGV[$i] =~ /^-{1,2}D([^=]+)$/) {
          @info{"conf.$1"} = 1;
@@ -693,6 +696,7 @@ sub initialize_commands
    @offline{screenheight}   = sub { return;                                 };
    @offline{"\@remotehostname"}  = sub { return cmd_remotehost(@_);             };
    # ------------------------------------------------------------------------#
+   @command{"\@break"}      ={ fun => sub { return &cmd_break(@_);}         };
    @command{"\@search"}     ={ fun => sub { return &cmd_search(@_);}        };
    @command{screenwidth}    ={ fun => sub { return 1;}                      };
    @command{screenheight}   ={ fun => sub { return 1;}                      };
@@ -933,6 +937,25 @@ sub restore_process_line
 #      con("Unable to parse[$$state{obj}]: '%s'\n",$line);
 #      printf("Unable to parse[$$state{obj}]: '%s'\n",$line);
 #      printf("%s\n",code("long"));
+   }
+}
+
+#
+# cmd_break
+#    Stop the running mushcode/program now.
+#
+sub cmd_break
+{
+   my ($self,$prog,$txt) = (obj(shift),shift,shift);
+
+   # 1 means stop, anything else means do nothing.
+   printf("break: called\n");
+   if(evaluate($self,$prog,$txt) =~ /^\s*1\s*$/) {
+      printf("break: stopping\n");
+
+      for my $i (0 .. $#{$$prog{stack}}) {        # mark each command done
+         $$prog{stack}->[$i]->{done} = 1;
+      }
    }
 }
 
@@ -1288,6 +1311,8 @@ sub cmd_restore
       }
       close($fd);
       delete @$cmd{restore_fd};                          # dump file is done
+
+      cleanup_archived_objects($$cmd{restore_state});
 
       if($$cmd{atr} eq undef && valid_dbref($$cmd{obj})) {
          echo(self    => $self,
@@ -2034,14 +2059,18 @@ sub cmd_while
        con("      cmd: %s by %s\n",$$prog{invoking_command},
            obj_name($$prog{created_by}));
        return err($self,$prog,"while exceeded maxium loop of 5000, stopped");
-    } elsif(test($self,$prog,$$cmd{while_test})) {
-       mushrun(self   => $self,
-               prog   => $prog,
-               source => 0,
-               cmd    => $$cmd{while_cmd},
-               child  => 1
-              );
-       return "RUNNING";
+    } else {
+       my $test = test($self,$prog,$$cmd{while_test});
+#       con("TEST: '%s'\n",$test);
+       if($test) {
+          mushrun(self   => $self,
+                  prog   => $prog,
+                  source => 0,
+                  cmd    => $$cmd{while_cmd},
+                  child  => 1
+                 );
+          return "RUNNING";
+       }
     }
     return "DONE";
 }
@@ -3579,7 +3608,9 @@ sub cmd_dirty_dump
       return err($self,$prog,"Backup is already running.");
    }
 
+   $$prog{cmd} = {} if not defined $$prog{cmd};
    my $cmd = $$prog{cmd};
+   @info{dirty} = {} if !defined @info{dirty};
    if(!defined $$cmd{dirty_list}) {                       # initialize "loop"
       $$cmd{dirty_list} = [ %{@info{dirty}} ];
       @info{dump_name} = $' if(@info{dump_name} =~ /^dumps\//i);
@@ -3807,8 +3838,10 @@ sub cmd_dolist
        
        $$cmd{dolist_cmd}   = $second;
        my $txt = evaluate($self,$prog,$first);
+       $txt =~ s/\r//g;
 #       printf("TXT:    '%s'\n",$txt);
        $$cmd{dolist_list} = [safe_split($txt,$delim)];
+#       printf("START: '%s'\n",join(',',@{$$cmd{dolist_list}}));
        $$cmd{dolist_count} = 0;
        $$prog{iter_stack} = [] if(!defined $$prog{iter_stack});
        $$cmd{dolist_loc} = $#{$$prog{iter_stack}} + 1;
@@ -3835,8 +3868,7 @@ sub cmd_dolist
       return;                                                 # already done
    }
 
-   my $item = trim(pop(@{$$cmd{dolist_list}}));
-#   printf("ITEM: '%s'\n",$item);
+   my $item = trim(shift(@{$$cmd{dolist_list}}));
    if($item !~ /^\s*$/) {
 #      $item = fun_escape($self,$prog,$item);
       my $cmds = $$cmd{dolist_cmd};
@@ -3846,7 +3878,7 @@ sub cmd_dolist
 
       delete @$prog{attr} if defined $$prog{attr};
 
-      if(defined $$prog{cmd} && @{$$prog{cmd}}{source} == 1) {
+      if(defined $$prog{cmd} && @{$$prog{cmd}}{source} == 1000) {
          my $new = prog($self,$self,$self);
          $$new{iter_stack} = [];
          @{$$new{iter_stack}}[0]={val => $item, pos=> 0 };
@@ -3859,6 +3891,9 @@ sub cmd_dolist
                  invoker=> $self,
                 );
       } else {
+#         my $new = prog($self,$self,$self);
+         $$prog{iter_stack} = [] if !defined $$prog{iter_stack};
+         @{$$prog{iter_stack}}[0]={val => $item, pos=> 0 };
          mushrun(self   => $self,
                  prog   => $prog,
                  runas  => $self,
@@ -3882,6 +3917,7 @@ sub good_password
 {
    my $txt = shift;
 
+   return undef;
    if($txt !~ /^\s*.{8,999}\s*$/) {
       return "#-1 Passwords must be 8 characters or more";
    } elsif($txt !~ /[0-9]/) {
@@ -6133,7 +6169,7 @@ sub cmd_connect
       echo(self   => $user,
            prog   => prog($user,$user),
            room   => [ $user , "%s has $connected.",name($user) ],
-           source => [ "%s has re-connected.", name($user) ],
+           source => [ "%s has $connected.", name($user) ],
           );
       $$prog{cmd}->{source} = 1;
 
@@ -6153,7 +6189,7 @@ sub cmd_connect
                        runas   => $obj,
                        invoker => $self,
                        source  => 0,
-                       cmd     => $atr
+                       cmd     => $atr,
                       );
             }
          }
@@ -7392,7 +7428,7 @@ sub who
              ansi_substr($doing,0,44));
       }
    }
-   $out .= sprintf("%d Players logged in\r\n",$online);        # show totals
+   $out .= sprintf("%d Players logged in.\r\n",$online);        # show totals
    delete @$prog{read_only} if !$readonly;
    delete @$prog{nomushrun} if !$nomushrun;
    return $out;
@@ -7572,6 +7608,7 @@ sub flag_list
       my $hash = $$attr{value};
 
       # connected really isn't a flag, but should be
+      
       for my $key (sort {@flag{uc($a)}->{ord} <=> @flag{uc($b)}->{ord}}
                    keys %$hash) {
          push(@list,$flag ? uc($key) : flag_letter($key));
@@ -8814,6 +8851,7 @@ sub db_set_flag
 
    return if $flag eq undef;
    croak() if($$id{obj_id} =~ /^HASH\(.*\)$/);
+
    $id = $$id{obj_id} if(ref($id) eq "HASH");
 
    my $obj = dbref_mutate($id);
@@ -9045,6 +9083,8 @@ sub db_process_line
       my $type = $2;
       my $rest = $';
       $archive = 1;
+      $$state{archive} = {} if not defined $$state{archive};
+      $$state{archive}->{$1} = 1;                              # dirty bit
 
       if($type eq "delatr") {
          my $obj = @db[$$state{obj}];
@@ -9099,7 +9139,7 @@ sub db_process_line
          for my $item (split(/,/,$list)) {
             db_set_list($$state{obj},$attr,$item,$created,$modified);
             if($attr eq "obj_flag" && $item =~ /^\s*(PLAYER|EXIT)\s*$/i) {
-            $$state{type} = uc($1);
+               $$state{type} = uc($1);
             }
          }
       }
@@ -9134,6 +9174,25 @@ sub db_process_line
       printf("Unable to parse[$$state{obj}]: '%s'\n",$line);
       printf("%s\n",code("long"));
       die();
+   }
+}
+
+sub cleanup_archived_objects
+{
+   my $hash = shift;
+
+   return if(!defined $$hash{archive});
+
+   for my $key (keys %{$$hash{archive}}) {
+       my $attr = mget($key,"obj_flag");
+
+       if(defined $$attr{value}) {
+          my $flag = $$attr{value};
+
+          if(defined $$flag{player}) {
+             @player{lc(name($key))} = $key;
+          }
+      }
    }
 }
 
@@ -9263,7 +9322,7 @@ sub mush_command
    my ($self,$prog,$runas,$cmd,$src) = @_;
    my $match = 0;
 
-   return if(conf_true("safemode") || conf_true("TALKER"));
+   return 0 if(conf_true("safemode") || conf_true("TALKER"));
    $cmd = evaluate($self,$prog,$cmd) if($src ne undef && $src == 0);
 
    if(conf_true("master_override")) {            # search master room first
@@ -9376,18 +9435,30 @@ sub mushrun_add_cmd
          $$data{cmd} = @cmd[$#cmd - $i];
          unshift(@$stack,$data);
          $$prog{mutated} = 1;                # current cmd changed location
-	 # printf("add[1-%s]: '%s'\n",@{$$data{invoker}}{obj_id},@cmd[$#cmd - $i]);
+#	 printf("add[1-%s]: '%s'\n",@{$$data{invoker}}{obj_id},@cmd[$#cmd - $i]);
+#         printf("%s\n",print_var($stack,,,{invoker=>1,wild=>1}));
+#         printf("%s\n",show($stack,{invoker=>1,wild=>1,runas=>1,switch=>1,user=>1,created_by=>1,command_duration=>1,var=>1,mdigits=>1,stack=>1}));
+#         printf("---[ stack start ]----\n");
+#         for my $i ( 0 .. $#$stack ) {
+#            if(defined $$prog{iter_stack}) {
+#               printf("   $i : %s [%s]\n",$$stack[$i]->{cmd},
+#                  $$prog{iter_stack}->[0]->{val});
+#            } else {
+#               printf("   $i : %s\n",$$stack[$i]->{cmd});
+#            }
+#         }
+#         printf("---[ stack end ]----\n");
       } elsif($$arg{child} == 2) {                  # add after current cmd
          $$data{cmd} = @cmd[$#cmd - $i];
          my $current = $$prog{cmd};
          for my $i (0 .. $#$stack) {             #find current cmd in stack
             splice(@$stack,$i+1,0,$data) if($current eq $$stack[$i]);
          }
-	 # printf("add[2-%s]: '%s'\n",@{$$data{invoker}}{obj_id},@cmd[$#cmd - $i]);
+#	 printf("add[2-%s]: '%s'\n",@{$$data{invoker}}{obj_id},@cmd[$#cmd - $i]);
       } else {                                              # add to bottom
          $$data{cmd} = @cmd[$i];
          push(@$stack,$data);
-	 # printf("add[3-%s]: '%s'\n",@{$$data{invoker}}{obj_id},@cmd[$i]);
+#	 printf("add[3-%s]: '%s'\n",@{$$data{invoker}}{obj_id},@cmd[$i]);
       }
    }
 }
@@ -9490,9 +9561,9 @@ sub mushrun
 #         printf("     INVOKER1: '%s'\n",@arg{invoker});
       } elsif(defined $$prog{invoker}) {
          @arg{invoker} = $$prog{invoker};
-#         printf("     INVOKER2: '%s'\n",@arg{invoker});
+         printf("     INVOKER2: '%s'\n",@arg{invoker});
       } else {
-         con("     INVOKER: NONE '%s' -> '%s'\n",@arg{invoker},code());
+#         con("     INVOKER: NONE '%s' -> '%s'\n",@arg{invoker},code());
       }
     } else {
 #         printf("     INVOKER: ALREADY SET\n",@arg{invoker});
@@ -9525,7 +9596,7 @@ sub mushrun
          $$prog{invoking_command} = @arg{cmd};
       }
       mushrun_add_cmd(\%arg,@arg{cmd});
-   } else {                                   # non-user input, slice and dice
+   } elsif(!conf_true("TALKER")) {            # non-user input, slice and dice
       mushrun_add_cmd(\%arg,balanced_split(@arg{cmd},";",3,1));
    }
 
@@ -11032,6 +11103,7 @@ sub initialize_functions
    @fun{isupper}    = sub { return &fun_isupper(@_);               };
    @fun{lord}       = sub { return &fun_lord(@_);               };
    @fun{islower}    = sub { return &fun_islower(@_);               };
+   @fun{shuffle}    = sub { return &fun_shuffle(@_);               };
 }
 
 
@@ -11160,6 +11232,7 @@ sub fun_isupper
 {
    my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
+   return show($prog);
    return (evaluate($self,$prog,$txt) =~ /[a-z]/) ? 0 : 1;
 }
 
@@ -11859,6 +11932,7 @@ sub fun_foreach
    good_args(\@_,2,4) ||
      return "#-1 FUNCTION (FOREACH) EXPECTS 2 OR 4 ARGUMENTS";
 
+#   printf("Fe: '%s'\n",$_[0]);
    my $atr = atr_get($self,$prog,shift);                  # no attr/ no error
    return "#-1 no attr" if($atr eq undef);                 # emulate mux/mush
 
@@ -11945,6 +12019,22 @@ sub fun_pickrand
    my $list = [ safe_split($txt,$delim) ];
 
    return $$list[int(rand($#$list+1))];
+}
+
+sub fun_shuffle
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args(\@_,1,2) ||
+     return "#-1 FUNCTION (PICKRAND) EXPECTS 1 OR 2 ARGUMENTS";
+
+   my $txt = evaluate($self,$prog,shift);
+   my $delim = evaluate($self,$prog,shift);
+   $delim =  " " if($delim eq undef);
+
+   my $list = [ shuffle(safe_split($txt,$delim)) ];
+
+   return join($delim,@$list);
 }
 
 #
@@ -12683,8 +12773,9 @@ sub fun_url
          set_var($prog,"data","#-1 DATA PENDING");
          return 1;
       } elsif(defined $$prog{socket_closed}) {
-         set_var($prog,"data","#-1 CONNECTION CLOSED");
-         return 0;
+         $$prog{socket_closed} = 1;
+         $$prog{socket_buffer} = [ "#-1 CONNECTION CLOSED" ];
+         return set_var($prog,"data","#-1 CONNECTION CLOSED");
       }
    } else {                                                # new connection
       delete @info{socket_buffer};                    # last request buffer
@@ -14309,6 +14400,11 @@ sub fun_switch
       if($#_ >= 1) {
          my $txt = single_line(evaluate($self,$prog,trim(shift)));
          my $cmd = shift;
+         $cmd =~ s/\\(.)/\1/g;      # HACK, standard TM is broken and
+                                    # escapes are not properly handled in
+                                    # switch(). THe fix is to remove one
+                                    # "level" of escapes. 
+                                    # example: so \\[ becomes [
 
          if(ansi_remove($txt) =~ /^\s*(<|>)\s*/) {
              if($1 eq ">" && $first > $' || $1 eq "<" && $first < $') {
@@ -14334,7 +14430,13 @@ sub fun_switch
             }
          }
       } else {                                      # handle switch() default
-         return evaluate($self,$prog,shift);
+         my $cmd = shift;
+         $cmd =~ s/\\(.)/\1/g;      # HACK, standard TM is broken and
+                                    # escapes are not properly handled in
+                                    # switch(). THe fix is to remove one
+                                    # "level" of escapes. 
+                                    # example: so \\[ becomes [
+         return evaluate($self,$prog,$cmd);
       }
    }
 }
@@ -14802,10 +14904,10 @@ sub fun_num
    my $num = evaluate($self,$prog,$_[0]);
    my $result = find($self,$prog,evaluate($self,$prog,$_[0]));
 
-   if($result eq undef) {
-      return "#-1";
+   if(ref($result) && defined $$result{obj_id}) {
+      return "#$$result{obj_id}";
    } else {
-      return "#$result";
+      return "#-1";
    }
 }
 
@@ -17179,6 +17281,8 @@ sub load_db
    }
 
    delete @info{dirty};     # delete, this will get populated by the db load
+
+   cleanup_archived_objects(\%state);
 }
 
 #
@@ -17254,6 +17358,8 @@ sub load_archive_log
       printf(" + Read:  %s [%s]\n",$fn,ts());
    }
    close($file);
+
+   cleanup_archived_objects(\%state);
 }
 
 sub generic_action
@@ -18840,6 +18946,59 @@ sub print_var
    $out .= (" " x (($depth-1)*2)) . "$PR\n" if(!$recursive);
    return $out;
 }
+
+sub depth
+{
+   return "  " x $_[0];
+}
+
+sub show
+{
+   my ($var,$ignore,$d,$name,$hist) = @_;
+   $hist = {} if $hist eq undef;
+   my $max = 7;
+   my $out;
+
+   if($name eq undef) {
+      if(ref($var) eq undef) {
+         $name = "STRING";
+      } else {
+         $name = ref($var);
+      }
+   }
+   return if(ref($ignore) eq "HASH" && defined $$ignore{$name});
+
+   if(ref($var) eq "HASH") {
+      if($d >= $max) {
+         $out .= depth($d) . $name . " { TO_BIG }\n";
+      } elsif(scalar keys %$var == 0) {
+         $out .= depth($d) . $name . " { EMPTY_HASH }\n";
+      } elsif(defined $$hist{$var}) {
+         $out .= depth($d) . $name . " { HASH_DUPLICATE }\n";
+      } else {
+         $$hist{$var} = $name if(!defined $$hist{$var});
+         $out .= depth($d) . $name . "[$var] {\n";
+         for my $key (sort keys %$var) {
+            $out .= show($$var{$key},$ignore,$d+1,$key,$hist);
+         }
+         $out .= depth($d) . "}\n";
+      }
+   } elsif(ref($var) eq "ARRAY") {
+      if($#$var == -1) {
+         $out .= depth($d) . $name . " { EMPTY_ARRAY }\n";
+      } else {
+         $out .= depth($d) . $name . " [\n";
+         for my $i (0 .. $#$var) {
+             $out .= show($$var[$i],$ignore,$d+1,$i,$hist);
+         }
+         $out .= depth($d) . "]\n";
+      }
+   } else {
+      $out .= depth($d) . $name . " : " . $var . "\n";
+   }
+   return  $out;
+}
+
 
 
 #

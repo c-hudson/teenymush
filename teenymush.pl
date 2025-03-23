@@ -298,9 +298,14 @@ sub run_command
            source => 1,
            cmd    => shift
           );
-   while(scalar keys %engine) {      # command will remove itself when done
+   # loop till command finishes and removes itself from the engine queue
+   # but don't run forever and poll server input too.
+   while(scalar keys %engine && @info{mycount} < 10000) { 
       spin();
+      server_handle_sockets() if(@info{shell});
+      @info{mycount}++;
    }
+   delete @info{mycount};
 }
 
 #
@@ -316,8 +321,8 @@ sub main
          @info{standby} = nvl($1,1);
       }
    }
-   printf("%s\n",conf("version")) if !@info{shell};
    load_db();
+   printf("%s\n",conf("version")) if !@info{shell};
 
    # trap signal HUP and try to reload the code
    $SIG{HUP} = sub {
@@ -368,6 +373,9 @@ sub main
    fun_mush_address(obj(0),{}) if !@info{shell};       # cache public address
 
    if(@info{shell}) {
+      $ws = {};                                              # when not in use
+      $ws->{select_readable} = IO::Select->new();
+      $readable = $ws->{select_readable};
       run_command(join(" ",@ARGV[0 .. $#ARGV]));
    } else {
       server_start();                                     #!# start only once
@@ -828,6 +836,7 @@ sub initialize_commands
    @command{"\@nohelp"}     ={ fun => sub { return &cmd_nohelp(@_); }       };
    @command{"\@debug"}      ={ fun => sub { return &cmd_debug(@_); }        };
    @command{"\@free"}       ={ fun => sub { return &cmd_free(@_); }         };
+   @command{"session"}      ={ fun => sub { return &cmd_SESSION(@_); }      };
 
 # ------------------------------------------------------------------------#
 # Generate Partial Commands                                               #
@@ -949,9 +958,7 @@ sub cmd_break
    my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
    # 1 means stop, anything else means do nothing.
-   printf("break: called\n");
    if(evaluate($self,$prog,$txt) =~ /^\s*1\s*$/) {
-      printf("break: stopping\n");
 
       for my $i (0 .. $#{$$prog{stack}}) {        # mark each command done
          $$prog{stack}->[$i]->{done} = 1;
@@ -2406,7 +2413,7 @@ sub cmd_perl
 
    if(hasflag($self,"GOD")) {
       audit($self,$prog,"\@perl");
-      eval ( $txt );
+#      eval ( $txt );
       echo(self   => $self,
            prog   => $prog,
            source => [ "Done." ],
@@ -2934,6 +2941,8 @@ sub cmd_var
    } else {
       return err($self,$prog,"Invalid command.");
    }
+
+   # con("SET: '$var' = '$value'");
 
    if(!managed_var_set($prog,$var,$value)) {
       echo(self   => $self,
@@ -4374,6 +4383,7 @@ sub cmd_telnet
 
       () = IO::Select->new($sock)->can_write(.2)    # see if socket is pending
           or @{@connected{$sock}}{pending} = 2;
+      con("PENDING: '%s'",@{@connected{$sock}}{pending});
 
       $readable->add($sock);                      # add to select() listener
       @info{io} = {} if(!defined @info{io});           # create input buffer
@@ -4640,8 +4650,7 @@ sub cmd_list
                 $$hash{port},
                 (($$hash{raw} == 0) ? "PLAYER" : "SOCKET"),
                 ts($$hash{start}),
-                (defined $$hash{obj_id}) ? obj_name($$hash{obj_id}) : "N/A",
-                obj_name($$hash{obj_id}));
+                (defined $$hash{obj_id}) ? obj_name($$hash{obj_id}) : "N/A");
          }
          echo(self   => $self,
               prog   => $prog,
@@ -5179,6 +5188,12 @@ sub cmd_to
 {
     my ($self,$prog,$txt) = (obj(shift),shift,shift);
 
+   
+    echo(self   => $self,
+         prog   => $prog,
+         source => [ "%s\n","\033[38;5;0m\033[48;5;244m F4 \033[38;5;0m\033[48;5;245m F5" ],
+         always => 1
+        );
     if($txt =~ /^\s*([^ ]+)\s*/) {
        my $tg = find($self,$prog,$1) ||
           return err($self,$prog,"I don't see that here.");
@@ -7318,6 +7333,79 @@ sub cmd_who
    echo(self   => $self,
         prog   => $prog,
         source => [ "%s", who($self,$prog,$txt) ]
+       );
+}
+
+sub starts_with
+{
+   my ($txt,$pat) = (lc(trim(shift)),lc(trim(shift)));
+
+   if(!defined $pat) {
+      return 1;
+   } elsif(length($pat) > length($txt)) {
+      return 0;
+   } elsif(substr($txt,0,length($pat)) eq $pat) {
+      return 1;
+   } else {
+      return 0;
+   }
+}
+
+#                                     Characters Input----  Characters Output---
+# Player Name        On For Idle Port Pend  Lost     Total  Pend  Lost     Total
+# Adrick           5d 13:28   0s   15    0     0     38092   160     0      3744
+# 6 Players logged in, 51 record, no maximum.
+sub cmd_SESSION
+{
+   my ($self,$prog,$txt,$switch) = @_;
+   my ($out, $idle, $extra, $online);
+   my $count = 0;
+
+   $out =  "                                    Characters Input----  ".
+           "Characters Output---\n";
+   $out .= "Player Name        On For Idle Port Pend  Lost     Total  Pend  " .
+           "Lost     Total\n";
+# Adrick           5d 13:28   0s   15    0     0     38092   160     0      3744
+
+   my $perm = hasflag($self,"WIZARD");
+   for my $key (sort {@{@connected{$b}}{start} <=> @{@connected{$a}}{start}}
+                keys %connected) {
+      my $player = @connected{$key};
+      $count++ if($perm || !hasflag($player,"DARK"));
+      if(($perm || $$self{obj_id} == $$player{obj_id}) &&
+         starts_with(name($player,1),$txt)) {
+         my $online = date_split(time() - fuzzy($$player{start}));
+         if($$online{max_abr} =~ /^(M|w|d)$/) {
+            $extra = sprintf("%2s",$$online{max_val} . $$online{max_abr});
+         } else {
+            $extra = "  ";
+         }
+         if(defined $$player{last}) {
+            $idle = date_split(time() - @{$$player{last}}{time});
+         } else {
+            $idle = { max_abr => 's' , max_val => 0 };
+         }
+         my $name = ansi_substr(name($player),0,16);
+         $out .= sprintf("%s%s %2s %02d:%02d %4s %4s\n",
+                         $name,
+                         " " x (16 - ansi_length($name)),
+                         $extra,
+                         $$online{h},
+                         $$online{m},
+                         $$idle{max_val} .  $$idle{max_abr},
+                         $$player{port});
+      }
+   }
+
+   if($count == 1) {
+      $out .= "1 Player logged in."
+   } else {
+      $out .= "$count Players logged in."
+   }
+
+   echo(self   => $self,
+        prog   => $prog,
+        source => [ "%s", $out ]
        );
 }
 
@@ -14400,11 +14488,14 @@ sub fun_switch
       if($#_ >= 1) {
          my $txt = single_line(evaluate($self,$prog,trim(shift)));
          my $cmd = shift;
-         $cmd =~ s/\\(.)/\1/g;      # HACK, standard TM is broken and
-                                    # escapes are not properly handled in
-                                    # switch(). THe fix is to remove one
-                                    # "level" of escapes. 
-                                    # example: so \\[ becomes [
+
+         if(hasflag($self,"COMPAT")) {
+            $cmd =~ s/\\(.)/\1/g;      # HACK, standard TM is broken and
+                                       # escapes are not properly handled in
+                                       # switch(). THe fix is to remove one
+                                       # "level" of escapes. 
+                                       # example: so \\[ becomes [
+         }
 
          if(ansi_remove($txt) =~ /^\s*(<|>)\s*/) {
              if($1 eq ">" && $first > $' || $1 eq "<" && $first < $') {
@@ -14431,11 +14522,13 @@ sub fun_switch
          }
       } else {                                      # handle switch() default
          my $cmd = shift;
-         $cmd =~ s/\\(.)/\1/g;      # HACK, standard TM is broken and
-                                    # escapes are not properly handled in
-                                    # switch(). THe fix is to remove one
-                                    # "level" of escapes. 
-                                    # example: so \\[ becomes [
+         if(hasflag($self,"COMPAT")) {
+            $cmd =~ s/\\(.)/\1/g;      # HACK, standard TM is broken and
+                                       # escapes are not properly handled in
+                                       # switch(). THe fix is to remove one
+                                       # "level" of escapes. 
+                                       # example: so \\[ becomes [
+         }
          return evaluate($self,$prog,$cmd);
       }
    }
@@ -15990,7 +16083,7 @@ sub fun_repeat
        return "#-1 Repeat expects numeric value for the second arguement";
     }
 
-    if($count > 1000 && $count * length($txt) > 1000) {
+    if($count > 1000 && $count * length($txt) > 10000000) {
        return undef;
     } else {
        return $txt x $count;
@@ -16910,8 +17003,10 @@ sub http_reply_simple
 
    if($fmt eq "FILE") {
       if(!good_filename(@args[0])) {
+      web("   %s %s\@web bad file",ts());
          return http_error($s,"%s","Permission Denied");
       } else {
+      web("   %s %s\@web good",ts());
          $mod = (stat("files/@args[0]"))[9];
          $msg = getbinfile(@args[0]);
       }
@@ -16927,6 +17022,12 @@ sub http_reply_simple
       http_out($s,"Content-Type: application/pdf; charset=ISO-8859-1");
    } elsif(lc($type) eq "png") {
       http_out($s,"Content-Type: image/png; charset=ISO-8859-1");
+   } elsif(lc($type) eq "jpg") {
+      http_out($s,"Content-Type: image/jpg; charset=ISO-8859-1");
+   } elsif(lc($type) eq "mp4") {
+      http_out($s,"Content-Type: video/mp4; charset=ISO-8859-1");
+   } elsif(lc($type) eq "pl") {
+      http_out($s,"Content-Type: text/text; charset=ISO-8859-1");
    } else {
       http_out($s,"Content-Type: text/$type; charset=ISO-8859-1");
    }
@@ -16959,6 +17060,14 @@ sub banable_urls
    my $data = shift;
 
    if(length($data) > 300) {
+      return 1;
+   } elsif($$data{get} =~ /^\.(git|env)/i) {
+      return 1;
+   } elsif($$data{get} =~ /^remote/i) {
+      return 1;
+   } elsif($$data{get} =~ /^api/i) {                          # no api urls
+      return 1;
+   } elsif($$data{get} =~ /^vpn/i) {                          # no vpn here
       return 1;
    } elsif($$data{get} =~ /wget http/i) {   # poor wget is abused by hackers
       return 1;
@@ -17095,7 +17204,7 @@ sub http_process_line
                  $$data{get} ne ".." &&
                  $$data{get} =~ /\.([^.]+)$/ &&
                  -e "files/" . trim($$data{get})) {
-            web("   %s %s\@web [%s]\n",ts(),$addr,$$data{get});
+            web("!   %s %s\@web [%s]\n",ts(),$addr,$$data{get});
             http_reply_simple($s,$1,"FILE",trim($$data{get}));
          } elsif($$data{get} =~ /\.html$/i && -e "files/".trim($$data{get})) {
             my $prog = prog($self,$self);                    # uses template
@@ -17799,6 +17908,7 @@ sub handle_object_listener
 
    my $parent = get($target,"obj_parent");
 
+   # printf("[$target] $txt\n",@args);
    return if handle_socket_listener($target,$target,$txt,@args);
 
    if($parent ne undef) {                             # handle parent
@@ -18155,6 +18265,7 @@ sub echo_shell
    my ($target,$fmt) = (obj(shift(@{$$arg{$type}})), shift(@{$$arg{$type}}));
    return if $$target{obj_id} != 0;
    my $msg = filter_chars(sprintf($fmt,@{$$arg{$type}}));
+   $msg = ansi_remove($msg) if !hasflag($self,"ANSI");
    printf("%s\n",$msg);
 }
 
@@ -20473,7 +20584,16 @@ sub ws_echo
    # probably be removed once this is more stable. With that in mind,
    # currently crash will be treated as a disconnect.
    eval {
-      $conn->send('','t'.$msg);
+      while(defined $msg) {
+         my $txt = substr($msg,0,1000);
+         if($txt =~ /\n([^\n]+)$/s && length($`) > 900) {
+            $conn->send('','t'.$`."\n");
+            $msg = $1 . substr($msg,1000);
+         } else {
+            $conn->send('','t'.$txt);
+            $msg = substr($msg,1000);
+         }
+      }
    };
 
    if($@) {

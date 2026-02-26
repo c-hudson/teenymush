@@ -78,7 +78,6 @@ my (%command,                  #!# commands for after player has connected
     %flag,                     #!# flag definition
    );                          #!#
 
-
 # this should be a variable, but this allows us to reload the data
 # without restarting the server.
 sub version
@@ -110,6 +109,7 @@ sub load_modules
       'Carp'                   => 'carp',
       'Text::Wrapper'          => 'wrap',
       'IO::Socket::Timeout'    => 'timeout',
+      'Encode'                 => 'encode',
    );
 
    for my $key (keys %mod) {
@@ -122,6 +122,8 @@ sub load_modules
       }
    }
 }
+
+
 
 
 #
@@ -137,7 +139,7 @@ sub getfile
 
    if($fn =~ /^[^\\|\/]+\.(pl|dat|dev|conf)$/i || $fn =~ /tmshell$/) {
       open($file,$fn) || return undef;                         # open pl file
-   } elsif($fn =~ /^[^\\|\/]+$/i) {
+   } elsif(good_filename($fn)) {
       open($file,"files\/$fn") || return undef;               # open txt file
    } else {
       return undef;                                 # don't open file because
@@ -217,6 +219,10 @@ sub load_defaults
    @default{mudname}                  = "TeenyMUSH";
    @default{port}                     = "4096,4201,6250";
    @default{starting_quota}           = 5;
+   @default{keepalive}                = "yes";
+   @default{keepalive_interval}       = 60;
+   @default{tcp_keepalive}            = "yes";
+   @default{telnet_negotiation}       = "yes";
 }
 
 #
@@ -341,6 +347,7 @@ sub main
    initialize_ansi();
    initialize_commands();
    initialize_flags();
+   telnet_init();
 
    # not needed for tmshell, should be faster startup too
    if(module_enabled("md5") && !@info{shell}) {
@@ -717,6 +724,7 @@ sub initialize_commands
    @command{"\""}           ={ fun => sub { return &cmd_say(@_); },  nsp=>1 };
    @command{"`"}            ={ fun => sub { return &cmd_to(@_); },   nsp=>1 };
    @command{"&"}            ={ fun => sub { return &cmd_set2(@_); }, nsp=>1 };
+   @command{"'"}            ={ fun => sub { return &cmd_say(@_); }, nsp=>1 };
    @command{"\@reload"}     ={ fun => sub { return &cmd_reload_code(@_); }  };
    @command{pose}           ={ fun => sub { return &cmd_pose(@_); }         };
    @command{":"}            ={ fun => sub { return &cmd_pose(@_); }, nsp=>1 };
@@ -858,6 +866,14 @@ sub initialize_commands
    delete @command{qui};
    delete @command{va};
    delete @command{var};
+
+   for my $key (sort {length($a) <=> length($b)} keys %offline) {
+      for my $i (0 .. length($key)) {
+         if(!defined @offline{substr($key,0,$i)}) {
+            @offline{substr($key,0,$i)} = @offline{$key};
+         }
+      }
+   }
 }
 
 
@@ -3258,6 +3274,10 @@ sub cmd_halt
    } elsif($lookfor =~ /^\s*(\d+)\s*$/) {
       $lpid = $1;
    } elsif($lookfor ne undef) {
+      my $target = find($self,$prog,evaluate($self,$prog,$lookfor)) ||
+            return err($self,$prog,"I don't see that here.");
+      $ldbref = $$target{obj_id}
+   } elsif($lookfor ne undef) {
       return err($self,$prog,"Invalid PID or dbref '%s' specified.");
    }
 
@@ -4383,7 +4403,7 @@ sub cmd_telnet
 
       () = IO::Select->new($sock)->can_write(.2)    # see if socket is pending
           or @{@connected{$sock}}{pending} = 2;
-      con("PENDING: '%s'",@{@connected{$sock}}{pending});
+      # con("PENDING: '%s'",@{@connected{$sock}}{pending});
 
       $readable->add($sock);                      # add to select() listener
       @info{io} = {} if(!defined @info{io});           # create input buffer
@@ -5215,6 +5235,8 @@ sub whisper
 {
    my ($self,$prog,$target,$msg) = @_;
 
+   $msg = evaluate($self,$prog,$msg);
+
    my $obj = find($self,$prog,$target);
 
    if($obj eq undef) {
@@ -6034,7 +6056,6 @@ sub invalid_player
    } elsif(!defined @player{trim(ansi_remove(lc($name)))}) {
       return 1;
    } elsif(@player{trim(ansi_remove(lc($name)))} eq conf("webuser")) {
-      printf("PLAYER: '%s' -> '%s'\n",@player{trim(ansi_remove(lc($name)))},conf("webuser"));
       return 1;                                    # don't allow webuser in
    } elsif(lc($name) eq "guest") {                 # any password for guest
       $$self{obj_id} = @player{lc($name)};
@@ -7210,6 +7231,7 @@ sub reload_code
    initialize_commands();
    initialize_ansi();
    initialize_flags();
+   telnet_init();
 
    return $count;
 }
@@ -7361,10 +7383,10 @@ sub cmd_SESSION
    my ($out, $idle, $extra, $online);
    my $count = 0;
 
-   $out =  "                                    Characters Input----  ".
+   $out =  "                                                  Characters Input----  ".
            "Characters Output---\n";
-   $out .= "Player Name        On For Idle Port Pend  Lost     Total  Pend  " .
-           "Lost     Total\n";
+   $out .= "Player Name        On For Idle Port  Size TType         Pend  " .
+           "Lost     Total  Pend  Lost     Total\n";
 # Adrick           5d 13:28   0s   15    0     0     38092   160     0      3744
 
    my $perm = hasflag($self,"WIZARD");
@@ -7386,14 +7408,20 @@ sub cmd_SESSION
             $idle = { max_abr => 's' , max_val => 0 };
          }
          my $name = ansi_substr(name($player),0,16);
-         $out .= sprintf("%s%s %2s %02d:%02d %4s %4s\n",
+         my $tel = $$player{telnet} || {};
+         my $size = (defined $$tel{width} && defined $$tel{height})
+                  ? sprintf("%dx%d", $$tel{width}, $$tel{height}) : "-";
+         my $ttype = defined $$tel{ttype} ? substr($$tel{ttype},0,13) : "-";
+         $out .= sprintf("%s%s %2s %02d:%02d %4s %5s %-13s\n",
                          $name,
                          " " x (16 - ansi_length($name)),
                          $extra,
                          $$online{h},
                          $$online{m},
                          $$idle{max_val} .  $$idle{max_abr},
-                         $$player{port});
+                         $$player{port},
+                         $size,
+                         $ttype);
       }
    }
 
@@ -7742,7 +7770,7 @@ sub owner
 #
 sub hasflag
 {
-   my ($target,$name) = (obj(shift),shift);
+   my ($target,$name) = (obj(shift),uc(shift));
    my $val;
 
    if(!valid_dbref($target)) {
@@ -9808,6 +9836,13 @@ sub mushrun_done
             http_out($$prog{sock},"%s",join("",@{@$prog{output}}));
             http_disconnect($$prog{sock});
          } elsif(defined $$prog{get} && 
+                 $$prog{get} =~ /^mellow/i) {
+            http_reply_simple($$prog{sock},
+                              "html",
+                              "%s",
+                              join("\n",@{@$prog{output}})
+                             );
+         } elsif(defined $$prog{get} && 
                  $$prog{get} =~ /\.(js|css)$/i ||
                  $$prog{get} =~ /_raw\.(html)$/i) {
             http_reply_simple($$prog{sock},
@@ -9907,6 +9942,16 @@ sub spin
       if(@info{standby} && time() - @info{archive_time} > 300) {
          @info{archive_time} = time();
          load_pending_archive_log();
+      }
+
+      if(conf_true("keepalive")) {
+         my $interval = nvl(conf("keepalive_interval"), 60);
+         if(!defined @info{keepalive_time}) {
+            @info{keepalive_time} = time();
+         } elsif(time() - @info{keepalive_time} > $interval) {
+            @info{keepalive_time} = time();
+            telnet_keepalive();
+         }
       }
 
       # nothing to do, move on.
@@ -11037,7 +11082,9 @@ sub initialize_functions
    @fun{substr}     = sub { return &fun_substr(@_);                };
    @fun{mul}        = sub { return &fun_mul(@_);                   };
    @fun{file}       = sub { return &fun_file(@_);                  };
-   @fun{write}      = sub { return &fun_write(@_);                  };
+   @fun{filedate}   = sub { return &fun_filedate(@_);              };
+   @fun{dir}        = sub { return &fun_dir(@_);                   };
+   @fun{write}      = sub { return &fun_write(@_);                 };
    @fun{space}      = sub { return &fun_space(@_);                 };
    @fun{repeat}     = sub { return &fun_repeat(@_);                };
    @fun{time}       = sub { return &fun_time(@_);                  };
@@ -11142,6 +11189,9 @@ sub initialize_functions
    @fun{revwords}   = sub { return &fun_revwords(@_);              };
    @fun{idle}       = sub { return &fun_idle(@_);                  };
    @fun{conn}       = sub { return &fun_conn(@_);                  };
+   @fun{termwidth}  = sub { return &fun_termwidth(@_);             };
+   @fun{termheight} = sub { return &fun_termheight(@_);            };
+   @fun{termtype}   = sub { return &fun_termtype(@_);              };
    @fun{fold}       = sub { return &fun_fold(@_);                  };
    @fun{telnet_open}= sub { return &fun_telnet(@_);                };
    @fun{min}        = sub { return &fun_min(@_);                   };
@@ -11679,6 +11729,7 @@ sub fun_conf
 {
    my ($self,$prog,$txt) = (obj(shift),shift,lc(trim(shift)));
 
+   printf("FUN: '%s'\n",$txt);
    if($txt ne undef) {
       if($txt =~ /^CONF./i && (defined @info{conf}->{$'} ||
          hasattr(obj(0),"conf.$'"))) {
@@ -12658,12 +12709,37 @@ sub good_filename
 
    # Any file starting with a period or having a \/ will be denied.
    # this *should* prevent escaping out of the files folder.
-   if($fn =~ /^\.|\/|\\/ || !-e "files/$fn") {
+
+   # no going backwards in the path
+   for my $item (split('/',$fn)) {
+      return 0 if($item eq ".." || $item eq ".");
+   }
+     
+   if(!-e "files/$fn") {
       return 0;
    } else {
       return 1;
    }
 }
+
+sub fun_filedate
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args(\@_,1) ||
+      return "#-1 FUNCTION (FILE) EXPECTS 1 ARGUMENT";
+
+   hasflag($self,"WIZARD") || webobject($self) ||
+      return set_var($prog,"data","#-1 PERMISSION DENIED");
+
+   my $fn = evaluate($self,$prog,shift);
+
+   good_filename($fn) ||
+      return "#-1 BAD FILENAME";
+
+   return (stat("files/$fn"))[9];
+}
+
 #
 # fun_file
 #     Return the contents of a file
@@ -12713,6 +12789,38 @@ sub fun_file
 
    $$data{last} = time();
    return $$data{data};
+}
+
+#
+# fun_file
+#     Return the contents of a file
+#
+sub fun_dir
+{
+   my ($self,$prog) = (obj(shift),shift);
+   my (@list,$dir);
+
+   good_args(\@_,1) ||
+      return "#-1 FUNCTION (DIR) EXPECTS 1 ARGUMENT";
+
+   hasflag($self,"WIZARD") || webobject($self) ||
+      return set_var($prog,"data","#-1 PeRMISSION DENIED");
+
+   my $fn = evaluate($self,$prog,shift);
+
+   good_filename($fn) || return "#-1 PERMISSION Denied";
+
+   return "#-1 NO SUCH DIRECTORY" if(!-d "files/$fn");
+
+   opendir($dir,"files/$fn") ||
+      return "#-1 UNABLE TO OPEN DIRECTORY";
+
+   for my $fn (readdir($dir)) {
+      push(@list,$fn) if($fn ne ".." && $fn ne ".");
+   }
+
+   closedir($dir);
+   return join(' ',@list);
 }
 
 #
@@ -12811,16 +12919,24 @@ sub fun_lflags
 sub fun_url
 {
    my ($self,$prog) = (obj(shift),shift);
-   my ($host,$path,$sock,$secure);
+   my ($host,$path,$sock,$secure,$post);
 
-   good_args(\@_,1,2) ||
-     return set_var($prog,"data","#-1 FUNCTION (URL) EXPECTS 1 OR 2 ARGUMENTS");
+   good_args(\@_,1,2,3,4) ||
+     return set_var($prog,"data","#-1 FUNCTION (URL) EXPECTS 1 OR 4 ARGUMENTS");
 
    hasflag($self,"SOCKET_INPUT") ||
       return set_var($prog,"data","#-1 PERMISSION DENIED");
 
    my $txt = ansi_remove(evaluate($self,$prog,shift));
    my $accept = ansi_remove(evaluate($self,$prog,shift));
+   my $type = ansi_remove(evaluate($self,$prog,shift));
+
+   if($type =~ /^\s*POST\s*$/) {
+      $type = "POST";
+      $post = ansi_remove(evaluate($self,$prog,shift));
+   } else {
+      $type = "GET";
+   }
 
    $accept = "*/*" if($accept =~ /^\s*$/);
 
@@ -12900,15 +13016,26 @@ sub fun_url
 #      printf("PATH: '%s'\n",$path);
 
       eval {                        # protect against uncontrollable problems
-         if($#_ == 1) {
+         if($type eq "POST") {
+            con("Trying post: $post -> $path");
+            $sock->write_request("POST" => "/$path",
+               'User-Agent' => 'curl/7.52.1',
+               'Accept' => '*/*',
+               'Content-Type' => 'application/x-www-form-urlencoded',
+               'Host' => 'www.wowbagger.com',
+               "Language=1&Rating=1&Password=&Insulter=&Victim=&Picture="
+            );
+         } elsif($#_ == 1) {
+            con("Trying GET1");
             my ($type,$value) = (shift,shift);
-            $sock->write_request(GET => "/$path",
+            $sock->write_request("GET" => "/$path",
                'User-Agent' => 'curl/7.52.1',
                $type => $value,
                Accept => $accept
             );
          } else {
 #            printf("ARGS: $#_\n");
+            con("Trying GET2");
             $sock->write_request("GET" => "\/$path",
                                  "User-Agent" => "curl/7.52.1",
                                  "Accept" => $accept
@@ -13322,6 +13449,92 @@ sub fun_conn
 }
 
 #
+# _find_connection
+#    Helper to locate the connection hash for a player.  Accepts a
+#    player object and returns the first matching MUSH connection hash,
+#    or undef if not connected.
+#
+sub _find_connection
+{
+   my $player = shift;
+
+   if(defined @connected_user{$$player{obj_id}}) {
+      for my $con (keys %{@connected_user{$$player{obj_id}}}) {
+         if(defined @connected{$con} && @{@connected{$con}}{raw} == 0) {
+            return @connected{$con};
+         }
+      }
+   }
+   return undef;
+}
+
+sub fun_termwidth
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args(\@_,0,1) ||
+      return "#-1 FUNCTION (TERMWIDTH) EXPECTS 0 OR 1 ARGUMENTS";
+
+   my $target;
+   if($#_ >= 0) {
+      $target = find_player($self,$prog,evaluate($self,$prog,shift)) ||
+         return "#-1 NOT FOUND";
+   } else {
+      $target = $self;
+   }
+
+   my $con = _find_connection($target);
+   if(defined $con && defined $$con{telnet}{width}) {
+      return $$con{telnet}{width};
+   }
+   return 78;
+}
+
+sub fun_termheight
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args(\@_,0,1) ||
+      return "#-1 FUNCTION (TERMHEIGHT) EXPECTS 0 OR 1 ARGUMENTS";
+
+   my $target;
+   if($#_ >= 0) {
+      $target = find_player($self,$prog,evaluate($self,$prog,shift)) ||
+         return "#-1 NOT FOUND";
+   } else {
+      $target = $self;
+   }
+
+   my $con = _find_connection($target);
+   if(defined $con && defined $$con{telnet}{height}) {
+      return $$con{telnet}{height};
+   }
+   return 24;
+}
+
+sub fun_termtype
+{
+   my ($self,$prog) = (obj(shift),shift);
+
+   good_args(\@_,0,1) ||
+      return "#-1 FUNCTION (TERMTYPE) EXPECTS 0 OR 1 ARGUMENTS";
+
+   my $target;
+   if($#_ >= 0) {
+      $target = find_player($self,$prog,evaluate($self,$prog,shift)) ||
+         return "#-1 NOT FOUND";
+   } else {
+      $target = $self;
+   }
+
+   my $con = _find_connection($target);
+   if(defined $con && defined $$con{telnet}{ttype}) {
+      return $$con{telnet}{ttype};
+   }
+   return "";
+}
+
+#
 # lowercase the provided string(s)
 #
 sub fun_ucstr
@@ -13342,9 +13555,24 @@ sub fun_ucstr
 
 sub fun_sort
 {
-   my ($self,$prog,$txt) = (obj(shift),shift);
+   my ($self,$prog) = (obj(shift),shift);
 
-   return join(' ',sort split(" ",evaluate($self,$prog,shift)));
+   good_args(\@_,1,2) ||
+     return "#-1 FUNCTION (SORT) EXPECTS 1 or 2 ARGUMENTS";
+
+   my $txt = evaluate($self,$prog,shift);
+   my $type = evaluate($self,$prog,shift);
+
+   if($type eq "n") {
+      con("SORT: '%s'",join(' ',sort {$a <=> $b} split(" ",$txt)));
+      return join(' ',sort {$a <=> $b} split(" ",$txt));
+   } elsif($type eq "a") {
+      return join(' ',sort {$a cmp $b} split(" ",$txt));
+   } elsif($type eq "i") {
+      return join(' ',sort {uc($a) cmp uc($b)} split(" ",$txt));
+   } else {
+      return join(' ',sort split(" ",$txt));
+   }
 }
 
 sub fun_base64
@@ -17061,11 +17289,13 @@ sub banable_urls
 
    if(length($data) > 300) {
       return 1;
+   } elsif($$data{get} =~ /^{/) {
+      return 1;
    } elsif($$data{get} =~ /^\.(git|env)/i) {
       return 1;
    } elsif($$data{get} =~ /^remote/i) {
       return 1;
-   } elsif($$data{get} =~ /^api/i) {                          # no api urls
+   } elsif($$data{get} =~ /^(fonts|api|login)/i) {        # no api/font urls
       return 1;
    } elsif($$data{get} =~ /^vpn/i) {                          # no vpn here
       return 1;
@@ -17073,7 +17303,7 @@ sub banable_urls
       return 1;
    } elsif($$data{get} =~ /;wget/i) {                            # more wget
       return 1;
-   } elsif($$data{get} =~ /(phpMyAdmin|phpinfo)/i) {   # really, no php here
+   } elsif($$data{get} =~ /(phpMyAdmin|phpinfo|<php>)/i) {   # really, no php here
       return 1;
    } elsif($$data{get} =~ /trinity/i) {                    # matrix trinity?
       return 1;
@@ -17086,9 +17316,17 @@ sub banable_urls
       return 1;
    } elsif($$data{get} =~ /etc.*passwd/i) {       # no password files
       return 1;
-   } elsif($$data{get} =~ /(pmadmin|svg onload)/i) {
+   } elsif($$data{get} =~ /(pmadmin|svg onload|geoserver)/i) {
       return 1;
-   } elsif($$data{get} =~ /(brightmail|cgi-bin)/i) {
+   } elsif($$data{get} =~ /(brightmail|cgi-bin|autodiscover|actuator)/i) {
+      return 1;
+   } elsif($$data{get} =~ /^(ab2g|ab2h|ecp|remote|manager|\.git)/) {
+      return 1;
+   } elsif($$data{get} =~ /^(\?XDEBUG|config_getuser|geoserver|NHAP1)/) {
+      return 1;
+   } elsif($$data{get} =~ /^(owa|solr|remote logincheck|jenkins|portal)/) {
+      return 1;
+   } elsif($$data{get} =~ /^(ReportServer|wp\-|console)/) {
       return 1;
    } else {
       return 0;
@@ -17115,6 +17353,7 @@ sub http_process_line
    my $data = @{@http{$s}}{data};
 
 #   printf("# %s\n",$txt);
+#   con("# %s",$txt);
    if($txt =~ /^GET (.*) HTTP\/([\d\.]+)$/i) {              # record details
       $$data{get} = $1;
    } elsif($txt =~ /^POST \/{0,1}(.*) HTTP\/([\d\.]+)$/i) {
@@ -17195,11 +17434,16 @@ sub http_process_line
             ban_add($s);
             web("   %s %s\@web [BANNED-%s]\n",ts(),$addr,$$data{get});
             http_error($s,"%s","BANNED for HACKING");
-         } elsif(($$data{get} =~ /_notemplate\.(html)$/i ||  # no template used
-            $$data{get} =~ /\.(ico)$/i) &&
-            -e "files/" . trim($$data{get})) {
+         } elsif(($$data{get} =~ /_nt\.(html)$/i ||  # no template used
+            $$data{get} =~ /\.(ico)$/i)) {
+            my $fn = join('/',split(' ',trim($$data{get})));
+
             web("   %s %s\@web [%s]\n",ts(),$addr,$$data{get});
-            http_reply_simple($s,$1,"%s",getfile(trim($$data{get})));
+            if(good_filename($fn)) {
+               http_reply_simple($s,$1,"%s",getfile($fn));
+            } else {
+               http_error($s,"Permission Denied");
+            }
          } elsif($$data{get} !~ /[\\\/]/ &&
                  $$data{get} ne ".." &&
                  $$data{get} =~ /\.([^.]+)$/ &&
@@ -17276,6 +17520,7 @@ sub http_process_line
       web("   %s %s\@web [BANNED-%s]\n",ts(),$addr,$1);
       http_error($s,"%s","BANNED for HACKING");
    } else {
+      ban_add($s) if(banable_urls({ get => $txt }));
       web("---BAD REQUEST--- '$txt'\n");
       http_error($s,"Malformed Request");
    }
@@ -17960,7 +18205,6 @@ sub handle_directed_listen
       if(atr_case($target,$$hash{atr_name})) {
          $$hash{atr_regexp} =~ s/^\(\?msix/\(\?msx/; # make case sensitive
          if($msg =~ /$$hash{atr_regexp}/) {
-            printf("Matched: '%s@%s'\n",$$target{obj_id},$hash);
             mushrun(self   => $self,
                     runas  => $target,
                     cmd    => single_line($$hash{atr_value}),
@@ -17973,7 +18217,8 @@ sub handle_directed_listen
                    );
             return;
          }
-      } elsif($msg =~ /$$hash{atr_regexp}/i) {
+      } elsif( # $$self{obj_id} != $$hash{atr_owner} &&
+              $msg =~ /$$hash{atr_regexp}/i) {
          mushrun(self   => $self,
                  runas  => $target,
                  invoker=> $self,
@@ -18411,7 +18656,12 @@ sub echo_thing
             ws_echo($s,$prefix . filter_chars($msg));
          } else {
 #             printf("SOCK: '$s'\n");
-            printf($s "%s%s",$prefix,filter_chars($msg));
+#            printf($s "%s%s",$prefix,filter_chars($msg));
+            if($msg =~ /\n$/) {
+               printf($s "%s%s",$prefix,encode("UTF-8",$msg));
+            } else {
+               printf($s "%s%s\n",$prefix,encode("UTF-8",$msg));
+            }
          }
       }
    }
@@ -18796,7 +19046,7 @@ sub set_flag
    }
 
    if(!is_flag($flag)) {
-      return "I don't understand that flag. '$flag'" . code();
+      return "I don't understand that flag.");
    }
 
    if($flag =~ /^\s*!\s*/) {
@@ -19971,6 +20221,8 @@ sub lookup_command
    if(defined $$hash{$cmd}) {                       # match on internal cmd
       return ($cmd,trim($txt));
    } elsif(defined $$hash{substr($cmd,0,1)} &&             # one letter cmd
+           ref($$hash{substr($cmd,0,1)}) ne "CODE" &&
+           defined $$hash{substr($cmd,0,1)}->{nsp} &&  
            (defined @{$$hash{substr($cmd,0,1)}}{nsp} ||  # w/wo space after
             substr($cmd,1,1) eq " " ||                            # command
             length($cmd) == 1
@@ -20163,6 +20415,392 @@ sub get_free_port
 }
 
 #
+# strip_telnet_iac
+#    Filter IAC sequences from raw socket input per RFC 854.
+#    Handles 2-byte commands, 3-byte negotiations (WILL/WONT/DO/DONT),
+#    subnegotiations (SB..SE), escaped 0xFF, and partial IAC sequences
+#    split across reads.  When telnet_negotiation is enabled, dispatches
+#    to the Q Method state machine; otherwise silently strips.
+#
+sub strip_telnet_iac
+{
+   my ($hash, $buf) = @_;
+   my $negotiate = conf_true("telnet_negotiation");
+   my $tel = $$hash{telnet};
+   my $T = @default{TELNET};
+
+   # prepend any leftover partial IAC from previous read
+   if(defined $$hash{iac_pending}) {
+      $buf = $$hash{iac_pending} . $buf;
+      delete $$hash{iac_pending};
+   }
+
+   my $out = "";
+   my $len = length($buf);
+   my $i = 0;
+
+   while($i < $len) {
+      my $byte = ord(substr($buf, $i, 1));
+
+      # --- inside a subnegotiation (SB ... SE) ---
+      if($$tel{in_sb}) {
+         if($byte == $$T{IAC}) {
+            if($i + 1 >= $len) {              # IAC at end, wait for more
+               $$hash{iac_pending} = substr($buf, $i);
+               last;
+            }
+            my $next = ord(substr($buf, $i + 1, 1));
+            if($next == $$T{SE}) {
+               # End of subnegotiation - dispatch
+               $$tel{in_sb} = 0;
+               if($negotiate && defined $$tel{sb_buf} &&
+                  length($$tel{sb_buf}) >= 1) {
+                  my $opt  = ord(substr($$tel{sb_buf}, 0, 1));
+                  my $data = substr($$tel{sb_buf}, 1);
+                  telnet_handle_subneg($hash, $opt, $data);
+               }
+               $$tel{sb_buf} = undef;
+               $i += 2;
+            } elsif($next == $$T{IAC}) {
+               # IAC IAC inside subneg = literal 0xFF
+               $$tel{sb_buf} .= "\xff";
+               $i += 2;
+            } else {
+               # Unexpected IAC inside SB; treat as end of subneg
+               $$tel{in_sb} = 0;
+               $$tel{sb_buf} = undef;
+               # don't advance - reprocess this IAC+cmd normally
+            }
+         } else {
+            $$tel{sb_buf} .= substr($buf, $i, 1);
+            $i++;
+         }
+         next;
+      }
+
+      # --- normal parsing ---
+      if($byte != $$T{IAC}) {                  # normal byte
+         $out .= substr($buf, $i, 1);
+         $i++;
+      } elsif($i + 1 >= $len) {                # IAC at end of buffer
+         $$hash{iac_pending} = substr($buf, $i);
+         last;
+      } else {
+         my $cmd = ord(substr($buf, $i + 1, 1));
+
+         if($cmd == $$T{IAC}) {                # IAC IAC -> literal 0xFF
+            $out .= "\xff";
+            $i += 2;
+         } elsif($cmd == $$T{SB}) {            # start subnegotiation
+            $$tel{in_sb} = 1;
+            $$tel{sb_buf} = "";
+            $i += 2;
+         } elsif($cmd >= $$T{WILL} && $cmd <= $$T{DONT}) {
+            # WILL(251)/WONT(252)/DO(253)/DONT(254) + option byte
+            if($i + 2 >= $len) {                # partial 3-byte sequence
+               $$hash{iac_pending} = substr($buf, $i);
+               last;
+            }
+            my $option = ord(substr($buf, $i + 2, 1));
+            telnet_handle_negotiation($hash, $cmd, $option) if($negotiate);
+            $i += 3;
+         } else {                               # other 2-byte IAC commands
+            $i += 2;                             # (NOP, AYT, GA, etc.)
+         }
+      }
+   }
+
+   return $out;
+}
+
+#
+# telnet_init
+#    Populate @default{TELNET} with protocol constants.  Called at startup
+#    and on code reload so the values are always current.
+#
+sub telnet_init
+{
+   @default{TELNET} = {
+      IAC => 255, WILL => 251, WONT => 252, DO => 253, DONT => 254,
+      SB  => 250, SE   => 240, NOP  => 241, GA => 249,
+      ECHO => 1,  SGA  => 3,   TTYPE => 24, NAWS => 31, MSSP => 70,
+   };
+}
+
+#
+# telnet_keepalive
+#    Send IAC NOP to all connected MUSH sockets to detect dead connections.
+#    Dead sockets are collected first, then disconnected in a second pass
+#    to avoid modifying %connected while iterating.
+#
+sub telnet_keepalive
+{
+   my @dead;
+
+   for my $s (keys %connected) {
+      my $hash = @connected{$s};
+      next if(!defined $$hash{type} || $$hash{type} ne "MUSH");
+      next if(defined $$hash{raw} && $$hash{raw} > 0);
+
+      my $result = syswrite($$hash{sock}, "\xff\xf1", 2);
+      if(!defined $result || $result <= 0) {
+         push(@dead, $$hash{sock});
+      }
+   }
+
+   for my $sock (@dead) {
+      server_disconnect($sock);
+   }
+}
+
+#
+# telnet_send_iac
+#    Low-level sender for binary telnet data.  Uses syswrite to avoid
+#    printf mangling binary bytes.
+#
+sub telnet_send_iac
+{
+   my $hash = shift;
+   my $data = join("", map { chr($_) } @_);
+   syswrite($$hash{sock}, $data, length($data));
+}
+
+#
+# telnet_init_negotiation
+#    Send initial telnet negotiation offers on new connections.
+#    Offers SGA, requests NAWS and TTYPE from the client.
+#
+sub telnet_init_negotiation
+{
+   my $hash = shift;
+   my $T = @default{TELNET};
+
+   return if(!conf_true("telnet_negotiation"));
+
+   # IAC WILL SGA - offer to suppress go-ahead
+   $$hash{telnet}{opt_us}{$$T{SGA}} = "wantyes";
+   telnet_send_iac($hash, $$T{IAC}, $$T{WILL}, $$T{SGA});
+
+   # IAC DO NAWS - request client send window size
+   $$hash{telnet}{opt_him}{$$T{NAWS}} = "wantyes";
+   telnet_send_iac($hash, $$T{IAC}, $$T{DO}, $$T{NAWS});
+
+   # IAC DO TTYPE - request client send terminal type
+   $$hash{telnet}{opt_him}{$$T{TTYPE}} = "wantyes";
+   telnet_send_iac($hash, $$T{IAC}, $$T{DO}, $$T{TTYPE});
+
+   # IAC WILL MSSP - offer MSSP status data
+   $$hash{telnet}{opt_us}{$$T{MSSP}} = "wantyes";
+   telnet_send_iac($hash, $$T{IAC}, $$T{WILL}, $$T{MSSP});
+}
+
+#
+# telnet_handle_negotiation
+#    RFC 1143 Q Method state machine for processing WILL/WONT/DO/DONT.
+#    Tracks per-option state in opt_us (our WILL/WONT) and opt_him
+#    (their WILL/WONT) to avoid negotiation loops.
+#
+sub telnet_handle_negotiation
+{
+   my ($hash, $cmd, $option) = @_;
+   my $T = @default{TELNET};
+
+   return if(!conf_true("telnet_negotiation"));
+
+   my $tel = $$hash{telnet};
+
+   if($cmd == $$T{WILL}) {
+      # Client offers to enable an option
+      my $state = $$tel{opt_him}{$option} || "no";
+
+      if($state eq "no") {
+         # Unsolicited WILL - accept NAWS and TTYPE, refuse others
+         if($option == $$T{NAWS} || $option == $$T{TTYPE}) {
+            $$tel{opt_him}{$option} = "yes";
+            telnet_send_iac($hash, $$T{IAC}, $$T{DO}, $option);
+            telnet_option_enabled($hash, "him", $option);
+         } else {
+            telnet_send_iac($hash, $$T{IAC}, $$T{DONT}, $option);
+         }
+      } elsif($state eq "wantyes") {
+         # Response to our DO - enable it
+         $$tel{opt_him}{$option} = "yes";
+         telnet_option_enabled($hash, "him", $option);
+      } elsif($state eq "yes") {
+         # Already enabled, ignore
+      }
+   } elsif($cmd == $$T{WONT}) {
+      # Client refuses or disables an option
+      my $state = $$tel{opt_him}{$option} || "no";
+
+      if($state eq "yes") {
+         $$tel{opt_him}{$option} = "no";
+         telnet_send_iac($hash, $$T{IAC}, $$T{DONT}, $option);
+      } elsif($state eq "wantyes") {
+         $$tel{opt_him}{$option} = "no";
+      }
+   } elsif($cmd == $$T{DO}) {
+      # Client asks us to enable an option
+      my $state = $$tel{opt_us}{$option} || "no";
+
+      if($state eq "no") {
+         # Unsolicited DO - accept SGA and ECHO, refuse others
+         if($option == $$T{SGA} || $option == $$T{ECHO} ||
+            $option == $$T{MSSP}) {
+            $$tel{opt_us}{$option} = "yes";
+            telnet_send_iac($hash, $$T{IAC}, $$T{WILL}, $option);
+            telnet_option_enabled($hash, "us", $option);
+         } else {
+            telnet_send_iac($hash, $$T{IAC}, $$T{WONT}, $option);
+         }
+      } elsif($state eq "wantyes") {
+         # Response to our WILL - enable it
+         $$tel{opt_us}{$option} = "yes";
+         telnet_option_enabled($hash, "us", $option);
+      } elsif($state eq "yes") {
+         # Already enabled, ignore
+      }
+   } elsif($cmd == $$T{DONT}) {
+      # Client asks us to disable an option
+      my $state = $$tel{opt_us}{$option} || "no";
+
+      if($state eq "yes") {
+         $$tel{opt_us}{$option} = "no";
+         telnet_send_iac($hash, $$T{IAC}, $$T{WONT}, $option);
+      } elsif($state eq "wantyes") {
+         $$tel{opt_us}{$option} = "no";
+      }
+   }
+}
+
+#
+# telnet_option_enabled
+#    Post-enable hook called when a telnet option becomes active.
+#    When TTYPE is enabled, sends a subnegotiation request to get
+#    the terminal type string.
+#
+sub telnet_option_enabled
+{
+   my ($hash, $direction, $option) = @_;
+   my $T = @default{TELNET};
+
+   # When client agrees to TTYPE, request the terminal type string
+   if($direction eq "him" && $option == $$T{TTYPE}) {
+      # IAC SB TTYPE SEND(1) IAC SE
+      telnet_send_iac($hash,
+         $$T{IAC}, $$T{SB}, $$T{TTYPE}, 1,
+         $$T{IAC}, $$T{SE});
+   }
+
+   # When MSSP option 70 is enabled, send MSSP data
+   if($direction eq "us" && $option == $$T{MSSP}) {
+      my $mssp = telnet_mssp_data();
+      my $resp = join("", map { chr($_) } (
+         $$T{IAC}, $$T{SB}, $$T{MSSP}
+      )) . $mssp . join("", map { chr($_) } (
+         $$T{IAC}, $$T{SE}
+      ));
+      syswrite($$hash{sock}, $resp, length($resp));
+   }
+}
+
+#
+# telnet_handle_subneg
+#    Parse subnegotiation payloads after SB..SE has been collected.
+#    Handles NAWS (window size) and TTYPE (terminal type).
+#
+sub telnet_handle_subneg
+{
+   my ($hash, $option, $data) = @_;
+   my $T = @default{TELNET};
+
+   if($option == $$T{NAWS}) {
+      # NAWS: 4 bytes - width(hi) width(lo) height(hi) height(lo)
+      if(length($data) >= 4) {
+         my $width  = ord(substr($data, 0, 1)) * 256 +
+                      ord(substr($data, 1, 1));
+         my $height = ord(substr($data, 2, 1)) * 256 +
+                      ord(substr($data, 3, 1));
+         $$hash{telnet}{width}  = $width  if($width  > 0);
+         $$hash{telnet}{height} = $height if($height > 0);
+      }
+   } elsif($option == $$T{TTYPE}) {
+      # TTYPE: IS(0) followed by terminal type string
+      if(length($data) >= 1 && ord(substr($data, 0, 1)) == 0) {
+         my $ttype = substr($data, 1);
+         $ttype =~ s/[\x00-\x1f\x7f-\xff]//g;    # strip non-printable
+
+         if(uc($ttype) eq "MSSP-REQUEST") {
+            # MSSP-REQUEST: respond with MSSP data inside TTYPE subneg
+            my $mssp = telnet_mssp_data();
+            my $resp = join("", map { chr($_) } (
+               $$T{IAC}, $$T{SB}, $$T{TTYPE}, 0   # IS
+            )) . $mssp . join("", map { chr($_) } (
+               $$T{IAC}, $$T{SE}
+            ));
+            syswrite($$hash{sock}, $resp, length($resp));
+         } else {
+            $$hash{telnet}{ttype} = $ttype if(length($ttype) > 0);
+         }
+      }
+   }
+}
+
+#
+# telnet_echo_off / telnet_echo_on
+#    Send IAC WILL ECHO / IAC WONT ECHO for password prompts.
+#    Available for future use when a password-prompt flow is added.
+#
+sub telnet_echo_off
+{
+   my $hash = shift;
+   my $T = @default{TELNET};
+   my $state = $$hash{telnet}{opt_us}{$$T{ECHO}} || "no";
+
+   if($state ne "yes" && $state ne "wantyes") {
+      $$hash{telnet}{opt_us}{$$T{ECHO}} = "wantyes";
+      telnet_send_iac($hash, $$T{IAC}, $$T{WILL}, $$T{ECHO});
+   }
+}
+
+sub telnet_echo_on
+{
+   my $hash = shift;
+   my $T = @default{TELNET};
+   my $state = $$hash{telnet}{opt_us}{$$T{ECHO}} || "no";
+
+   if($state eq "yes") {
+      $$hash{telnet}{opt_us}{$$T{ECHO}} = "no";
+      telnet_send_iac($hash, $$T{IAC}, $$T{WONT}, $$T{ECHO});
+   }
+}
+
+#
+# telnet_mssp_data
+#    Build the MSSP variable/value payload shared by both the TTYPE-based
+#    MSSP-REQUEST path and the dedicated MSSP option 70 path.
+#    Returns a string of chr(1)=MSSP_VAR / chr(2)=MSSP_VAL pairs.
+#
+sub telnet_mssp_data
+{
+   my @vars = (
+      NAME     => conf("mudname"),
+      PLAYERS  => scalar keys %connected_user,
+      UPTIME   => @info{server_start} || time(),
+      CODEBASE => version(),
+      FAMILY   => "Custom",
+      PORT     => conf("port"),
+      CRAWL    => "1",
+   );
+
+   my $payload = "";
+   while(my ($var, $val) = splice(@vars, 0, 2)) {
+      $payload .= chr(1) . $var . chr(2) . $val;
+   }
+   return $payload;
+}
+
+#
 # server_handle_sockets
 #    Open Handle all incoming I/O and try to sleep frequently enough
 #    so that all of the cpu is not being used up.
@@ -20195,6 +20833,9 @@ sub server_handle_sockets
             my $new = $listener->accept();                        # accept it
             if($new) {                                        # valid connect
                $readable->add($new);               # add 2 watch list 4 input
+               if(conf_true("tcp_keepalive")) {
+                  setsockopt($new, SOL_SOCKET, SO_KEEPALIVE, 1);
+               }
                my $hash = { sock => $new,             # store connect details
                             hostname => server_hostname($new),
                             ip       => $new->peerhost,
@@ -20205,11 +20846,20 @@ sub server_handle_sockets
                             type     => "MUSH",
                             last     => { time => time(),
                                           cmd => "connect"
-                                        }
+                                        },
+                            telnet => {
+                               width   => undef,  # from NAWS subnegotiation
+                               height  => undef,  # from NAWS subnegotiation
+                               ttype   => undef,  # from TTYPE subnegotiation
+                               sb_buf  => undef,  # partial subneg buffer
+                               in_sb   => 0,      # inside subnegotiation
+                               opt_us  => {},      # Q Method: our WILL/WONT
+                               opt_him => {},      # Q Method: their WILL/WONT
+                            }
                           };
                add_site_restriction($hash);
                @connected{$new} = $hash;
-
+               telnet_init_negotiation($hash);
 
                my $ignore = conf("host_filter");
                if($ignore eq undef ||
@@ -20237,6 +20887,12 @@ sub server_handle_sockets
          } else {                                          # socket has input
             @{@connected{$s}}{pending} = 1;
             $buf =~ s/\r//g;                                 # remove returns
+
+            # strip telnet IAC sequences from MUSH connections
+            if(!defined(@{@connected{$s}}{raw}) || @{@connected{$s}}{raw} == 0) {
+               $buf = strip_telnet_iac(@connected{$s}, $buf);
+            }
+
 #            $buf =~ tr/\x80-\xFF//d;
 #            $buf =~ s/\e\[[\d;]*[a-zA-Z]//g;
             @{@connected{$s}}{buf} .= $buf;                     # store input
@@ -20244,8 +20900,8 @@ sub server_handle_sockets
                                                          # breakapart by line
             while(defined @connected{$s} && @{@connected{$s}}{buf} =~ /\n/) {
                @{@connected{$s}}{buf} = $';                # store left overs
-               server_process_line(@connected{$s},$`);         # process line
 
+               server_process_line(@connected{$s},decode('UTF-8',$`));
 
 #               # store last transaction in @info{connected_raw_socket}
 #               if(defined @connected{$s} && @{@connected{$s}}{raw} > 0) {
@@ -20386,6 +21042,7 @@ sub server_start
 
    @info{initial_load_done} = 1;
 
+   $SIG{PIPE} = 'IGNORE';
 
    #
    # init websocket connection first as this is the most important
@@ -20417,6 +21074,9 @@ sub server_start
                                         Reuse     => 1
          ) or die "failed to listen: $!";
       $ws->{select_readable}->add($listener);
+      if(conf_true("tcp_keepalive")) {
+         setsockopt($listener, SOL_SOCKET, SO_KEEPALIVE, 1);
+      }
       if($listener ne undef) {
          push(@port,"$p\{Mush\}");
          last;
@@ -21052,5 +21712,4 @@ sub db_read_import
                     "Objects Imported: %s",$#db - $start ]
        );
 }
-
 main();                                                  #!# run only once
